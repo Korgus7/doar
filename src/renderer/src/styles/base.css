@@ -1,0 +1,131 @@
+/* Doar – základné tokeny. Svetlá a tmavá téma podľa systému, prípadne data-theme. */
+:root {
+  --font-ui: 'Segoe UI Variable Text', 'Segoe UI', system-ui, -apple-system, 'SF Pro Text', Cantarell, 'Noto Sans', sans-serif;
+  --font-size: 14px;
+  --radius: 8px;
+  --radius-sm: 5px;
+
+  --bg: #f6f7f9;
+  --surface: #ffffff;
+  --surface-2: #eef0f3;
+  --border: #dde1e6;
+  --text: #1b1f24;
+  --text-muted: #5b6470;
+  --accent: #2463eb;
+  --accent-text: #ffffff;
+  --accent-soft: #e3ebfd;
+  --danger: #c62828;
+  --warning: #a35c00;
+  --ok: #1d7a3e;
+  --focus: #2463eb;
+  --shadow: 0 1px 2px rgb(16 24 40 / 6%), 0 1px 3px rgb(16 24 40 / 10%);
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --bg: #15171a;
+    --surface: #1d2024;
+    --surface-2: #262a2f;
+    --border: #33383e;
+    --text: #e8eaed;
+    --text-muted: #a1a8b3;
+    --accent: #6b9bff;
+    --accent-text: #0b1220;
+    --accent-soft: #23314d;
+    --danger: #ff7a7a;
+    --warning: #f0b45a;
+    --ok: #5fd38d;
+    --focus: #8fb3ff;
+    --shadow: 0 1px 2px rgb(0 0 0 / 40%);
+    color-scheme: dark;
+  }
+}
+
+:root[data-theme='dark'] {
+  --bg: #15171a;
+  --surface: #1d2024;
+  --surface-2: #262a2f;
+  --border: #33383e;
+  --text: #e8eaed;
+  --text-muted: #a1a8b3;
+  --accent: #6b9bff;
+  --accent-text: #0b1220;
+  --accent-soft: #23314d;
+  --danger: #ff7a7a;
+  --warning: #f0b45a;
+  --ok: #5fd38d;
+  --focus: #8fb3ff;
+  --shadow: 0 1px 2px rgb(0 0 0 / 40%);
+  color-scheme: dark;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font-family: var(--font-ui);
+  font-size: var(--font-size);
+  line-height: 1.45;
+  background: var(--bg);
+  color: var(--text);
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+/* Viditeľný fokus pre ovládanie klávesnicou. */
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5em;
+  padding: 0.5em 1em;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  cursor: pointer;
+}
+.btn:hover {
+  background: var(--surface-2);
+}
+.btn-primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-text);
+  font-weight: 600;
+}
+.btn-primary:hover {
+  background: var(--accent);
+  filter: brightness(1.08);
+}
+
+.visually-hidden {
+  position: absolute !important;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
