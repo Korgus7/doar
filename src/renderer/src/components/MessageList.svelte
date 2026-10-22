@@ -1,7 +1,9 @@
 <script lang="ts">
   import { t } from '../i18n/index.svelte'
   import { listDate } from '../lib/format'
-  import { mail, messageAt, loadPage, PAGE, setFlags } from '../lib/mail.svelte'
+  import { mail, messageAt, loadPage, PAGE, setFlags, setSelection, indexOf, allIds, itemsById } from '../lib/mail.svelte'
+  import { ui, messageMenu, openMenu, remove, removeForever, archive, openMoveDialog, selectAll, isDraft, folderLabel, folderById } from '../lib/actions.svelte'
+  import { runSearch } from '../lib/mail.svelte'
 
   const ROW = 74
   const OVERSCAN = 8
@@ -9,10 +11,14 @@
   let el: HTMLDivElement | undefined = $state()
   let scrollTop = $state(0)
   let height = $state(600)
+  /** Kotva pre Shift + klik / Shift + šípky. */
+  let anchor: number | null = null
 
   const currentFolder = $derived(mail.folderId === null ? null : mail.folders.find((f) => f.id === mail.folderId))
-  const showRecipients = $derived(currentFolder?.specialUse === 'sent' || currentFolder?.specialUse === 'drafts')
-  const unified = $derived(mail.folderId === null)
+  const showRecipients = $derived(!mail.search && (currentFolder?.specialUse === 'sent' || currentFolder?.specialUse === 'drafts'))
+  const searching = $derived(mail.search !== null)
+  const unified = $derived(searching ? mail.accounts.length > 1 : mail.folderId === null)
+  const selected = $derived(new Set(mail.selection))
 
   const start = $derived(Math.max(0, Math.floor(scrollTop / ROW) - OVERSCAN))
   const end = $derived(Math.min(mail.total, Math.ceil((scrollTop + height) / ROW) + OVERSCAN))
@@ -24,45 +30,121 @@
     for (let p = Math.floor(start / PAGE); p <= Math.floor(Math.max(start, end - 1) / PAGE); p++) void loadPage(p)
   })
 
-  // Nový priečinok → na začiatok zoznamu.
+  // Nový priečinok alebo hľadanie → na začiatok zoznamu.
   $effect(() => {
     void mail.folderId
+    void mail.search
+    anchor = null
     if (el) el.scrollTop = 0
   })
 
-  function selectedIndex(): number {
-    for (let i = 0; i < mail.total; i++) if (messageAt(i)?.id === mail.selectedId) return i
-    return -1
-  }
-
-  function select(i: number): void {
-    const m = messageAt(i)
-    if (!m) return
-    mail.selectedId = m.id
-    if (!el) return
+  function scrollTo(i: number): void {
+    if (!el || i < 0) return
     const top = i * ROW
     if (top < el.scrollTop) el.scrollTop = top
     else if (top + ROW > el.scrollTop + el.clientHeight) el.scrollTop = top + ROW - el.clientHeight
   }
 
+  /** Rozsah od kotvy po index (aj cez nenačítané stránky). */
+  async function selectRange(to: number): Promise<void> {
+    const from = anchor ?? to
+    const [a, b] = from <= to ? [from, to] : [to, from]
+    let ids: number[] = []
+    for (let i = a; i <= b; i++) {
+      const m = messageAt(i)
+      if (!m) {
+        ids = (await allIds()).slice(a, b + 1)
+        break
+      }
+      ids.push(m.id)
+    }
+    setSelection(ids, messageAt(to)?.id ?? null)
+  }
+
+  /** Pohyb kurzora klávesnicou. */
+  function go(i: number, extend: boolean): void {
+    i = Math.max(0, Math.min(mail.total - 1, i))
+    const m = messageAt(i)
+    if (!m) return
+    if (extend) void selectRange(i)
+    else {
+      anchor = i
+      setSelection([m.id])
+    }
+    scrollTo(i)
+  }
+
+  function onRowClick(e: MouseEvent, i: number, id: number): void {
+    if (e.shiftKey) {
+      void selectRange(i)
+    } else if (e.ctrlKey || e.metaKey) {
+      anchor = i
+      setSelection(selected.has(id) ? mail.selection.filter((x) => x !== id) : [...mail.selection, id], id)
+    } else {
+      anchor = i
+      setSelection([id])
+    }
+  }
+
+  function onContext(e: MouseEvent, i: number, id: number): void {
+    e.preventDefault()
+    if (!selected.has(id)) {
+      anchor = i
+      setSelection([id])
+    }
+    const ids = [...mail.selection]
+    openMenu(e.clientX, e.clientY, messageMenu(ids), t('actions.menu'))
+  }
+
+  /** Kontextová ponuka z klávesnice (Shift+F10 / kláves ponuky) – pri riadku s kurzorom. */
+  function keyboardMenu(): void {
+    if (!mail.selection.length) return
+    const i = indexOf(mail.cursor)
+    const row = el?.querySelector(`#msg-${mail.cursor}`)?.getBoundingClientRect()
+    const box = el?.getBoundingClientRect()
+    const x = (row?.left ?? box?.left ?? 0) + 24
+    const y = row ? row.top + row.height / 2 : (box?.top ?? 0) + Math.max(0, i) * ROW
+    openMenu(x, y, messageMenu([...mail.selection]), t('actions.menu'))
+  }
+
   function onKey(e: KeyboardEvent): void {
-    const i = selectedIndex()
+    const i = indexOf(mail.cursor)
+    const ctrl = e.ctrlKey || e.metaKey
+    const step = Math.max(1, Math.floor(height / ROW) - 1)
     if (e.key === 'ArrowDown') {
       e.preventDefault()
-      select(Math.min(mail.total - 1, i + 1))
+      go(i + 1, e.shiftKey)
     } else if (e.key === 'ArrowUp') {
       e.preventDefault()
-      select(Math.max(0, i < 0 ? 0 : i - 1))
+      go(i < 0 ? 0 : i - 1, e.shiftKey)
     } else if (e.key === 'Home') {
       e.preventDefault()
-      select(0)
+      go(0, e.shiftKey)
     } else if (e.key === 'End') {
       e.preventDefault()
-      select(mail.total - 1)
+      go(mail.total - 1, e.shiftKey)
     } else if (e.key === 'PageDown' || e.key === 'PageUp') {
       e.preventDefault()
-      const step = Math.max(1, Math.floor(height / ROW) - 1)
-      select(Math.max(0, Math.min(mail.total - 1, i + (e.key === 'PageDown' ? step : -step))))
+      go(i + (e.key === 'PageDown' ? step : -step), e.shiftKey)
+    } else if (e.key === 'Enter' && mail.selectedId !== null && isDraft(mail.selectedId)) {
+      e.preventDefault()
+      window.doar.openCompose('draft', mail.selectedId)
+    } else if (ctrl && !e.shiftKey && e.key.toLowerCase() === 'a') {
+      e.preventDefault()
+      void selectAll()
+    } else if (e.key === 'Delete') {
+      e.preventDefault()
+      if (e.shiftKey) void removeForever([...mail.selection])
+      else remove([...mail.selection])
+    } else if (!ctrl && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'e') {
+      e.preventDefault()
+      archive([...mail.selection])
+    } else if (ctrl && e.shiftKey && e.key.toLowerCase() === 'v') {
+      e.preventDefault()
+      if (mail.selection.length) openMoveDialog([...mail.selection])
+    } else if (e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10')) {
+      e.preventDefault()
+      keyboardMenu()
     }
   }
 
@@ -70,8 +152,38 @@
     e.stopPropagation()
     void setFlags([id], { flagged: !flagged })
   }
+
+  function onDragStart(e: DragEvent, i: number, id: number): void {
+    if (!selected.has(id)) {
+      anchor = i
+      setSelection([id])
+    }
+    const ids = [...mail.selection]
+    const accountIds = [...new Set(itemsById(ids).map((m) => m.accountId))]
+    ui.dragging = { ids, accountIds }
+    if (!e.dataTransfer) return
+    e.dataTransfer.effectAllowed = 'move'
+    e.dataTransfer.setData('application/x-doar-messages', JSON.stringify(ids))
+    // Štítok pri kurzore: koľko správ sa presúva.
+    const ghost = document.createElement('div')
+    ghost.className = 'doar-drag-ghost'
+    ghost.textContent = ids.length === 1 ? (messageAt(i)?.subject || t('list.noSubject')) : t('reader.multi', { n: ids.length })
+    document.body.appendChild(ghost)
+    e.dataTransfer.setDragImage(ghost, -12, -8)
+    setTimeout(() => ghost.remove(), 0)
+  }
 </script>
 
+<div class="wrap">
+{#if mail.search}
+  <div class="search-bar" role="status">
+    <span>{mail.total ? t('search.results', { n: mail.total }) : t('search.none')}</span>
+    <button class="link" onclick={() => void runSearch('')}>{t('search.clear')}</button>
+    {#if mail.searchNotDownloaded > 0}
+      <p class="incomplete">⚠ {t('search.incomplete', { n: mail.searchNotDownloaded })}</p>
+    {/if}
+  </div>
+{/if}
 <div
   class="list"
   bind:this={el}
@@ -80,11 +192,12 @@
   role="listbox"
   tabindex="0"
   aria-label={t('list.label')}
-  aria-activedescendant={mail.selectedId ? `msg-${mail.selectedId}` : undefined}
+  aria-multiselectable="true"
+  aria-activedescendant={mail.cursor ? `msg-${mail.cursor}` : undefined}
   onkeydown={onKey}
 >
   {#if mail.total === 0}
-    <p class="empty">{t('list.empty')}</p>
+    <p class="empty">{mail.search ? t('search.none') : t('list.empty')}</p>
   {:else}
     <div class="spacer" style:height={`${mail.total * ROW}px`}>
       {#each indexes as i (i)}
@@ -95,11 +208,17 @@
               id={`msg-${m.id}`}
               class="row"
               class:unread={!m.seen}
-              class:selected={mail.selectedId === m.id}
+              class:selected={selected.has(m.id)}
+              class:cursor={mail.cursor === m.id && mail.selection.length > 1}
               role="option"
-              aria-selected={mail.selectedId === m.id}
+              aria-selected={selected.has(m.id)}
               tabindex="-1"
-              onclick={() => (mail.selectedId = m.id)}
+              draggable="true"
+              onclick={(e) => onRowClick(e, i, m.id)}
+              oncontextmenu={(e) => onContext(e, i, m.id)}
+              ondblclick={() => isDraft(m.id) && window.doar.openCompose('draft', m.id)}
+              ondragstart={(e) => onDragStart(e, i, m.id)}
+              ondragend={() => (ui.dragging = null)}
               onkeydown={() => {}}
             >
               {#if unified}<span class="acc" style:background={m.accountColor} aria-hidden="true"></span>{/if}
@@ -129,7 +248,7 @@
                 >
               </div>
               <div class="line3">
-                {#if unified}<span class="accname">{m.accountName} · </span>{/if}{m.snippet}
+                {#if searching}{@const f = folderById(m.folderId)}<span class="accname">{f ? folderLabel(f) : ''}{unified ? ` (${m.accountName})` : ''} · </span>{:else if unified}<span class="accname">{m.accountName} · </span>{/if}{m.snippet}
               </div>
             </div>
           {:else}
@@ -140,10 +259,42 @@
     </div>
   {/if}
 </div>
+</div>
 
 <style>
-  .list {
+  .wrap {
     height: 100%;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    background: var(--surface);
+  }
+  .search-bar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0.3rem 0.8rem;
+    padding: 0.45rem 0.9rem;
+    border-bottom: 1px solid var(--border);
+    background: var(--accent-soft);
+    font-size: 0.85rem;
+  }
+  .link {
+    border: 0;
+    background: none;
+    padding: 0;
+    color: var(--accent);
+    cursor: pointer;
+    font-size: 0.85rem;
+  }
+  .incomplete {
+    flex-basis: 100%;
+    margin: 0;
+    color: var(--warning);
+  }
+  .list {
+    flex: 1;
+    min-height: 0;
     overflow-y: auto;
     background: var(--surface);
     outline-offset: -2px;
@@ -179,6 +330,24 @@
   }
   .row.selected {
     background: var(--accent-soft);
+  }
+  .row.cursor {
+    outline: 1px dotted var(--accent);
+    outline-offset: -2px;
+  }
+  :global(.doar-drag-ghost) {
+    position: fixed;
+    top: -100px;
+    left: -100px;
+    max-width: 280px;
+    padding: 0.3rem 0.7rem;
+    border-radius: 6px;
+    background: var(--accent);
+    color: var(--accent-text);
+    font: 600 0.85rem var(--font-ui);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
   .placeholder {
     background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--text) 4%, transparent), transparent);

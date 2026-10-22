@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron'
+import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type { DoarApi, EventChannel, PortMessage, RequestChannel } from '../shared/ipc'
 
 /**
@@ -78,6 +78,40 @@ const api: DoarApi = {
   },
   chooseExportFile(defaultName) {
     return ipcRenderer.invoke('choose-export-file', defaultName) as Promise<string | null>
+  },
+  chooseAttachFiles() {
+    return ipcRenderer.invoke('choose-attach-files')
+  },
+  filesFromDrop(files) {
+    // Cestu k súboru vie zistiť len preload a len zo skutočného súboru pretiahnutého používateľom.
+    const paths = Array.from(files ?? [])
+      .map((f) => {
+        try {
+          return webUtils.getPathForFile(f)
+        } catch {
+          return ''
+        }
+      })
+      .filter(Boolean)
+    return paths.length ? ipcRenderer.invoke('dropped-files', paths) : Promise.resolve([])
+  },
+  chooseSavePath(defaultName) {
+    return ipcRenderer.invoke('choose-save-path', defaultName) as Promise<string | null>
+  },
+  chooseFolder() {
+    return ipcRenderer.invoke('choose-folder') as Promise<string | null>
+  },
+  printHtml(html, title) {
+    if (typeof html === 'string') ipcRenderer.send('print-html', html, typeof title === 'string' ? title : '')
+  },
+  setUnreadCount(n) {
+    if (Number.isInteger(n)) ipcRenderer.send('unread-count', n)
+  },
+  claimDraft(draftId) {
+    return ipcRenderer.invoke('claim-draft', draftId) as Promise<boolean>
+  },
+  openAttachmentFile(path) {
+    return ipcRenderer.invoke('open-attachment-file', path) as Promise<boolean>
   },
   showInFolder(path) {
     if (typeof path === 'string') ipcRenderer.send('show-in-folder', path)

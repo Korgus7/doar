@@ -10,8 +10,15 @@ import { discover } from './providers/discover'
 import { testConnection } from './mail/connection-test'
 import { renderMessage } from './mail/parse'
 import { fetchRemoteImages } from './mail/remote'
-import { addAccount, listAccounts, validateSettings } from './accounts'
+import { addAccount, getAccount, listAccounts, updateAccount, validateSettings } from './accounts'
+import { removeAccount, updateServer } from './account-admin'
+import { getSettings, setSettings } from './settings'
 import { prepareCompose, resolveOutbox, sendCompose } from './compose-service'
+import { prepareOpen, saveAllAttachments, saveAttachment } from './attachments'
+import { discardDraft, flushDraft, saveDraft } from './drafts'
+import { buildFtsQuery } from './search'
+import type { FileGrants } from './files'
+import { isComposeMode } from '../shared/ipc'
 
 export interface CoreContext {
   db: Db
@@ -19,6 +26,7 @@ export interface CoreContext {
   store: MailStore
   sync: SyncManager
   exports: ExportManager
+  files: FileGrants
   dataDir: string
   appVersion: string
   sqlite: string
@@ -45,6 +53,13 @@ function err(code: string, message: string): Error {
 
 function ids(v: unknown): number[] {
   return Array.isArray(v) ? v.filter((x): x is number => Number.isInteger(x)).slice(0, 10_000) : []
+}
+
+function searchScope(data: { folderId?: unknown; accountId?: unknown } | undefined): { folderId: number | null; accountId: number | null } {
+  return {
+    folderId: Number.isInteger(data?.folderId) ? (data!.folderId as number) : null,
+    accountId: Number.isInteger(data?.accountId) ? (data!.accountId as number) : null
+  }
 }
 
 export function createHandlers(ctx: CoreContext): Handlers {
@@ -137,7 +152,7 @@ export function createHandlers(ctx: CoreContext): Handlers {
     'sync.status': () => ctx.sync.statuses(),
 
     'compose.prepare': (data) => {
-      const mode = data?.mode === 'reply' || data?.mode === 'replyAll' ? data.mode : 'new'
+      const mode = isComposeMode(data?.mode) ? data.mode : 'new'
       return prepareCompose(ctx, mode, Number.isInteger(data?.messageId) ? data.messageId : undefined)
     },
 
@@ -162,6 +177,71 @@ export function createHandlers(ctx: CoreContext): Handlers {
       if (Number.isInteger(data?.jobId)) ctx.exports.cancel(data.jobId)
     },
 
-    'export.state': () => ctx.exports.state()
+    'export.state': () => ctx.exports.state(),
+
+    'messages.move': (data) => {
+      const special = data?.special === 'trash' || data?.special === 'archive' || data?.special === 'junk' || data?.special === 'inbox' ? data.special : undefined
+      const folderId = Number.isInteger(data?.folderId) ? data.folderId : undefined
+      if (!special && folderId === undefined) throw err('NO_TARGET', 'Chýba cieľ presunu')
+      return ctx.sync.moveMessages(ids(data?.ids), { folderId, special })
+    },
+
+    'messages.deleteForever': (data) => ctx.sync.deleteForever(ids(data?.ids)),
+
+    'attachments.save': (data) => saveAttachment(ctx, Number(data?.messageId), Number(data?.index), str(data?.path, 4096)),
+
+    'attachments.saveAll': async (data) => ({ saved: await saveAllAttachments(ctx, Number(data?.messageId), str(data?.dir, 4096)) }),
+
+    'attachments.prepareOpen': async (data) => ({ path: await prepareOpen(ctx, Number(data?.messageId), Number(data?.index)) }),
+
+    'messages.search': (data) => {
+      const fts = buildFtsQuery(str(data?.query, 500))
+      if (!fts) return { total: 0, items: [], notDownloaded: 0 }
+      const offset = Math.max(0, Math.floor(Number(data?.offset) || 0))
+      const limit = Math.min(500, Math.max(1, Math.floor(Number(data?.limit) || 100)))
+      return ctx.store.searchMessages(fts, searchScope(data), offset, limit)
+    },
+
+    'messages.searchIds': (data) => {
+      const fts = buildFtsQuery(str(data?.query, 500))
+      return fts ? ctx.store.searchIds(fts, searchScope(data)) : []
+    },
+
+    'accounts.get': async (data) => getAccount(ctx.db, Number(data?.id)),
+
+    'accounts.update': async (data) => {
+      const r = updateAccount(ctx.db, Number(data?.id), data?.patch ?? {})
+      ctx.emit('accounts.changed', null)
+      return r
+    },
+
+    'accounts.updateServer': (data) => updateServer(ctx, Number(data?.id), data),
+
+    'accounts.remove': (data) => removeAccount(ctx, Number(data?.id)),
+
+    'addresses.suggest': (data) => ctx.store.suggestAddresses(str(data?.query, 200), Math.min(20, Math.max(1, Number(data?.limit) || 8))),
+
+    'settings.get': () => getSettings(ctx.db),
+
+    'settings.set': (data) => setSettings(ctx.db, data ?? {}),
+
+    'drafts.save': (data) => saveDraft(ctx, data),
+
+    'drafts.discard': (data) => {
+      if (Number.isInteger(data?.draftId)) discardDraft(ctx, data.draftId)
+    },
+
+    'drafts.flush': (data) => {
+      if (Number.isInteger(data?.draftId)) flushDraft(ctx, data.draftId)
+    },
+
+    'messages.undo': (data) => ctx.sync.undo(ids(data?.undo)),
+
+    'messages.listIds': (data) => ctx.store.listIds(Number.isInteger(data?.folderId) ? (data!.folderId as number) : null),
+
+    'folders.create': async (data) => {
+      const parentId = Number.isInteger(data?.parentId) ? (data!.parentId as number) : null
+      return { folderId: await ctx.sync.createFolder(Number(data?.accountId), parentId, str(data?.name, 300)) }
+    }
   }
 }

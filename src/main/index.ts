@@ -1,11 +1,15 @@
-import { app, BrowserWindow, dialog, ipcMain, MessageChannelMain, session, shell, utilityProcess, type UtilityProcess } from 'electron'
-import { join } from 'node:path'
+import { app, BrowserWindow, dialog, ipcMain, MessageChannelMain, nativeImage, Notification, session, shell, utilityProcess, type UtilityProcess } from 'electron'
+import { deflateSync } from 'node:zlib'
+import { basename, join, relative, isAbsolute } from 'node:path'
+import { statSync, writeFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { randomUUID } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import { SecretStore } from './secrets'
-import { buildMenu, systemUiLocale } from './menu'
+import { buildMenu, systemUiLocale, translate } from './menu'
 import { loadWindowState, trackWindowState } from './window-state'
-import type { CoreToMain, MainToCore } from '../shared/ipc'
-import { incompletePath } from '../shared/ipc'
+import type { CoreToMain, MainToCore, UiLocale } from '../shared/ipc'
+import { incompletePath, isComposeMode, isDangerousFile, OPEN_ATTACHMENTS_DIR, type ComposeMode, type PickedFile } from '../shared/ipc'
 
 const here = fileURLToPath(new URL('.', import.meta.url))
 const DEV_URL = process.env['ELECTRON_RENDERER_URL']
@@ -20,6 +24,7 @@ let core: UtilityProcess | null = null
 let mainWindow: BrowserWindow | null = null
 let secrets: SecretStore
 let coreReady = false
+let uiLocale: UiLocale = 'sk'
 /** Všetky okná aplikácie (hlavné + okná správ) a tie, ktorých stránka je načítaná. */
 const appWindows = new Set<BrowserWindow>()
 const loadedWindows = new Set<BrowserWindow>()
@@ -35,6 +40,10 @@ function startCore(): UtilityProcess {
     if (msg.kind === 'ready') {
       coreReady = true
       for (const w of loadedWindows) connectWindow(w)
+      return
+    }
+    if (msg.kind === 'newMail') {
+      showNewMail(msg)
       return
     }
     const reply = (r: Omit<Extract<MainToCore, { kind: 'secret.result' }>, 'kind'>): void =>
@@ -67,6 +76,75 @@ function startCore(): UtilityProcess {
     }
   })
   return child
+}
+
+/** Systémové oznámenie o novej pošte. Keď je Doar práve v popredí, neruší. Kliknutie otvorí správu. */
+function showNewMail(m: Extract<CoreToMain, { kind: 'newMail' }>): void {
+  if (!Notification.isSupported() || (mainWindow?.isFocused() && mainWindow.isVisible())) return
+  const t = (k: Parameters<typeof translate>[1], p?: Record<string, string | number>): string => translate(uiLocale, k, p)
+  const title = m.count > 1 ? t('notify.titleMany', { n: m.count, account: m.accountEmail }) : t('notify.title', { account: m.accountEmail })
+  const body = m.from !== null ? `${m.from}\n${m.subject || t('list.noSubject')}` : t('notify.hidden')
+  const n = new Notification({ title, body, silent: false })
+  n.on('click', () => {
+    if (!mainWindow) return
+    if (mainWindow.isMinimized()) mainWindow.restore()
+    mainWindow.show()
+    mainWindow.focus()
+    mainWindow.webContents.send('menu-action', `open-message:${m.messageId}`)
+  })
+  n.show()
+}
+
+/** Malý červený krúžok (PNG) – odznak „neprečítané“ na ikone v paneli úloh Windows. */
+function dotImage(): Electron.NativeImage {
+  const size = 16
+  const raw = Buffer.alloc(size * (size * 4 + 1))
+  for (let y = 0; y < size; y++) {
+    raw[y * (size * 4 + 1)] = 0 // filter
+    for (let x = 0; x < size; x++) {
+      const d = Math.hypot(x - 7.5, y - 7.5)
+      const a = Math.max(0, Math.min(1, 7.5 - d)) // vyhladený okraj
+      const o = y * (size * 4 + 1) + 1 + x * 4
+      raw[o] = 0xe0
+      raw[o + 1] = 0x31
+      raw[o + 2] = 0x31
+      raw[o + 3] = Math.round(a * 255)
+    }
+  }
+  const crcTable = Array.from({ length: 256 }, (_, n) => {
+    let c = n
+    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1
+    return c >>> 0
+  })
+  const crc = (buf: Buffer): number => {
+    let c = 0xffffffff
+    for (const b of buf) c = crcTable[(c ^ b) & 0xff]! ^ (c >>> 8)
+    return (c ^ 0xffffffff) >>> 0
+  }
+  const chunk = (type: string, data: Buffer): Buffer => {
+    const len = Buffer.alloc(4)
+    len.writeUInt32BE(data.length)
+    const td = Buffer.concat([Buffer.from(type, 'ascii'), data])
+    const c = Buffer.alloc(4)
+    c.writeUInt32BE(crc(td))
+    return Buffer.concat([len, td, c])
+  }
+  const ihdr = Buffer.alloc(13)
+  ihdr.writeUInt32BE(size, 0)
+  ihdr.writeUInt32BE(size, 4)
+  ihdr[8] = 8 // bitová hĺbka
+  ihdr[9] = 6 // RGBA
+  const png = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), chunk('IHDR', ihdr), chunk('IDAT', deflateSync(raw)), chunk('IEND', Buffer.alloc(0))])
+  return nativeImage.createFromBuffer(png)
+}
+
+let unreadDot: Electron.NativeImage | null = null
+function setUnread(n: number): void {
+  app.setBadgeCount(n) // macOS, Linux (Unity)
+  if (process.platform === 'win32' && mainWindow) {
+    unreadDot ??= dotImage()
+    mainWindow.setOverlayIcon(n > 0 ? unreadDot : null, n > 0 ? translate(uiLocale, 'notify.unread', { n }) : '')
+  }
 }
 
 /** Prepojí okno priamo s core cez MessagePort (main nič nepreposiela). */
@@ -128,7 +206,7 @@ function createWindow(): BrowserWindow {
 }
 
 /** Okno na písanie správy (samostatné, ako v Outlook Expresse). */
-function createComposeWindow(mode: 'new' | 'reply' | 'replyAll', messageId?: number): BrowserWindow {
+function createComposeWindow(mode: ComposeMode, messageId?: number): BrowserWindow {
   const parent = mainWindow
   const b = parent?.getBounds()
   const win = new BrowserWindow({
@@ -205,7 +283,36 @@ if (!gotLock) {
   void app.whenReady().then(() => {
     secrets = new SecretStore(join(app.getPath('userData'), 'secrets.json'))
     hardenSecurity()
-    buildMenu(systemUiLocale(), () => mainWindow, DEV_URL !== undefined)
+    uiLocale = systemUiLocale()
+    buildMenu(uiLocale, () => mainWindow, DEV_URL !== undefined)
+    // Windows: oznámenia sa zobrazia pod menom aplikácie (nie „electron.app.Electron“).
+    if (process.platform === 'win32') app.setAppUserModelId('sk.doar.app')
+    // Tlač správy: dokument pripraví rozhranie (prečistené HTML z jadra), vytlačí ho skryté okno bez skriptov a siete.
+    ipcMain.on('print-html', (e, html: unknown, title: unknown) => {
+      const owner = senderWindow(e)
+      if (!owner || typeof html !== 'string' || html.length > 30_000_000) return
+      const file = join(tmpdir(), `doar-tlac-${randomUUID()}.html`)
+      writeFileSync(file, html, { encoding: 'utf8', mode: 0o600 })
+      const w = new BrowserWindow({
+        show: false,
+        parent: owner,
+        title: typeof title === 'string' ? title.slice(0, 200) : 'Doar',
+        webPreferences: { javascript: false, sandbox: true, contextIsolation: true, nodeIntegration: false, webSecurity: true }
+      })
+      const cleanup = (): void => {
+        if (!w.isDestroyed()) w.close()
+        rmSync(file, { force: true })
+      }
+      w.webContents.once('did-finish-load', () => {
+        w.webContents.print({ printBackground: true }, () => cleanup())
+      })
+      w.webContents.once('did-fail-load', cleanup)
+      void w.loadFile(file)
+    })
+    ipcMain.on('unread-count', (e, n: unknown) => {
+      if (!mainWindow || e.sender !== mainWindow.webContents || !Number.isInteger(n)) return
+      setUnread(Math.max(0, Math.min(99_999, n as number)))
+    })
     // Rozhranie oznamuje zvolený jazyk – menu sa prestaví. Prijímame len od nášho okna a len známe hodnoty.
     // Odkaz zo správy – len po kliknutí používateľa, len bezpečné schémy, len z našich okien.
     ipcMain.on('open-external', (e, url: unknown) => {
@@ -219,11 +326,14 @@ if (!gotLock) {
     })
     ipcMain.on('ui-locale', (e, locale: unknown) => {
       if (!mainWindow || e.sender !== mainWindow.webContents) return
-      if (locale === 'sk' || locale === 'en') buildMenu(locale, () => mainWindow, DEV_URL !== undefined)
+      if (locale === 'sk' || locale === 'en') {
+        uiLocale = locale
+        buildMenu(locale, () => mainWindow, DEV_URL !== undefined)
+      }
     })
     ipcMain.on('open-compose', (e, mode: unknown, messageId: unknown) => {
       if (!senderWindow(e)) return
-      const m = mode === 'reply' || mode === 'replyAll' ? mode : 'new'
+      const m = isComposeMode(mode) ? mode : 'new'
       createComposeWindow(m, Number.isInteger(messageId) ? (messageId as number) : undefined)
     })
     // Záloha: súbor vyberá používateľ v natívnom dialógu; jadro smie zapisovať len do takto zvolenej cesty.
@@ -242,6 +352,81 @@ if (!gotLock) {
       exportPaths.add(path)
       core?.postMessage({ kind: 'export.allow', path } satisfies MainToCore)
       return path
+    })
+    // Prílohy: cesty k súborom pochádzajú len z natívnych dialógov alebo z pretiahnutých súborov.
+    const allow = (path: string, mode: 'read' | 'write' | 'dir'): void => core?.postMessage({ kind: 'files.allow', path, mode } satisfies MainToCore)
+    const picked = (path: string): PickedFile | null => {
+      try {
+        const st = statSync(path)
+        return st.isFile() ? { path, name: basename(path), size: st.size } : null
+      } catch {
+        return null
+      }
+    }
+    const windowOf = (e: Electron.IpcMainInvokeEvent): BrowserWindow | null => {
+      const w = BrowserWindow.fromWebContents(e.sender)
+      return w && appWindows.has(w) ? w : null
+    }
+    ipcMain.handle('choose-attach-files', async (e) => {
+      const w = windowOf(e)
+      if (!w) return []
+      const r = await dialog.showOpenDialog(w, { properties: ['openFile', 'multiSelections'] })
+      if (r.canceled) return []
+      const out = r.filePaths.map(picked).filter((f): f is PickedFile => f !== null)
+      for (const f of out) allow(f.path, 'read')
+      return out
+    })
+    ipcMain.handle('dropped-files', (e, paths: unknown) => {
+      if (!windowOf(e) || !Array.isArray(paths)) return []
+      const out = paths
+        .filter((p): p is string => typeof p === 'string' && p.length > 0 && p.length < 4096 && isAbsolute(p))
+        .slice(0, 100)
+        .map(picked)
+        .filter((f): f is PickedFile => f !== null)
+      for (const f of out) allow(f.path, 'read')
+      return out
+    })
+    ipcMain.handle('choose-save-path', async (e, name: unknown) => {
+      const w = windowOf(e)
+      if (!w) return null
+      const safe = (typeof name === 'string' && name ? name : 'priloha').replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_').slice(0, 200)
+      const r = await dialog.showSaveDialog(w, { defaultPath: join(app.getPath('downloads'), safe), properties: ['showOverwriteConfirmation', 'createDirectory'] })
+      if (r.canceled || !r.filePath) return null
+      allow(r.filePath, 'write')
+      return r.filePath
+    })
+    ipcMain.handle('choose-folder', async (e) => {
+      const w = windowOf(e)
+      if (!w) return null
+      const r = await dialog.showOpenDialog(w, { defaultPath: app.getPath('downloads'), properties: ['openDirectory', 'createDirectory'] })
+      if (r.canceled || !r.filePaths[0]) return null
+      allow(r.filePaths[0], 'dir')
+      return r.filePaths[0]
+    })
+    // Otvorenie prílohy: len dočasná kópia pripravená jadrom a nikdy nie spustiteľný súbor.
+    ipcMain.handle('open-attachment-file', async (e, path: unknown) => {
+      if (!windowOf(e) || typeof path !== 'string') return false
+      const base = join(app.getPath('userData'), OPEN_ATTACHMENTS_DIR)
+      const rel = relative(base, path)
+      if (!rel || rel.startsWith('..') || isAbsolute(rel) || isDangerousFile(path) || !picked(path)) return false
+      return (await shell.openPath(path)) === ''
+    })
+    // Jeden koncept = jedno okno. Druhé okno s tým istým konceptom sa zavrie a ukáže sa to prvé.
+    const draftWindows = new Map<number, BrowserWindow>()
+    ipcMain.handle('claim-draft', (e, draftId: unknown) => {
+      const w = windowOf(e)
+      if (!w || !Number.isInteger(draftId)) return true
+      const owner = draftWindows.get(draftId as number)
+      if (owner && owner !== w && !owner.isDestroyed()) {
+        if (owner.isMinimized()) owner.restore()
+        owner.focus()
+        return false
+      }
+      draftWindows.set(draftId as number, w)
+      w.once('closed', () => {
+        if (draftWindows.get(draftId as number) === w) draftWindows.delete(draftId as number)
+      })
+      return true
     })
     ipcMain.on('show-in-folder', (e, path: unknown) => {
       if (!senderWindow(e) || typeof path !== 'string') return

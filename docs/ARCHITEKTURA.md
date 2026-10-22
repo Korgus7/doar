@@ -91,6 +91,7 @@ messages(
   seen, flagged, answered, draft, keywords_json,
   gm_msgid, gm_labels_json,                         -- len Gmail
   local_state,          -- synced | pending | failed (čakajúca lokálna zmena)
+  hidden,               -- 1 = čaká na presun/vymazanie, v zozname sa nezobrazuje (0.2)
   UNIQUE(folder_id, uid))
 
 messages_fts USING fts5(subject, from_text, to_text, body_text,
@@ -99,9 +100,17 @@ messages_fts USING fts5(subject, from_text, to_text, body_text,
 addresses(email PK, name, use_count, last_used)    -- našepkávanie
 
 operations(                                         -- trvalá fronta zmien (0.3, základ už v 0.1)
-  id PK, account_id, kind, payload_json,           -- flag | move | trash | expunge | append
+  id PK, account_id, kind, payload_json,           -- flags | move | expunge | draft | draftDelete | draftRemove
   state,                                            -- pending | running | done | failed
+  not_before,                                       -- skôr sa nevykoná (čas na „Vrátiť späť“)
   attempts, last_error, created_at, updated_at)
+
+drafts(                                             -- koncepty (0.2c)
+  id PK, account_id, message_id,                    -- Message-ID stabilné naprieč verziami
+  data_json, attachments_json,                      -- polia ako ich napísal používateľ; prílohy = SHA v úložisku
+  server_folder_id, server_uid,                     -- kde je posledná verzia na serveri
+  rev, server_rev,                                  -- rev > server_rev → treba nahrať
+  deleted, created_at, updated_at)
 
 outbox(
   id PK, account_id, blob_sha256, message_id,
@@ -127,6 +136,10 @@ remote_content_allow(sender PK, created_at)
 - **Priebežná sync:** nové UID nad `uidnext`. Zmeny príznakov cez CONDSTORE/QRESYNC, ak ich server má, inak `UID FETCH 1:* (FLAGS)`. Zmazané správy podľa `UID SEARCH ALL`.
 - **UIDVALIDITY sa zmenilo:** záznamy priečinka sa zahodia a načítajú znova. Originály ostávajú a priradia sa znova podľa hashu.
 - **Lokálne zmeny** (prečítané, hviezdička, presun, kôš) sa hneď prejavia v UI s `local_state = pending` a zapíšu sa do `operations`. Výsledok: `synced` alebo `failed` (zobrazí sa).
+- **Presun, Kôš, Archív, Spam** (0.2): správy sa hneď skryjú (`hidden = 1`) a operácia `move` dostane `not_before` = teraz + 8 s. Dovtedy ju „Vrátiť späť“ jednoducho zmaže z fronty a správy odkryje – server sa nič nedozvie. Potom `UID MOVE` (imapflow si poradí aj bez MOVE: COPY + \Deleted + EXPUNGE). Nové UID z UIDPLUS (COPYUID) sa zapíšu k tomu istému lokálnemu záznamu, takže sa originál nesťahuje znova; bez UIDPLUS si správu v cieli nájde ďalšia synchronizácia.
+- **Cieľ podľa úlohy priečinka:** Kôš/Archív/Spam sa hľadajú podľa SPECIAL-USE a známych názvov; ak chýbajú, Doar založí `Trash`/`Archive`/`Junk`. Archív na Gmaile = „Všetka pošta“.
+- **Natrvalo vymazať** (`expunge`): len na výslovný pokyn s potvrdením, bez oneskorenia: `\Deleted` + `UID EXPUNGE` len pre tieto UID.
+- **Chyby:** výpadok spojenia operáciu len vráti do fronty (bez započítania pokusu). Po 3 odmietnutiach serverom sa správy znova zobrazia s ⚠. Operácia v stave `running` po páde aplikácie sa pri ďalšom spustení zopakuje.
 
 ## 6. Odosielanie
 
@@ -144,7 +157,7 @@ remote_content_allow(sender PK, created_at)
 - `setWindowOpenHandler` → `deny`, `will-navigate` → zablokované. Odkazy sa otvárajú cez `shell.openExternal` až po kliknutí a len pre `http`, `https` a `mailto`.
 - Všetky sieťové požiadavky z rozhrania okrem povolených vzdialených obrázkov blokuje `session.webRequest` v main procese.
 - **HTML správa:** core ju sanitizuje (sanitize-html: bez skriptov, formulárov, `on*` atribútov, `<base>`, `<meta refresh>`). Zobrazuje sa v `<iframe sandbox>` bez `allow-scripts`, so `srcdoc` a CSP `default-src 'none'; style-src 'unsafe-inline'; img-src data: cid:` (+ `https:` iba po povolení odosielateľa). Obrázky `cid:` sa nahradia `data:` URI.
-- Prílohy sa ukladajú cez dialóg, nikdy sa nespúšťajú automaticky.
+- Prílohy sa ukladajú cez dialóg, nikdy sa nespúšťajú automaticky. Jadro pracuje len so súbormi, ktoré povolil main proces po výbere používateľom (`src/core/files.ts`, `FileGrants`). Spustiteľné súbory sa neotvárajú ani na pokyn (`isDangerousFile` v `src/shared/ipc.ts`).
 - Logy: len technické údaje (ID konta, priečinok, počet, kód chyby). Logger má filter, ktorý odstráni polia `password`, `token`, `apiKey`, `body`, `subject`.
 
 ## 8. Rozhranie
@@ -153,6 +166,11 @@ remote_content_allow(sender PK, created_at)
 - Preklady: vlastný modul `src/renderer/src/i18n/`, súbory `sk.json` a `en.json`. Predvolený jazyk podľa `app.getLocale()`.
 - Témy: CSS premenné, svetlý a tmavý režim podľa systému alebo ručne.
 - Okno na písanie správy je samostatné okno (ako v Outlook Expresse).
+- Akcie so správami (0.2): výber viacerých (Ctrl/Shift + klik, Shift + šípky, Ctrl+A), kontextová ponuka (aj Shift+F10), ťahanie na priečinok, klávesy Del / Shift+Del / E / Ctrl+Shift+V, oznámenie s „Vrátiť späť“ (aj Ctrl+Z). Stav v `src/renderer/src/lib/actions.svelte.ts`.
+- Nastavenia: `SettingsDialog.svelte`; jadro `accounts.ts` (údaje konta), `account-admin.ts` (server, odstránenie, upratanie úložiska), `settings.ts` (tabuľka settings). Oznámenia o novej pošte: jadro (`onNewMail` v synchronizácii) → main (`Notification`).
+- Písanie: `ComposeApp.svelte` + `RichEditor.svelte` (TipTap) + `AddressInput.svelte`; prevody text ↔ HTML v `lib/compose-html.ts`, v jadre `mail/outgoing-html.ts` (prečistenie a textová podoba na odoslanie). Tlač: `lib/print.ts` → main (`print-html`, skryté okno bez JS).
+- Vyhľadávanie: `src/core/search.ts` (text → dotaz FTS5), `MailStore.searchMessages`; v rozhraní `mail.search` – zoznam správ vtedy ukazuje výsledky.
+- Hodnoty zo stavu Svelte (`$state`) sú proxy – pred odoslaním cez MessagePort sa musia skopírovať na obyčajné polia/objekty.
 - Návrh obrazoviek: `docs/OBRAZOVKY.md`.
 
 ## 9. Štruktúra repozitára

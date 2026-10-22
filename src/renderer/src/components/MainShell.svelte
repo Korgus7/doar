@@ -6,6 +6,13 @@
   import MessageList from './MessageList.svelte'
   import Reader from './Reader.svelte'
   import OutboxBanner from './OutboxBanner.svelte'
+  import ContextMenu from './ContextMenu.svelte'
+  import MoveDialog from './MoveDialog.svelte'
+  import NewFolderDialog from './NewFolderDialog.svelte'
+  import Toast from './Toast.svelte'
+  import { ui, undoLast, folderLabel } from '../lib/actions.svelte'
+  import { runSearch } from '../lib/mail.svelte'
+  import { openSettings } from '../lib/settings.svelte'
 
   let { onAddAccount }: { onAddAccount: () => void } = $props()
 
@@ -61,18 +68,68 @@
     save()
   }
 
+  // Vyhľadávanie: spustí sa chvíľu po dopísaní (alebo hneď Enterom).
+  let query = $state('')
+  let searchEl: HTMLInputElement | undefined = $state()
+  let searchTimer: ReturnType<typeof setTimeout> | null = null
+  const currentFolder = $derived(mail.folderId === null ? null : mail.folders.find((f) => f.id === mail.folderId))
+
+  // Prepnutie priečinka hľadanie zruší – vyprázdniť aj pole.
+  $effect(() => {
+    if (!mail.search) query = ''
+  })
+
+  function onSearchInput(): void {
+    if (searchTimer) clearTimeout(searchTimer)
+    searchTimer = setTimeout(() => void runSearch(query), 300)
+  }
+
+  function onSearchKey(e: KeyboardEvent): void {
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      if (searchTimer) clearTimeout(searchTimer)
+      void runSearch(query)
+    } else if (e.key === 'Escape') {
+      e.preventDefault()
+      if (searchTimer) clearTimeout(searchTimer)
+      query = ''
+      void runSearch('')
+    } else if (e.key === 'ArrowDown') {
+      e.preventDefault()
+      document.querySelector<HTMLElement>('[role="listbox"]')?.focus()
+    }
+  }
+
   function syncNow(): void {
     void window.doar.invoke('sync.now', {})
   }
 
+  function editable(target: EventTarget | null): boolean {
+    const el = target as HTMLElement | null
+    return !!el?.closest?.('input, textarea, select, [contenteditable="true"], [role="dialog"], [role="menu"]')
+  }
+
   function onGlobalKey(e: KeyboardEvent): void {
     const ctrl = e.ctrlKey || e.metaKey
-    if (e.key === 'F5') {
+    if (ctrl && !e.shiftKey && e.key.toLowerCase() === 'e') {
+      e.preventDefault()
+      searchEl?.focus()
+      searchEl?.select()
+    } else if (ctrl && !e.shiftKey && e.key.toLowerCase() === 'z' && ui.toast?.undo && !editable(e.target)) {
+      e.preventDefault()
+      void undoLast()
+    } else if (e.key === 'F5') {
       e.preventDefault()
       syncNow()
     } else if (ctrl && !e.shiftKey && e.key.toLowerCase() === 'n') {
       e.preventDefault()
       window.doar.openCompose('new')
+    } else if (ctrl && !e.shiftKey && e.key.toLowerCase() === 'p') {
+      e.preventDefault()
+      window.dispatchEvent(new Event('doar-print'))
+    } else if (ctrl && !e.shiftKey && e.key.toLowerCase() === 'f' && mail.selectedId !== null && !editable(e.target)) {
+      e.preventDefault()
+      window.doar.openCompose('forward', mail.selectedId)
     } else if (ctrl && e.key.toLowerCase() === 'r' && mail.selectedId !== null) {
       e.preventDefault()
       window.doar.openCompose(e.shiftKey ? 'replyAll' : 'reply', mail.selectedId)
@@ -89,6 +146,31 @@
       <span class:spin={syncing} aria-hidden="true">⟳</span>
       {t('toolbar.sync')}
     </button>
+    <button class="btn icon-btn" onclick={() => openSettings()} title={`${t('toolbar.settings')} (Ctrl+,)`} aria-label={t('toolbar.settings')}>⚙</button>
+    <div class="search" role="search">
+      <span class="glass" aria-hidden="true">⌕</span>
+      <input
+        bind:this={searchEl}
+        bind:value={query}
+        type="search"
+        placeholder={t('toolbar.search')}
+        aria-label={t('search.label')}
+        title={t('search.tip')}
+        spellcheck="false"
+        oninput={onSearchInput}
+        onkeydown={onSearchKey}
+      />
+      {#if mail.search}
+        <select
+          aria-label={t('search.scope')}
+          value={mail.search.scope}
+          onchange={(e) => void runSearch(query, (e.currentTarget as HTMLSelectElement).value as 'all' | 'folder')}
+        >
+          <option value="all">{t('search.scopeAll')}</option>
+          <option value="folder" disabled={!currentFolder}>{t('search.scopeFolder', { folder: currentFolder ? folderLabel(currentFolder) : '' })}</option>
+        </select>
+      {/if}
+    </div>
   </div>
   <OutboxBanner />
   <div class="panes" style:grid-template-columns={`${widths.folders}px 5px ${widths.list}px 5px minmax(0, 1fr)`}>
@@ -123,6 +205,10 @@
     <Reader />
   </div>
 </div>
+<ContextMenu />
+<MoveDialog />
+<NewFolderDialog />
+<Toast />
 
 <style>
   .shell {
@@ -140,6 +226,43 @@
   }
   .toolbar .btn {
     padding: 0.35em 0.8em;
+  }
+  .icon-btn {
+    font-size: 1.05rem;
+    line-height: 1;
+  }
+  .search {
+    flex: 1;
+    max-width: 34rem;
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    position: relative;
+  }
+  .glass {
+    position: absolute;
+    left: 0.6rem;
+    color: var(--text-muted);
+    pointer-events: none;
+    font-size: 1.05rem;
+  }
+  .search input {
+    flex: 1;
+    min-width: 8rem;
+    padding: 0.38em 0.6em 0.38em 1.9rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--bg);
+    color: var(--text);
+  }
+  .search select {
+    padding: 0.36em 0.5em;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--bg);
+    color: var(--text);
+    max-width: 14rem;
   }
   .toolbar .btn:disabled {
     opacity: 0.7;
@@ -159,6 +282,8 @@
     }
   }
   .panes {
+    /* Vždy tretí riadok – aj keď pruh odosielania (2. riadok) nie je zobrazený. */
+    grid-row: 3;
     display: grid;
     min-height: 0;
     height: 100%;

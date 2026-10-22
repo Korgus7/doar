@@ -11,9 +11,15 @@ export function systemUiLocale(): UiLocale {
   return base === 'sk' || base === 'cs' ? 'sk' : 'en'
 }
 
+/** Preklad pre main proces (menu, oznámenia). */
+export function translate(locale: UiLocale, k: Key, params?: Record<string, string | number>): string {
+  const msg = DICT[locale][k] ?? sk[k]
+  return params ? msg.replace(/\{(\w+)\}/g, (_, p: string) => String(params[p] ?? '')) : msg
+}
+
 /** Postaví aplikačné menu v jazyku rozhrania. */
 export function buildMenu(locale: UiLocale, getWindow: () => BrowserWindow | null, isDev: boolean): void {
-  const t = (k: Key): string => DICT[locale][k] ?? sk[k]
+  const t = (k: Key): string => translate(locale, k)
   const send = (action: string): void => getWindow()?.webContents.send('menu-action', action)
   const isMac = process.platform === 'darwin'
 
@@ -24,6 +30,8 @@ export function buildMenu(locale: UiLocale, getWindow: () => BrowserWindow | nul
       submenu: [
         { label: t('menu.addAccount'), click: () => send('add-account') },
         { label: t('menu.backup'), click: () => send('backup') },
+        { type: 'separator' },
+        { label: t('menu.settings'), accelerator: 'CmdOrCtrl+,', click: () => send('settings') },
         { type: 'separator' },
         isMac ? { role: 'close', label: t('menu.close') } : { role: 'quit', label: t('menu.quit') }
       ]

@@ -2,18 +2,27 @@ import type { Db } from './store/db'
 import type { BlobStore } from './store/blobs'
 import type { MailStore } from './store/mailstore'
 import type { SyncManager } from './sync/manager'
+import { readFileSync, statSync } from 'node:fs'
+import { basename } from 'node:path'
 import type { Address, ComposeMode, ComposePrefill, ComposeSendInput, CoreEvents, EventChannel } from '../shared/ipc'
-import { composeMessage, parseAddressList, replySource, replySubject } from './mail/compose'
+import { MAX_ATTACHMENTS_BYTES } from '../shared/ipc'
+import { composeMessage, forwardSubject, parseAddressList, replySource, replySubject } from './mail/compose'
+import { extractAttachments } from './mail/parse'
+import { htmlToText, outgoingHtml } from './mail/outgoing-html'
+import type { FileGrants } from './files'
+import { discardDraft, prepareDraft } from './drafts'
 
 function err(code: string, message: string, extra: Record<string, unknown> = {}): Error {
   return Object.assign(new Error(message), { code, ...extra })
 }
 
-interface Ctx {
+export interface Ctx {
   db: Db
   blobs: BlobStore
   store: MailStore
   sync: SyncManager
+  /** Súbory povolené používateľom (prílohy z disku). */
+  files?: FileGrants
   emit<E extends EventChannel>(ch: E, data: CoreEvents[E]): void
 }
 
@@ -24,11 +33,11 @@ interface AccountInfo {
   save_sent_copy: number
 }
 
-function account(db: Db, id: number): AccountInfo | null {
+export function account(db: Db, id: number): AccountInfo | null {
   return (db.prepare('SELECT id, email, display_name, save_sent_copy FROM accounts WHERE id = ?').get(id) as unknown as AccountInfo | undefined) ?? null
 }
 
-async function originalRaw(ctx: Ctx, messageId: number): Promise<{ raw: Buffer; accountId: number; internalDate: string | null }> {
+export async function originalRaw(ctx: Ctx, messageId: number): Promise<{ raw: Buffer; accountId: number; internalDate: string | null }> {
   let row = ctx.store.message(messageId)
   if (!row) throw err('NOT_FOUND', 'Správa neexistuje')
   if (!row.blob_sha256) {
@@ -44,10 +53,26 @@ export async function prepareCompose(ctx: Ctx, mode: ComposeMode, messageId?: nu
   if (mode === 'new' || !messageId) {
     const first = ctx.db.prepare('SELECT id FROM accounts ORDER BY sort_order, id LIMIT 1').get() as { id: number } | undefined
     if (!first) throw err('NO_ACCOUNT', 'Najprv pridajte konto')
-    return { accountId: first.id, to: [], cc: [], subject: '', quote: null, replyToMessage: null }
+    return { accountId: first.id, to: [], cc: [], subject: '', draft: null, quote: null, forward: null, attachments: [], replyToMessage: null, draftId: null }
   }
+  if (mode === 'draft') return prepareDraft(ctx, messageId)
   const { raw, accountId, internalDate } = await originalRaw(ctx, messageId)
   const src = await replySource(raw)
+  if (mode === 'forward') {
+    const atts = await extractAttachments(raw)
+    return {
+      accountId,
+      to: [],
+      cc: [],
+      subject: forwardSubject(src.subject),
+      draft: null,
+      quote: null,
+      forward: { from: src.from, to: src.to, cc: src.cc, date: src.date ?? internalDate, subject: src.subject, text: src.text },
+      attachments: atts.map((a, index) => ({ source: { kind: 'message' as const, messageId, index }, filename: a.filename, size: a.content.length })),
+      replyToMessage: null,
+      draftId: null
+    }
+  }
   const own = new Set((ctx.db.prepare('SELECT lower(email) AS e FROM accounts').all() as { e: string }[]).map((r) => r.e))
   const to = (src.replyTo.length ? src.replyTo : src.from).filter((a) => !own.has(a.address.toLowerCase()))
   // Odpoveď na vlastnú odoslanú správu → pôvodným adresátom.
@@ -66,10 +91,14 @@ export async function prepareCompose(ctx: Ctx, mode: ComposeMode, messageId?: nu
     accountId,
     to: toFinal,
     cc,
+    draft: null,
     subject: replySubject(src.subject),
     // Bez hlavičky Date použijeme dátum prijatia zo servera.
     quote: { from: src.from, date: src.date ?? internalDate, text: src.text },
-    replyToMessage: messageId
+    forward: null,
+    attachments: [],
+    replyToMessage: messageId,
+    draftId: null
   }
 }
 
@@ -97,15 +126,22 @@ export async function sendCompose(ctx: Ctx, input: ComposeSendInput): Promise<{ 
     references = [...src.references, ...(src.messageId ? [src.messageId] : [])].slice(-30)
   }
 
+  const attachments = await resolveAttachments(ctx, input.attachments)
+  // Formátovaná správa: HTML sa prečistí, textová alternatíva vznikne z neho (nie z rozhrania).
+  const html = typeof input.html === 'string' && input.html.trim() ? input.html : null
+  ctx.store.rememberNames(recipients)
+
   const { raw, messageId } = await composeMessage({
     from: { name: acc.display_name, address: acc.email },
     to: to.valid,
     cc: cc.valid,
     bcc: bcc.valid,
     subject: str(input.subject, 1000),
-    text: str(input.text, 5_000_000),
+    text: html ? htmlToText(html) : str(input.text, 5_000_000),
+    html: html ? outgoingHtml(html) : null,
     inReplyTo,
-    references
+    references,
+    attachments
   })
   const sha = ctx.blobs.put(raw)
   const outboxId = ctx.store.addOutbox({
@@ -119,7 +155,55 @@ export async function sendCompose(ctx: Ctx, input: ComposeSendInput): Promise<{ 
   })
   ctx.emit('outbox.changed', null)
   void ctx.sync.get(acc.id)?.processOutboxNow().catch(() => {})
+  // Odoslaný koncept už nie je koncept – zmaže sa lokálne aj na serveri.
+  if (Number.isInteger(input.draftId)) discardDraft(ctx, input.draftId as number)
   return { outboxId }
+}
+
+/** Načíta prílohy: súbory povolené cez dialóg/pretiahnutie a prílohy preposielanej správy. */
+export async function resolveAttachments(ctx: Ctx, list: unknown): Promise<{ filename: string; content: Buffer; contentType?: string }[]> {
+  if (list === undefined || list === null) return []
+  if (!Array.isArray(list) || list.length > 100) throw err('INVALID', 'Neplatné prílohy')
+  const out: { filename: string; content: Buffer; contentType?: string }[] = []
+  const fromMessage = new Map<number, Awaited<ReturnType<typeof extractAttachments>>>()
+  let total = 0
+  const add = (a: { filename: string; content: Buffer; contentType?: string }): void => {
+    total += a.content.length
+    if (total > MAX_ATTACHMENTS_BYTES) throw err('ATTACHMENTS_TOO_LARGE', 'Prílohy sú príliš veľké')
+    out.push(a)
+  }
+  for (const item of list as { kind?: unknown; path?: unknown; messageId?: unknown; index?: unknown }[]) {
+    if (item?.kind === 'file' && typeof item.path === 'string') {
+      if (!ctx.files) throw err('PATH_NOT_ALLOWED', 'Súbor treba vybrať v dialógu')
+      const path = await ctx.files.require(item.path, 'read')
+      let size: number
+      try {
+        const st = statSync(path)
+        if (!st.isFile()) throw new Error('nie je súbor')
+        size = st.size
+      } catch {
+        throw Object.assign(err('ATTACHMENT_MISSING', `Súbor nenájdený: ${basename(path)}`), { name: basename(path) })
+      }
+      if (total + size > MAX_ATTACHMENTS_BYTES) throw err('ATTACHMENTS_TOO_LARGE', 'Prílohy sú príliš veľké')
+      add({ filename: basename(path), content: readFileSync(path) })
+    } else if (item?.kind === 'message' && Number.isInteger(item.messageId) && Number.isInteger(item.index)) {
+      const id = item.messageId as number
+      if (!fromMessage.has(id)) fromMessage.set(id, await extractAttachments((await originalRaw(ctx, id)).raw))
+      const a = fromMessage.get(id)![item.index as number]
+      if (!a) throw err('NOT_FOUND', 'Príloha pôvodnej správy neexistuje')
+      add({ filename: a.filename, content: a.content, contentType: a.contentType })
+    } else if (item?.kind === 'blob' && typeof (item as { sha?: unknown }).sha === 'string') {
+      const b = item as { sha: string; name?: unknown; contentType?: unknown }
+      // Len prílohy uložené v konceptoch – nie ľubovoľný obsah lokálneho úložiska.
+      if (!ctx.store.isDraftBlob(b.sha) || !ctx.blobs.has(b.sha)) throw err('NOT_FOUND', 'Príloha konceptu neexistuje')
+      add({
+        filename: typeof b.name === 'string' && b.name ? b.name.slice(0, 255) : 'priloha',
+        content: ctx.blobs.read(b.sha),
+        contentType: typeof b.contentType === 'string' ? b.contentType.slice(0, 200) : undefined
+      })
+    } else throw err('INVALID', 'Neplatná príloha')
+  }
+  return out
 }
 
 /** Rozhodnutie používateľa pri chybe alebo nejasnom výsledku: znova odoslať, alebo zahodiť. */

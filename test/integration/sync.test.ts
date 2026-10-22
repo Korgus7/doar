@@ -10,6 +10,7 @@ import { MemorySecrets } from '../../src/core/secrets'
 import { addAccount } from '../../src/core/accounts'
 import { SyncManager } from '../../src/core/sync/manager'
 import { createHandlers, type Handlers } from '../../src/core/handlers'
+import { FileGrants } from '../../src/core/files'
 import { ExportManager } from '../../src/core/export/manager'
 import type { CoreEvents, EventChannel } from '../../src/shared/ipc'
 
@@ -89,6 +90,7 @@ beforeAll(async () => {
   const emit = <E extends EventChannel>(ch: E, data: CoreEvents[E]) => void events.push({ ch, data })
   sync = new SyncManager({ db, store, blobs, secrets, sessionSecrets: new MemorySecrets(), emit })
   h = createHandlers({
+    files: new FileGrants(),
     db, blobs, store, sync, secrets,
     exports: new ExportManager({ db, store, blobs, emit, newClient: (id) => sync.newImapClient(id) }), sessionSecrets: new MemorySecrets(), emit,
     dataDir: dir, appVersion: 'test', sqlite: 'x',

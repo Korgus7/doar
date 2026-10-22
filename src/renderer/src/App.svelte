@@ -10,6 +10,9 @@
   import StatusBar from './components/StatusBar.svelte'
   import BackupDialog from './components/BackupDialog.svelte'
   import { backup, initBackupEvents } from './lib/backup.svelte'
+  import SettingsDialog from './components/SettingsDialog.svelte'
+  import { openSettings } from './lib/settings.svelte'
+  import { setSelection } from './lib/mail.svelte'
 
   let info = $state<AppInfo | null>(null)
   let ready = $state(false)
@@ -61,6 +64,12 @@
       window.doar.onMenuAction((action) => {
         if (action === 'add-account') wizardOpen = true
         else if (action === 'backup' && mail.accounts.length) backup.open = true
+        else if (action === 'settings') openSettings({ tab: mail.accounts.length ? 'accounts' : 'general' })
+        else if (action.startsWith('open-message:')) {
+          // Kliknutie na oznámenie o novej pošte: doručená pošta a tá správa.
+          const id = Number(action.slice('open-message:'.length))
+          if (Number.isInteger(id)) void selectFolder(null).then(() => setSelection([id]))
+        }
       }),
       initBackupEvents(),
       window.doar.on('accounts.changed', () => void loadAccounts().then(() => scheduleRefresh([], true))),
@@ -69,6 +78,13 @@
       window.doar.on('sync.status', (s) => (mail.statuses[s.accountId] = s))
     ]
     return () => offs.forEach((off) => off())
+  })
+
+  // Neprečítané v doručenej pošte: odznak na ikone aplikácie a v názve okna.
+  $effect(() => {
+    const n = mail.folders.filter((f) => f.specialUse === 'inbox').reduce((s, f) => s + f.unread, 0)
+    window.doar.setUnreadCount(n)
+    document.title = n ? `Doar (${n})` : 'Doar'
   })
 
   function errorText(code: string | undefined): string {
@@ -124,6 +140,7 @@
   <StatusBar text={status.text} tone={status.tone} onclick={backup.progress ? () => (backup.open = true) : undefined} />
 </div>
 <BackupDialog />
+<SettingsDialog />
 
 <style>
   .app {

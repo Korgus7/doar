@@ -60,6 +60,22 @@ function realAttachments(p: ParsedMail): ParsedMail['attachments'] {
   return p.attachments.filter((a) => !(a.related && a.contentId && (a.contentType ?? '').startsWith('image/')))
 }
 
+export interface AttachmentContent {
+  filename: string
+  contentType: string
+  content: Buffer
+}
+
+/** Prílohy správy s obsahom – v rovnakom poradí (index) ako v `renderMessage`. */
+export async function extractAttachments(raw: Buffer): Promise<AttachmentContent[]> {
+  const p = await parse(raw)
+  return realAttachments(p).map((a, index) => ({
+    filename: a.filename ?? `priloha-${index + 1}`,
+    contentType: a.contentType ?? 'application/octet-stream',
+    content: a.content
+  }))
+}
+
 export async function indexInfo(raw: Buffer): Promise<IndexInfo> {
   const p = await parse(raw)
   const text = plainText(p).replace(/\s+/g, ' ').trim()

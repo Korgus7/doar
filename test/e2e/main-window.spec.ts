@@ -122,6 +122,7 @@ test('hlavné okno: priečinky, zoznam, čítanie, bezpečné HTML, prečítané
 
   // Klávesnica: šípky v zozname.
   await folders.getByRole('button', { name: /^Doručená pošta/ }).click()
+  await expect(list.getByRole('option', { name: /Pozvánka na stretnutie/ })).toBeVisible()
   await list.focus()
   await win.keyboard.press('ArrowDown')
   await expect(list.getByRole('option', { selected: true })).toHaveCount(1)

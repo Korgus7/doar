@@ -8,7 +8,42 @@ export interface AccountSummary {
   email: string
   name: string
   color: string
+  /** Meno odosielateľa (From). */
+  displayName: string
+  /** Podpis (čistý text), vkladá sa do nových správ a odpovedí. */
+  signature: string
 }
+
+/** Podrobnosti konta pre nastavenia (bez hesla). */
+export interface AccountDetails extends AccountSummary {
+  username: string
+  imap: ServerSettings
+  smtp: ServerSettings
+  saveSentCopy: boolean
+  passwordStorage: 'os' | 'session'
+  /** Správy tohto konta, ktoré ešte čakajú na odoslanie (pri odstránení konta by sa stratili). */
+  pendingOutbox: number
+}
+
+export interface AccountPatch {
+  displayName?: string
+  name?: string
+  color?: string
+  signature?: string
+  saveSentCopy?: boolean
+}
+
+/** Všeobecné nastavenia aplikácie (v databáze, tabuľka settings). */
+export interface AppSettings {
+  /** Upozorniť systémovým oznámením na novú poštu v doručenej pošte. */
+  notifyNewMail: boolean
+  /** V oznámení ukázať odosielateľa a predmet (inak len „Nová pošta“). */
+  notifyShowContent: boolean
+  /** Nové správy písať formátované (HTML); inak čistý text. */
+  composeHtml: boolean
+}
+
+export const ACCOUNT_COLORS = ['#3b82f6', '#e8590c', '#2f9e44', '#ae3ec9', '#0c8599', '#e03131', '#f08c00', '#5c7cfa'] as const
 
 export interface AppInfo {
   version: string
@@ -183,7 +218,49 @@ export interface OutboxItem {
   createdAt: string
 }
 
-export type ComposeMode = 'new' | 'reply' | 'replyAll'
+export type ComposeMode = 'new' | 'reply' | 'replyAll' | 'forward' | 'draft'
+
+export function isComposeMode(v: unknown): v is ComposeMode {
+  return v === 'new' || v === 'reply' || v === 'replyAll' || v === 'forward' || v === 'draft'
+}
+
+/** Príloha v okne správy: súbor z disku (povolený cez dialóg alebo pretiahnutie), alebo príloha inej správy (preposlanie). */
+export type ComposeAttachment =
+  | { kind: 'file'; path: string }
+  | { kind: 'message'; messageId: number; index: number }
+  /** Príloha uložená v koncepte (obsah je už v lokálnom úložisku). */
+  | { kind: 'blob'; sha: string; name: string; contentType?: string }
+
+/** Súbor vybraný v dialógu alebo pretiahnutý do okna. */
+export interface PickedFile {
+  path: string
+  name: string
+  size: number
+}
+
+/** Najväčšia celková veľkosť príloh jednej správy (pred zakódovaním). */
+export const MAX_ATTACHMENTS_BYTES = 50 * 1024 * 1024
+/** Nad touto veľkosťou upozorníme – mnohé servery neprijmú správu väčšiu než 20–25 MB. */
+export const WARN_ATTACHMENTS_BYTES = 20 * 1024 * 1024
+
+/**
+ * Prípony súborov, ktoré by sa po otvorení spustili ako program. Doar ich nikdy neotvorí,
+ * dajú sa len uložiť (a systém ich označí ako stiahnuté z internetu).
+ */
+const DANGEROUS_EXT = new Set(
+  (
+    'exe com scr pif bat cmd ps1 ps1xml ps2 psm1 psd1 vbs vbe js jse wsf wsh wsc hta msi msp mst cpl msc jar lnk url reg inf scf ' +
+    'application appref-ms gadget vb sct shb shs chm hlp ade adp mde mda accde iso img vhd vhdx appx appxbundle msix msixbundle ' +
+    'xll xlam ppam docm dotm xlsm xltm pptm potm app command sh run bin desktop'
+  ).split(' ')
+)
+/** Podpriečinok dátového priečinka pre dočasné kópie otvorených príloh. */
+export const OPEN_ATTACHMENTS_DIR = 'otvorene-prilohy'
+
+export function isDangerousFile(name: string): boolean {
+  const ext = /\.([^.\\/]+)$/.exec(name.trim().replace(/[.\s]+$/, ''))?.[1]?.toLowerCase()
+  return !ext || DANGEROUS_EXT.has(ext)
+}
 
 export interface ComposePrefill {
   accountId: number
@@ -192,7 +269,32 @@ export interface ComposePrefill {
   subject: string
   /** Údaje pôvodnej správy pre citáciu (text zostaví rozhranie v jazyku používateľa). */
   quote: { from: Address[]; date: string | null; text: string } | null
+  /** Preposlanie: hlavička a text pôvodnej správy (blok zostaví rozhranie v jazyku používateľa). */
+  forward: { from: Address[]; to: Address[]; cc: Address[]; date: string | null; subject: string; text: string } | null
+  /** Prílohy pôvodnej správy (preposlanie) alebo konceptu – s odkazom, ktorý sa pošle pri odoslaní. */
+  attachments: { source: ComposeAttachment; filename: string; size: number }[]
   replyToMessage: number | null
+  /** Otvorený koncept (lokálne ID), inak null. */
+  draftId: number | null
+  /** Pri koncepte: polia a text presne tak, ako ich používateľ napísal (aj s neplatnou adresou). */
+  draft: { to: string; cc: string; bcc: string; text: string; html: string | null } | null
+}
+
+/** Uloženie konceptu z okna správy. */
+export interface DraftSaveInput {
+  draftId: number | null
+  accountId: number
+  to: string
+  cc: string
+  bcc: string
+  subject: string
+  text: string
+  replyToMessage: number | null
+  attachments: ComposeAttachment[]
+  /** Formátovaný text (HTML z editora), alebo null pri čistom texte. */
+  html?: string | null
+  /** Nahrať na server hneď (zatvorenie okna), nie až po odklade. */
+  flush?: boolean
 }
 
 export interface ComposeSendInput {
@@ -203,6 +305,11 @@ export interface ComposeSendInput {
   subject: string
   text: string
   replyToMessage: number | null
+  attachments?: ComposeAttachment[]
+  /** Formátovaný text (HTML z editora). Jadro ho prečistí a textovú podobu vytvorí samo; null = čistý text. */
+  html?: string | null
+  /** Odoslaný koncept sa po zaradení do fronty zmaže (aj na serveri). */
+  draftId?: number | null
 }
 
 export type ExportPhase = 'scan' | 'check' | 'download' | 'write'
@@ -283,6 +390,45 @@ export interface CoreRequests {
   'export.start': [{ accountId: number; path: string }, { jobId: number }]
   'export.cancel': [{ jobId: number }, void]
   'export.state': [void, ExportState]
+  'messages.move': [{ ids: number[]; folderId?: number; special?: 'trash' | 'archive' | 'junk' | 'inbox' }, { undo: number[]; count: number }]
+  'messages.deleteForever': [{ ids: number[] }, void]
+  'messages.undo': [{ undo: number[] }, { undone: boolean }]
+  'messages.listIds': [{ folderId: number | null }, number[]]
+  'folders.create': [{ accountId: number; parentId: number | null; name: string }, { folderId: number }]
+  /** Uloží prílohu do súboru zvoleného v dialógu (chooseSavePath). */
+  'attachments.save': [{ messageId: number; index: number; path: string }, void]
+  /** Uloží všetky prílohy do priečinka zvoleného v dialógu (chooseFolder). Vráti názvy uložených súborov. */
+  'attachments.saveAll': [{ messageId: number; dir: string }, { saved: string[] }]
+  /** Pripraví prílohu na otvorenie (dočasný súbor). Spustiteľné súbory odmietne. */
+  'attachments.prepareOpen': [{ messageId: number; index: number }, { path: string }]
+  /** Uloží koncept lokálne a naplánuje nahratie na server. Prílohy vráti ako uložené (kind 'blob') v rovnakom poradí. */
+  'drafts.save': [DraftSaveInput, { draftId: number; attachments: ComposeAttachment[] }]
+  /** Zahodí koncept (aj kópiu na serveri). */
+  'drafts.discard': [{ draftId: number }, void]
+  /** Uložený koncept nahrať na server hneď (zatvorenie okna). */
+  'drafts.flush': [{ draftId: number }, void]
+  /** Vyhľadávanie (rozsah: priečinok, konto, alebo všetko). Neplatný/prázdny dotaz → prázdny výsledok. */
+  'messages.search': [SearchInput & { offset: number; limit: number }, { total: number; items: MessageListItem[]; notDownloaded: number }]
+  'messages.searchIds': [SearchInput, number[]]
+  'accounts.get': [{ id: number }, AccountDetails]
+  'accounts.update': [{ id: number; patch: AccountPatch }, AccountSummary]
+  /** Overí nové nastavenia servera (s novým alebo uloženým heslom) a len ak sú v poriadku, uloží ich. */
+  'accounts.updateServer': [
+    { id: number; username: string; imap: ServerSettings; smtp: ServerSettings; password?: string },
+    { saved: boolean; test: ConnectionTestResult }
+  ]
+  /** Odstráni konto z Doaru (aj jeho lokálnu kópiu pošty). Pošta na serveri zostane. */
+  'accounts.remove': [{ id: number }, void]
+  'settings.get': [void, AppSettings]
+  'settings.set': [Partial<AppSettings>, AppSettings]
+  /** Návrhy adries pri písaní (komu ste písali, od koho ste dostali poštu). */
+  'addresses.suggest': [{ query: string; limit?: number }, Address[]]
+}
+
+export interface SearchInput {
+  query: string
+  folderId?: number | null
+  accountId?: number | null
 }
 
 /** Udalosti core → rozhranie. */
@@ -319,7 +465,27 @@ export const REQUEST_CHANNELS = [
   'outbox.resolve',
   'export.start',
   'export.cancel',
-  'export.state'
+  'export.state',
+  'messages.move',
+  'messages.deleteForever',
+  'messages.undo',
+  'messages.listIds',
+  'folders.create',
+  'attachments.save',
+  'attachments.saveAll',
+  'attachments.prepareOpen',
+  'drafts.save',
+  'drafts.discard',
+  'drafts.flush',
+  'messages.search',
+  'messages.searchIds',
+  'accounts.get',
+  'accounts.update',
+  'accounts.updateServer',
+  'accounts.remove',
+  'settings.get',
+  'settings.set',
+  'addresses.suggest'
 ] as const satisfies readonly RequestChannel[]
 
 export function isRequestChannel(ch: unknown): ch is RequestChannel {
@@ -357,6 +523,25 @@ export interface DoarApi {
   chooseExportFile(defaultName: string): Promise<string | null>
   /** Ukáže súbor zálohy v Prieskumníkovi (len súbor zvolený cez chooseExportFile). */
   showInFolder(path: string): void
+  /** Dialóg „Priložiť súbory“ – vybrané súbory smie jadro čítať. */
+  chooseAttachFiles(): Promise<PickedFile[]>
+  /** Súbory pretiahnuté do okna (objekty File z udalosti drop) – smie ich čítať jadro. */
+  filesFromDrop(files: File[]): Promise<PickedFile[]>
+  /** Dialóg „Uložiť ako“ pre prílohu. Vráti cestu (povolenú na zápis), alebo null. */
+  chooseSavePath(defaultName: string): Promise<string | null>
+  /** Dialóg výberu priečinka (Uložiť všetky prílohy). */
+  chooseFolder(): Promise<string | null>
+  /** Otvorí dočasný súbor prílohy v predvolenom programe (len súbory pripravené jadrom, nikdy spustiteľné). */
+  openAttachmentFile(path: string): Promise<boolean>
+  /**
+   * Okno správy oznámi, ktorý koncept upravuje. Ak ho už upravuje iné okno, vráti false
+   * (to okno sa zobrazí navrchu a toto sa má zavrieť).
+   */
+  claimDraft(draftId: number): Promise<boolean>
+  /** Počet neprečítaných v doručenej pošte – odznak na ikone aplikácie. */
+  setUnreadCount(n: number): void
+  /** Vytlačí pripravený dokument (správu) cez systémový dialóg tlače. */
+  printHtml(html: string, title: string): void
 }
 
 /** Správy core ↔ main (tajomstvá a pod.). Rozhranie k nim nemá prístup. */
@@ -366,9 +551,13 @@ export type CoreToMain =
   | { kind: 'secret.delete'; id: number; key: string }
   | { kind: 'secret.status'; id: number }
   | { kind: 'ready' }
+  /** Nová pošta v doručenej pošte (main ukáže systémové oznámenie). Bez obsahu, ak to používateľ vypol. */
+  | { kind: 'newMail'; accountEmail: string; count: number; messageId: number; from: string | null; subject: string | null }
 
 export type MainToCore =
   | { kind: 'init'; dataDir: string; appVersion: string }
   /** Používateľ zvolil v natívnom dialógu súbor zálohy – jadro smie zapisovať len do takto povolených ciest. */
   | { kind: 'export.allow'; path: string }
+  /** Súbor/priečinok zvolený používateľom v natívnom dialógu (alebo pretiahnutý) – jadro s ním smie pracovať. */
+  | { kind: 'files.allow'; path: string; mode: 'read' | 'write' | 'dir' }
   | { kind: 'secret.result'; id: number; ok: boolean; value?: string | null; error?: string }

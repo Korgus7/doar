@@ -8,10 +8,13 @@ import { indexInfo } from '../mail/parse'
 import { classifyError } from '../mail/connection-test'
 import { sendRaw, type SendOutcome } from '../mail/smtp'
 import { stripBcc } from '../mail/compose'
+import { buildDraftRaw } from '../drafts'
 import type { OutboxRow } from '../store/mailstore'
 import { logger } from '../log'
 
 const log = logger('sync')
+
+const DEFAULT_NAMES = { sent: 'Sent', trash: 'Trash', archive: 'Archive', junk: 'Junk', drafts: 'Drafts' } as const
 
 const HEADER_CHUNK = 250
 const BODY_CHUNK = 20
@@ -43,6 +46,8 @@ export interface SyncDeps {
   clientFactory?: (account: AccountRow, password: string, idle: boolean) => ImapFlow
   /** Pre testy: vlastné odoslanie SMTP. */
   smtpSend?: typeof sendRaw
+  /** Nové neprečítané správy v doručenej pošte (nie pri prvej synchronizácii). */
+  onNewMail?: (n: { accountId: number; folderId: number; messageIds: number[] }) => void
 }
 
 const SPECIAL: Record<string, SpecialUse> = {
@@ -128,6 +133,7 @@ export class AccountSync {
   start(): void {
     this.stopped = false
     void this.processOutboxNow().catch(() => {})
+    void this.pushOperations().catch(() => {})
     void this.requestSync()
     void this.startWatcher()
     const t = setInterval(() => void this.requestSync(), PERIODIC_MS)
@@ -442,19 +448,45 @@ export class AccountSync {
 
   /** Priečinok Odoslané – ak na serveri neexistuje, Doar ho založí. */
   private async sentFolder(client: ImapFlow): Promise<FolderRow> {
+    return this.ensureSpecialFolder(client, 'sent')
+  }
+
+  /** Špeciálny priečinok konta – ak na serveri chýba, Doar ho založí s bežným názvom. */
+  async ensureSpecialFolder(client: ImapFlow, use: 'sent' | 'trash' | 'archive' | 'junk' | 'drafts'): Promise<FolderRow> {
     const store = this.deps.store
-    let f = store.folderRows(this.account.id).find((x) => x.special_use === 'sent')
-    if (f) return f
-    const path = 'Sent'
+    const existing = store.specialFolder(this.account.id, use)
+    if (existing) return existing
+    const path = DEFAULT_NAMES[use]
     try {
       await client.mailboxCreate(path)
     } catch (e) {
       if (!client.usable) throw e // existujúci priečinok je v poriadku
     }
-    store.markSpecialUse(this.account.id, path, 'sent')
+    store.markSpecialUse(this.account.id, path, use)
     this.deps.emit('folders.changed', { accountId: this.account.id })
-    f = store.folderRows(this.account.id).find((x) => x.special_use === 'sent')!
-    return f
+    return store.specialFolder(this.account.id, use)!
+  }
+
+  /** Nový priečinok na serveri (voliteľne vnorený). Vráti jeho ID v lokálnej databáze. */
+  createFolder(parentPath: string | null, name: string): Promise<number> {
+    let result = 0
+    return this.enqueue(`create:${parentPath ?? ''}/${name}`, 1, async () => {
+      const client = await this.ensureClient()
+      const list = await client.list()
+      const delimiter = list.find((f) => f.delimiter)?.delimiter || '/'
+      if (name.includes(delimiter)) throw Object.assign(new Error('Názov obsahuje oddeľovač priečinkov'), { code: 'INVALID_FOLDER_NAME' })
+      const path = parentPath ? `${parentPath}${delimiter}${name}` : name
+      if (list.some((f) => f.path.toLowerCase() === path.toLowerCase())) throw Object.assign(new Error('Priečinok už existuje'), { code: 'FOLDER_EXISTS' })
+      try {
+        await client.mailboxCreate(path)
+      } catch (e) {
+        if (!client.usable) throw e
+        throw Object.assign(new Error('Server priečinok nevytvoril'), { code: 'FOLDER_CREATE_FAILED', detail: (e as { responseText?: string }).responseText })
+      }
+      this.deps.store.syncFolders(this.account.id, (await client.list()).map(toFolderInfo))
+      this.deps.emit('folders.changed', { accountId: this.account.id })
+      result = this.deps.store.folderRows(this.account.id).find((f) => f.path === path)?.id ?? 0
+    }).then(() => result)
   }
 
   private async existsInFolder(client: ImapFlow, path: string, messageId: string): Promise<boolean> {
@@ -517,8 +549,11 @@ export class AccountSync {
       if (folder.uidvalidity !== null && folder.uidvalidity !== uidvalidity) {
         log.info('zmena UIDVALIDITY – priečinok sa načíta znova', { account: this.account.id, folder: folder.id })
         store.resetFolder(folder.id, uidvalidity)
-        folder = { ...folder, uidvalidity, highestmodseq: null }
+        folder = { ...folder, uidvalidity, highestmodseq: null, uidnext: null }
       }
+      // Upozorniť len na správy, ktoré prišli od minulej synchronizácie doručenej pošty (nie pri prvom načítaní).
+      const notifyFrom = folder.special_use === 'inbox' ? folder.uidnext : null
+      const arrived: number[] = []
 
       const serverUids = mb.exists > 0 ? ((await client.search({ all: true }, { uid: true })) || []) : []
       const serverSet = new Set(serverUids)
@@ -535,6 +570,11 @@ export class AccountSync {
         if (store.insertHeaders(this.account.id, folder.id, headers) > 0) {
           this.deps.emit('messages.changed', { folderIds: [folder.id] })
         }
+        if (notifyFrom !== null) for (const h of headers) if (h.uid >= notifyFrom && !h.flags.has('\\Seen')) arrived.push(h.uid)
+      }
+      if (arrived.length && this.deps.onNewMail) {
+        const ids = arrived.map((uid) => store.messageByUid(folder.id, uid)).filter((x): x is number => x !== null)
+        if (ids.length) this.deps.onNewMail({ accountId: this.account.id, folderId: folder.id, messageIds: ids })
       }
 
       // Príznaky: s CONDSTORE len zmenené od minulej synchronizácie, inak všetky.
@@ -616,40 +656,178 @@ export class AccountSync {
     }
   }
 
-  /** Lokálne zmeny príznakov → server. */
+  /** Lokálne zmeny (príznaky, presuny, mazanie) → server. */
   private async processOperations(): Promise<void> {
     const store = this.deps.store
     const ops = store.pendingOperations(this.account.id)
-    if (!ops.length) return
-    const client = await this.ensureClient()
-    for (const op of ops) {
-      if (op.kind !== 'flags') {
-        store.finishOperation(op.id, false, 'UNKNOWN_OPERATION')
-        continue
+    if (ops.length) {
+      const client = await this.ensureClient()
+      for (const op of ops) {
+        if (this.stopped) return
+        // Medzitým zrušená cez „Vrátiť späť“ → preskočiť.
+        if (!store.claimOperation(op.id)) continue
+        const touched = new Set<number>()
+        try {
+          await this.runOperation(client, op.kind, op.payload, touched)
+          store.finishOperation(op.id, true)
+        } catch (e) {
+          if (!client.usable) {
+            store.releaseOperation(op.id)
+            throw e
+          }
+          const code = classifyError(e).code
+          log.warn('server odmietol zmenu', { account: this.account.id, kind: op.kind, code })
+          store.finishOperation(op.id, false, code)
+          if (op.attempts + 1 >= 3) this.giveUp(op.kind, op.payload, touched)
+        }
+        this.deps.emit('messages.changed', { folderIds: [...touched] })
       }
-      const p = op.payload as { folderId: number; uids: number[]; messageIds: number[]; add: string[]; remove: string[] }
+    }
+    this.scheduleDelayedOperations()
+  }
+
+  private delayedTimer: NodeJS.Timeout | null = null
+
+  /** Odložené operácie (čas na „Vrátiť späť“) sa spustia, keď uplynie ich čas. */
+  scheduleDelayedOperations(): void {
+    const ms = this.deps.store.nextDelayedOperation(this.account.id)
+    if (ms === null || this.stopped) return
+    if (this.delayedTimer) clearTimeout(this.delayedTimer)
+    const t = setTimeout(() => {
+      this.timers.delete(t)
+      if (this.delayedTimer === t) this.delayedTimer = null
+      void this.pushOperations().catch(() => {})
+    }, ms + 50)
+    this.delayedTimer = t
+    this.timers.add(t)
+  }
+
+  private async runOperation(client: ImapFlow, kind: string, payload: unknown, touched: Set<number>): Promise<void> {
+    const store = this.deps.store
+    if (kind === 'flags') {
+      const p = payload as { folderId: number; uids: number[]; messageIds: number[]; add: string[]; remove: string[] }
+      touched.add(p.folderId)
       const folder = store.folder(p.folderId)
-      if (!folder) {
-        store.finishOperation(op.id, true)
-        continue
-      }
+      if (!folder) return
       const lock = await client.getMailboxLock(folder.path)
       try {
         const range = p.uids.join(',')
         if (p.add.length) await client.messageFlagsAdd(range, p.add, { uid: true })
         if (p.remove.length) await client.messageFlagsRemove(range, p.remove, { uid: true })
-        store.finishOperation(op.id, true)
-        store.setLocalState(p.messageIds, 'synced')
-      } catch (e) {
-        const code = classifyError(e).code
-        // Chyba spojenia → operácia ostáva čakať. Odmietnutie serverom → po 3 pokusoch zlyhaná.
-        if (!client.usable) throw e
-        store.finishOperation(op.id, false, code)
-        if (op.attempts + 1 >= 3) store.setLocalState(p.messageIds, 'failed')
       } finally {
         lock.release()
       }
-      this.deps.emit('messages.changed', { folderIds: [p.folderId] })
+      store.setLocalState(p.messageIds, 'synced')
+    } else if (kind === 'move') {
+      const p = payload as MovePayload
+      touched.add(p.fromFolderId)
+      const from = store.folder(p.fromFolderId)
+      if (!from) return
+      const target = p.toFolderId ? store.folder(p.toFolderId) : await this.ensureSpecialFolder(client, p.toSpecial!)
+      if (!target) throw Object.assign(new Error('Cieľový priečinok neexistuje'), { code: 'NO_TARGET' })
+      touched.add(target.id)
+      const lock = await client.getMailboxLock(from.path)
+      let uidMap: Map<number, number> | undefined
+      try {
+        const res = await client.messageMove(p.uids.join(','), target.path, { uid: true })
+        uidMap = res ? res.uidMap : undefined
+      } finally {
+        lock.release()
+      }
+      store.completeMove(p.messageIds, p.uids, target.id, uidMap)
+      this.deps.emit('folders.changed', { accountId: this.account.id })
+    } else if (kind === 'expunge') {
+      const p = payload as { folderId: number; uids: number[]; messageIds: number[] }
+      touched.add(p.folderId)
+      const folder = store.folder(p.folderId)
+      if (!folder) return
+      const lock = await client.getMailboxLock(folder.path)
+      try {
+        await client.messageDelete(p.uids.join(','), { uid: true })
+      } finally {
+        lock.release()
+      }
+      store.deleteMessages(p.messageIds)
+      this.deps.emit('folders.changed', { accountId: this.account.id })
+    } else if (kind === 'draft') {
+      // Nahratie konceptu: nová verzia do Konceptov, potom odstránenie predošlých verzií.
+      const p = payload as { draftId: number }
+      const row = store.draft(p.draftId)
+      if (!row || row.deleted || row.account_id !== this.account.id || row.server_rev >= row.rev) return
+      const rev = row.rev
+      const raw = await buildDraftRaw(store, this.deps.blobs, row, { name: this.account.display_name, address: this.account.email })
+      const folder = await this.ensureSpecialFolder(client, 'drafts')
+      touched.add(folder.id)
+      const res = await client.append(folder.path, raw, ['\\Draft', '\\Seen'], new Date())
+      const newUid = res && typeof res === 'object' && typeof res.uid === 'number' ? res.uid : null
+      const oldUid = row.server_folder_id === folder.id ? row.server_uid : null
+      const kept = await this.removeDraftCopies(client, folder.path, row.message_id, oldUid, newUid ?? 'newest')
+      store.setDraftServer(row.id, folder.id, kept, rev)
+      await this.syncFolder(client, store.folder(folder.id)!)
+      this.scheduleBodies()
+    } else if (kind === 'draftDelete') {
+      // Zahodený alebo odoslaný koncept: preč zo servera, potom aj lokálny záznam.
+      const p = payload as { draftId: number }
+      const row = store.draft(p.draftId)
+      if (!row) return
+      const folder = row.server_folder_id ? store.folder(row.server_folder_id) : null
+      if (folder && folder.account_id === this.account.id) {
+        touched.add(folder.id)
+        await this.removeDraftCopies(client, folder.path, row.message_id, row.server_uid, null)
+        await this.syncFolder(client, folder)
+      }
+      store.deleteDraft(row.id)
+    } else if (kind === 'draftRemove') {
+      // Koncept sa presunul na iné konto – kópia v Konceptoch tohto konta už nepatrí.
+      const p = payload as { folderId: number; messageId: string; uid: number | null }
+      const folder = store.folder(p.folderId)
+      if (!folder) return
+      touched.add(folder.id)
+      await this.removeDraftCopies(client, folder.path, p.messageId, p.uid, null)
+      await this.syncFolder(client, folder)
+    } else {
+      throw Object.assign(new Error('Neznáma operácia'), { code: 'UNKNOWN_OPERATION' })
     }
   }
+
+  /**
+   * Odstráni verzie konceptu v priečinku (podľa Message-ID a známeho UID). Ponechá `keep` –
+   * UID práve nahratej verzie, alebo 'newest' (server bez UIDPLUS: najnovšia nájdená). Vráti UID ponechanej verzie.
+   */
+  private async removeDraftCopies(client: ImapFlow, path: string, messageId: string, knownUid: number | null, keep: number | 'newest' | null): Promise<number | null> {
+    const lock = await client.getMailboxLock(path)
+    try {
+      await client.noop()
+      const found = messageId ? (await client.search({ header: { 'message-id': messageId } }, { uid: true })) || [] : []
+      const uids = new Set<number>(found)
+      if (knownUid) uids.add(knownUid)
+      let kept: number | null = null
+      if (keep === 'newest') kept = found.length ? Math.max(...found) : null
+      else if (typeof keep === 'number') kept = keep
+      if (kept !== null) uids.delete(kept)
+      if (uids.size) await client.messageDelete([...uids].join(','), { uid: true })
+      return kept
+    } finally {
+      lock.release()
+    }
+  }
+
+  /** Server zmenu opakovane odmietol – správy sa znova zobrazia a označia ako neúspešné. */
+  private giveUp(kind: string, payload: unknown, touched: Set<number>): void {
+    const p = payload as { messageIds?: number[]; folderId?: number; fromFolderId?: number }
+    const ids = p.messageIds ?? []
+    if (kind === 'move' || kind === 'expunge') this.deps.store.setHidden(ids, false)
+    this.deps.store.setLocalState(ids, 'failed')
+    const f = p.fromFolderId ?? p.folderId
+    if (f) touched.add(f)
+  }
+}
+
+export interface MovePayload {
+  fromFolderId: number
+  uids: number[]
+  messageIds: number[]
+  /** Konkrétny cieľový priečinok, alebo špeciálny, ktorý sa v prípade potreby založí. */
+  toFolderId?: number
+  toSpecial?: 'trash' | 'archive' | 'junk'
 }

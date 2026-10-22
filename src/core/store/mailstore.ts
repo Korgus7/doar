@@ -114,8 +114,8 @@ export class MailStore {
       .prepare(
         `SELECT f.id, f.account_id AS accountId, f.path, f.name, f.parent_path AS parentPath, f.special_use AS specialUse, f.selectable,
                 f.total_count AS total, f.synced_bodies_count AS syncedBodies, f.delimiter,
-                (SELECT COUNT(*) FROM messages m WHERE m.folder_id = f.id AND m.seen = 0) AS unread,
-                (SELECT COUNT(*) FROM messages m WHERE m.folder_id = f.id) AS localCount
+                (SELECT COUNT(*) FROM messages m WHERE m.folder_id = f.id AND m.seen = 0 AND m.hidden = 0) AS unread,
+                (SELECT COUNT(*) FROM messages m WHERE m.folder_id = f.id AND m.hidden = 0) AS localCount
          FROM folders f ${accountId === undefined ? '' : 'WHERE f.account_id = ?'}`
       )
       .all(...(accountId === undefined ? [] : [accountId])) as unknown as (Omit<FolderItem, 'selectable' | 'depth'> & { selectable: number; delimiter: string | null })[]
@@ -305,8 +305,55 @@ export class MailStore {
 
   /** Zoznam správ priečinka alebo spoločnej doručenej pošty (folderId = null), od najnovších. */
   listMessages(folderId: number | null, offset: number, limit: number): { total: number; items: MessageListItem[] } {
-    const where = folderId === null ? `f.special_use = 'inbox'` : 'm.folder_id = ?'
-    const args = folderId === null ? [] : [folderId]
+    const where = `${folderId === null ? `f.special_use = 'inbox'` : 'm.folder_id = ?'} AND m.hidden = 0`
+    return this.queryList(where, folderId === null ? [] : [folderId], offset, limit)
+  }
+
+  /**
+   * Vyhľadávanie vo fulltexte (dotaz FTS5 zo `search.ts`). Rozsah: priečinok, konto alebo všetko.
+   * Vráti aj počet správ v rozsahu, ktorých text ešte nie je stiahnutý (hľadá sa v nich len v hlavičkách).
+   */
+  searchMessages(
+    fts: string,
+    scope: { folderId?: number | null; accountId?: number | null },
+    offset: number,
+    limit: number
+  ): { total: number; items: MessageListItem[]; notDownloaded: number } {
+    const { where, args } = this.searchWhere(fts, scope)
+    const r = this.queryList(where, args, offset, limit)
+    const scopeOnly = this.scopeWhere(scope)
+    const notDownloaded = (this.db
+      .prepare(`SELECT COUNT(*) AS c FROM messages m JOIN folders f ON f.id = m.folder_id WHERE ${scopeOnly.where} AND m.blob_sha256 IS NULL`)
+      .get(...scopeOnly.args) as { c: number }).c
+    return { ...r, notDownloaded }
+  }
+
+  searchIds(fts: string, scope: { folderId?: number | null; accountId?: number | null }): number[] {
+    const { where, args } = this.searchWhere(fts, scope)
+    return (this.db
+      .prepare(`SELECT m.id FROM messages m JOIN folders f ON f.id = m.folder_id WHERE ${where} ORDER BY COALESCE(m.internal_date, m.date_header) DESC, m.id DESC`)
+      .all(...args) as { id: number }[]).map((r) => r.id)
+  }
+
+  private scopeWhere(scope: { folderId?: number | null; accountId?: number | null }): { where: string; args: (string | number)[] } {
+    const parts = ['m.hidden = 0']
+    const args: (string | number)[] = []
+    if (scope.folderId != null) {
+      parts.push('m.folder_id = ?')
+      args.push(scope.folderId)
+    } else if (scope.accountId != null) {
+      parts.push('m.account_id = ?')
+      args.push(scope.accountId)
+    }
+    return { where: parts.join(' AND '), args }
+  }
+
+  private searchWhere(fts: string, scope: { folderId?: number | null; accountId?: number | null }): { where: string; args: (string | number)[] } {
+    const s = this.scopeWhere(scope)
+    return { where: `${s.where} AND m.id IN (SELECT rowid FROM messages_fts WHERE messages_fts MATCH ?)`, args: [...s.args, fts] }
+  }
+
+  private queryList(where: string, args: (string | number)[], offset: number, limit: number): { total: number; items: MessageListItem[] } {
     const total = (this.db.prepare(`SELECT COUNT(*) AS c FROM messages m JOIN folders f ON f.id = m.folder_id WHERE ${where}`).get(...args) as { c: number }).c
     const items = this.db
       .prepare(
@@ -429,6 +476,41 @@ export class MailStore {
     }))
   }
 
+  /** Mená adresátov z písania (počet použití sa zvýši až po odoslaní). */
+  rememberNames(list: { name: string; address: string }[]): void {
+    const st = this.db.prepare(`INSERT INTO addresses (email, name, use_count, last_used) VALUES (lower(?), ?, 0, NULL)
+      ON CONFLICT(email) DO UPDATE SET name = CASE WHEN excluded.name != '' THEN excluded.name ELSE addresses.name END`)
+    for (const a of list) st.run(a.address, a.name)
+  }
+
+  /**
+   * Návrhy adries: najprv tie, na ktoré používateľ písal (podľa počtu a času), potom odosielatelia doručenej pošty.
+   * Hľadá sa od začiatku slova v mene alebo adrese, bez ohľadu na diakritiku.
+   */
+  suggestAddresses(query: string, limit: number): { name: string; address: string }[] {
+    const fold = (s: string): string => s.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase()
+    const q = fold(query.trim())
+    if (!q) return []
+    const words = (s: string): string[] => fold(s).split(/[\s.@_<>"',-]+/).filter(Boolean)
+    const hit = (name: string, address: string): boolean => fold(address).startsWith(q) || [...words(name), ...words(address)].some((w) => w.startsWith(q)) || fold(name).startsWith(q)
+    const out = new Map<string, { name: string; address: string }>()
+    const sent = this.db
+      .prepare(`SELECT email AS address, name FROM addresses ORDER BY use_count DESC, last_used DESC LIMIT 5000`)
+      .all() as { address: string; name: string }[]
+    for (const r of sent) if (hit(r.name, r.address) && !out.has(r.address)) out.set(r.address, r)
+    if (out.size < limit) {
+      // Odosielatelia doručenej pošty, najčastejší najprv (diakritiku a začiatky slov rieši `hit`).
+      const rows = this.db
+        .prepare(
+          `SELECT lower(from_addr) AS address, MAX(from_name) AS name, COUNT(*) AS c FROM messages
+           WHERE from_addr != '' GROUP BY lower(from_addr) ORDER BY c DESC LIMIT 5000`
+        )
+        .all() as { address: string; name: string | null }[]
+      for (const r of rows) if (hit(r.name ?? '', r.address) && !out.has(r.address)) out.set(r.address, { name: r.name ?? '', address: r.address })
+    }
+    return [...out.values()].slice(0, limit)
+  }
+
   rememberAddresses(list: { name: string; address: string }[]): void {
     const st = this.db.prepare(`INSERT INTO addresses (email, name, use_count, last_used) VALUES (lower(?), ?, 1, strftime('%Y-%m-%dT%H:%M:%fZ','now'))
       ON CONFLICT(email) DO UPDATE SET use_count = use_count + 1, last_used = excluded.last_used, name = CASE WHEN excluded.name != '' THEN excluded.name ELSE addresses.name END`)
@@ -437,13 +519,21 @@ export class MailStore {
 
   // ---------- fronta operácií ----------
 
-  enqueueOperation(accountId: number, kind: string, payload: unknown): number {
-    return (this.db.prepare('INSERT INTO operations (account_id, kind, payload_json) VALUES (?, ?, ?) RETURNING id').get(accountId, kind, JSON.stringify(payload)) as { id: number }).id
+  enqueueOperation(accountId: number, kind: string, payload: unknown, notBefore?: Date): number {
+    return (this.db
+      .prepare('INSERT INTO operations (account_id, kind, payload_json, not_before) VALUES (?, ?, ?, ?) RETURNING id')
+      .get(accountId, kind, JSON.stringify(payload), notBefore ? notBefore.toISOString() : null) as { id: number }).id
   }
 
+  /** Operácie pripravené na vykonanie (bez tých, ktoré ešte čakajú na uplynutie času na „Vrátiť späť“). */
   pendingOperations(accountId: number): { id: number; kind: string; payload: unknown; attempts: number }[] {
     return (this.db
-      .prepare(`SELECT id, kind, payload_json, attempts FROM operations WHERE account_id = ? AND state IN ('pending','failed') ORDER BY id`)
+      .prepare(
+        `SELECT id, kind, payload_json, attempts FROM operations
+         WHERE account_id = ? AND state IN ('pending','failed') AND attempts < 3
+           AND (not_before IS NULL OR not_before <= strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+         ORDER BY id`
+      )
       .all(accountId) as unknown as { id: number; kind: string; payload_json: string; attempts: number }[]).map((r) => ({
       id: r.id,
       kind: r.kind,
@@ -452,11 +542,203 @@ export class MailStore {
     }))
   }
 
+  /** Kedy najskôr bude pripravená ďalšia odložená operácia (ms od teraz), alebo null. */
+  nextDelayedOperation(accountId: number): number | null {
+    const r = this.db
+      .prepare(`SELECT MIN(not_before) AS t FROM operations WHERE account_id = ? AND state IN ('pending','failed') AND attempts < 3 AND not_before IS NOT NULL`)
+      .get(accountId) as { t: string | null }
+    return r.t ? Math.max(0, new Date(r.t).getTime() - Date.now()) : null
+  }
+
+  /** Označí operáciu ako práve vykonávanú. Vráti false, ak ju medzitým zrušil „Vrátiť späť“. */
+  claimOperation(id: number): boolean {
+    return Number(this.db.prepare(`UPDATE operations SET state = 'running' WHERE id = ? AND state IN ('pending','failed')`).run(id).changes) === 1
+  }
+
+  /** Spojenie sa prerušilo počas vykonávania – operácia sa zopakuje (všetky sú bezpečné na zopakovanie). */
+  releaseOperation(id: number): void {
+    this.db.prepare(`UPDATE operations SET state = 'pending' WHERE id = ? AND state = 'running'`).run(id)
+  }
+
+  /** Po páde aplikácie: rozpracované operácie znova do fronty. */
+  resetRunningOperations(): void {
+    this.db.prepare(`UPDATE operations SET state = 'pending' WHERE state = 'running'`).run()
+  }
+
+  /** „Vrátiť späť“: zruší operáciu, ak ešte nezačala. Vráti jej údaje, alebo null. */
+  cancelOperation(id: number): { kind: string; payload: unknown } | null {
+    const r = this.db.prepare(`DELETE FROM operations WHERE id = ? AND state = 'pending' AND attempts = 0 RETURNING kind, payload_json`).get(id) as
+      | { kind: string; payload_json: string }
+      | undefined
+    return r ? { kind: r.kind, payload: JSON.parse(r.payload_json) } : null
+  }
+
   finishOperation(id: number, ok: boolean, error?: string): void {
     this.db
       .prepare(`UPDATE operations SET state = ?, attempts = attempts + 1, last_error = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?`)
       .run(ok ? 'done' : 'failed', error ?? null, id)
   }
+
+  /** Čaká operácia daného druhu s presne týmto obsahom (napr. nahratie konceptu)? */
+  hasPendingOperation(accountId: number, kind: string, payload: unknown): boolean {
+    return !!this.db
+      .prepare(`SELECT 1 FROM operations WHERE account_id = ? AND kind = ? AND payload_json = ? AND state IN ('pending','failed') AND attempts < 3`)
+      .get(accountId, kind, JSON.stringify(payload))
+  }
+
+  /** Čakajúcu operáciu vykonať hneď (zrušiť odklad). */
+  expediteOperation(accountId: number, kind: string, payload: unknown): void {
+    this.db
+      .prepare(`UPDATE operations SET not_before = NULL WHERE account_id = ? AND kind = ? AND payload_json = ? AND state IN ('pending','failed')`)
+      .run(accountId, kind, JSON.stringify(payload))
+  }
+
+  /** Všetky originály a prílohy, na ktoré niečo odkazuje (na upratanie úložiska). */
+  referencedBlobs(): Set<string> {
+    const rows = this.db
+      .prepare(
+        `SELECT blob_sha256 AS s FROM messages WHERE blob_sha256 IS NOT NULL
+         UNION SELECT blob_sha256 FROM outbox
+         UNION SELECT json_extract(j.value, '$.sha') FROM drafts, json_each(drafts.attachments_json) j`
+      )
+      .all() as { s: string | null }[]
+    return new Set(rows.map((r) => r.s).filter((x): x is string => !!x))
+  }
+
+  // ---------- koncepty ----------
+
+  messageByUid(folderId: number, uid: number): number | null {
+    return (this.db.prepare('SELECT id FROM messages WHERE folder_id = ? AND uid = ?').get(folderId, uid) as { id: number } | undefined)?.id ?? null
+  }
+
+  /** Lokálna správa konta s daným Message-ID (napr. pôvodná správa, na ktorú koncept odpovedá). */
+  messageByMessageId(accountId: number, messageId: string): number | null {
+    const key = normalizeMessageId(messageId)
+    if (!key) return null
+    const rows = this.db.prepare(`SELECT id, message_id FROM messages WHERE account_id = ? AND message_id LIKE ? ORDER BY id`).all(accountId, `%${key.replace(/[%_]/g, '')}%`) as {
+      id: number
+      message_id: string
+    }[]
+    return rows.find((r) => normalizeMessageId(r.message_id) === key)?.id ?? null
+  }
+
+  draft(id: number): DraftRow | null {
+    return (this.db.prepare('SELECT * FROM drafts WHERE id = ?').get(id) as unknown as DraftRow | undefined) ?? null
+  }
+
+  /** Lokálny koncept podľa Message-ID (koncept otvorený zo servera). */
+  draftByMessageId(messageId: string): DraftRow | null {
+    const key = normalizeMessageId(messageId)
+    if (!key) return null
+    const rows = this.db.prepare('SELECT * FROM drafts WHERE deleted = 0 ORDER BY id DESC').all() as unknown as DraftRow[]
+    return rows.find((r) => normalizeMessageId(r.message_id) === key) ?? null
+  }
+
+  insertDraft(d: { accountId: number; messageId: string; data: unknown; attachments: unknown; serverFolderId?: number | null; serverUid?: number | null; synced?: boolean }): number {
+    return (this.db
+      .prepare(
+        `INSERT INTO drafts (account_id, message_id, data_json, attachments_json, server_folder_id, server_uid, rev, server_rev)
+         VALUES (?, ?, ?, ?, ?, ?, 1, ?) RETURNING id`
+      )
+      .get(d.accountId, d.messageId, JSON.stringify(d.data), JSON.stringify(d.attachments), d.serverFolderId ?? null, d.serverUid ?? null, d.synced ? 1 : 0) as { id: number }).id
+  }
+
+  /** Nový obsah konceptu (zvýši revíziu – na server sa nahrá pri najbližšej príležitosti). */
+  updateDraft(id: number, d: { accountId: number; data: unknown; attachments: unknown }): void {
+    this.db
+      .prepare(
+        `UPDATE drafts SET account_id = ?, data_json = ?, attachments_json = ?, rev = rev + 1, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?`
+      )
+      .run(d.accountId, JSON.stringify(d.data), JSON.stringify(d.attachments), id)
+  }
+
+  setDraftServer(id: number, folderId: number | null, uid: number | null, rev?: number): void {
+    if (rev === undefined) this.db.prepare('UPDATE drafts SET server_folder_id = ?, server_uid = ? WHERE id = ?').run(folderId, uid, id)
+    else this.db.prepare('UPDATE drafts SET server_folder_id = ?, server_uid = ?, server_rev = ? WHERE id = ?').run(folderId, uid, rev, id)
+  }
+
+  markDraftDeleted(id: number): void {
+    this.db.prepare('UPDATE drafts SET deleted = 1 WHERE id = ?').run(id)
+  }
+
+  deleteDraft(id: number): void {
+    this.db.prepare('DELETE FROM drafts WHERE id = ?').run(id)
+  }
+
+  /** Smie sa obsah s týmto SHA použiť ako príloha? Len prílohy uložené v niektorom koncepte. */
+  isDraftBlob(sha: string): boolean {
+    if (!/^[0-9a-f]{64}$/.test(sha)) return false
+    return !!this.db.prepare(`SELECT 1 FROM drafts, json_each(drafts.attachments_json) j WHERE json_extract(j.value, '$.sha') = ? LIMIT 1`).get(sha)
+  }
+
+  setHidden(ids: number[], hidden: boolean): void {
+    const st = this.db.prepare('UPDATE messages SET hidden = ? WHERE id = ?')
+    for (const id of ids) st.run(hidden ? 1 : 0, id)
+  }
+
+  deleteMessages(ids: number[]): void {
+    const st = this.db.prepare('DELETE FROM messages WHERE id = ?')
+    this.db.exec('BEGIN')
+    try {
+      for (const id of ids) st.run(id)
+      this.db.exec('COMMIT')
+    } catch (e) {
+      this.db.exec('ROLLBACK')
+      throw e
+    }
+  }
+
+  /**
+   * Presun potvrdený serverom: ak server oznámil nové UID (UIDPLUS), záznam sa presunie aj lokálne
+   * (originál sa netreba sťahovať znova); inak sa lokálny záznam zmaže a cieľový priečinok ho načíta pri synchronizácii.
+   */
+  completeMove(messageIds: number[], oldUids: number[], targetFolderId: number, uidMap: Map<number, number> | undefined): void {
+    const move = this.db.prepare(`UPDATE messages SET folder_id = ?, uid = ?, hidden = 0, local_state = 'synced' WHERE id = ?`)
+    const del = this.db.prepare('DELETE FROM messages WHERE id = ?')
+    for (const [i, id] of messageIds.entries()) {
+      const newUid = uidMap?.get(oldUids[i]!)
+      if (newUid === undefined) {
+        del.run(id)
+        continue
+      }
+      try {
+        move.run(targetFolderId, newUid, id)
+      } catch {
+        // Synchronizácia cieľového priečinka ju už medzitým načítala.
+        del.run(id)
+      }
+    }
+  }
+
+  /** Viditeľné ID správ v priečinku (alebo spoločnej doručenej pošte) – pre „Vybrať všetko“. */
+  listIds(folderId: number | null): number[] {
+    const where = `${folderId === null ? `f.special_use = 'inbox'` : 'm.folder_id = ?'} AND m.hidden = 0`
+    return (this.db
+      .prepare(`SELECT m.id FROM messages m JOIN folders f ON f.id = m.folder_id WHERE ${where} ORDER BY COALESCE(m.internal_date, m.date_header) DESC, m.id DESC`)
+      .all(...(folderId === null ? [] : [folderId])) as { id: number }[]).map((r) => r.id)
+  }
+
+  specialFolder(accountId: number, use: SpecialUse): FolderRow | null {
+    return this.folderRows(accountId).find((f) => f.special_use === use) ?? null
+  }
+}
+
+export interface DraftRow {
+  id: number
+  account_id: number
+  message_id: string
+  data_json: string
+  attachments_json: string
+  server_folder_id: number | null
+  server_uid: number | null
+  rev: number
+  server_rev: number
+  deleted: number
+}
+
+/** Message-ID bez zátvoriek a medzier, malými písmenami (na porovnanie). */
+export function normalizeMessageId(v: string | null | undefined): string {
+  return (v ?? '').trim().replace(/^<|>$/g, '').toLowerCase()
 }
 
 export interface MessageRow {

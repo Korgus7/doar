@@ -2,7 +2,12 @@
   import type { MessageView } from '../../../shared/ipc'
   import { t, type MessageKey } from '../i18n/index.svelte'
   import { addressLine, fileSize, fullDate } from '../lib/format'
-  import { mail, patchMessage, setFlags } from '../lib/mail.svelte'
+  import { mail, patchMessage, setFlags, itemsById } from '../lib/mail.svelte'
+  import { saveAllAttachments, attachmentMenu, openMenu } from '../lib/actions.svelte'
+  import { isDangerousFile } from '../../../shared/ipc'
+  import { isDraft } from '../lib/actions.svelte'
+  import { printDocument } from '../lib/print'
+  import { remove, archive, allInArchive, allInTrash, openMoveDialog, singleAccount, toggleSpam, allInJunk } from '../lib/actions.svelte'
 
   let view = $state<MessageView | null>(null)
   let error = $state<string | null>(null)
@@ -85,6 +90,15 @@ img{max-width:100%;height:auto}table{max-width:100%}.doar-plain{white-space:pre-
 
   const sender = $derived(view?.from[0]?.address ?? '')
 
+  // Ctrl+P z hlavného okna (MainShell) – vytlačí práve otvorenú správu.
+  $effect(() => {
+    const h = (): void => {
+      if (view && mail.selection.length <= 1) window.doar.printHtml(printDocument(view), view.subject)
+    }
+    window.addEventListener('doar-print', h)
+    return () => window.removeEventListener('doar-print', h)
+  })
+
   $effect(() => {
     // Udržať zoznam v súlade, ak sa správa pri otvorení stiahla.
     if (view && listItem && !listItem.downloaded) patchMessage(view.id, { downloaded: true })
@@ -92,7 +106,22 @@ img{max-width:100%;height:auto}table{max-width:100%}.doar-plain{white-space:pre-
 </script>
 
 <section class="reader" aria-label={t('reader.label')}>
-  {#if mail.selectedId === null}
+  {#if mail.selection.length > 1}
+    {@const ids = [...mail.selection]}
+    {@const items = itemsById(ids)}
+    <div class="multi">
+      <p class="count">{t('reader.multi', { n: ids.length })}</p>
+      <div class="multi-actions">
+        <button class="btn" onclick={() => void setFlags(ids, { seen: items.some((m) => !m.seen) })}>
+          {items.some((m) => !m.seen) ? t('reader.markRead') : t('reader.markUnread')}
+        </button>
+        <button class="btn" disabled={allInArchive(ids)} onclick={() => archive(ids)}>🗄 {t('actions.archive')}</button>
+        <button class="btn" disabled={singleAccount(ids) === null} onclick={() => openMoveDialog(ids)}>{t('actions.moveTo')}</button>
+        <button class="btn" onclick={() => toggleSpam(ids)}>{allInJunk(ids) ? t('actions.notSpam') : t('actions.spam')}</button>
+        <button class="btn danger" onclick={() => remove(ids)}>🗑 {allInTrash(ids) ? t('actions.deleteForever') : t('actions.delete')}</button>
+      </div>
+    </div>
+  {:else if mail.selectedId === null}
     <p class="empty">{t('reader.empty')}</p>
   {:else if error}
     <div class="empty">
@@ -107,10 +136,25 @@ img{max-width:100%;height:auto}table{max-width:100%}.doar-plain{white-space:pre-
         <h1>{view.subject || t('list.noSubject')}</h1>
         {#if listItem}
           <div class="actions">
-            <button class="btn small" title="Ctrl+R" onclick={() => window.doar.openCompose('reply', view!.id)}>↩ {t('toolbar.reply')}</button>
-            <button class="btn small" title="Ctrl+Shift+R" onclick={() => window.doar.openCompose('replyAll', view!.id)}>↩↩ {t('toolbar.replyAll')}</button>
+            {#if isDraft(view.id)}
+              <button class="btn small btn-primary" title="Enter" onclick={() => window.doar.openCompose('draft', view!.id)}>✎ {t('reader.editDraft')}</button>
+            {:else}
+              <button class="btn small" title="Ctrl+R" onclick={() => window.doar.openCompose('reply', view!.id)}>↩ {t('toolbar.reply')}</button>
+              <button class="btn small" title="Ctrl+Shift+R" onclick={() => window.doar.openCompose('replyAll', view!.id)}>↩↩ {t('toolbar.replyAll')}</button>
+              <button class="btn small" title="Ctrl+F" onclick={() => window.doar.openCompose('forward', view!.id)}>↪ {t('toolbar.forward')}</button>
+            {/if}
             <button class="icon" title={listItem.flagged ? t('reader.unflag') : t('reader.flag')} aria-label={listItem.flagged ? t('reader.unflag') : t('reader.flag')} class:on={listItem.flagged} onclick={toggleFlag}>{listItem.flagged ? '★' : '☆'}</button>
             <button class="icon" title={listItem.seen ? t('reader.markUnread') : t('reader.markRead')} aria-label={listItem.seen ? t('reader.markUnread') : t('reader.markRead')} onclick={toggleSeen}>{listItem.seen ? '◉' : '○'}</button>
+            {#if !allInArchive([listItem.id])}
+              <button class="icon" title={`${t('actions.archive')} (E)`} aria-label={t('actions.archive')} onclick={() => archive([listItem!.id])}>🗄</button>
+            {/if}
+            <button class="icon" title={`${t('reader.print')} (Ctrl+P)`} aria-label={t('reader.print')} onclick={() => window.doar.printHtml(printDocument(view!), view!.subject)}>🖨</button>
+            <button
+              class="icon"
+              title={`${allInTrash([listItem.id]) ? t('actions.deleteForever') : t('actions.delete')} (Del)`}
+              aria-label={allInTrash([listItem.id]) ? t('actions.deleteForever') : t('actions.delete')}
+              onclick={() => remove([listItem!.id])}>🗑</button
+            >
           </div>
         {/if}
       </div>
@@ -136,14 +180,38 @@ img{max-width:100%;height:auto}table{max-width:100%}.doar-plain{white-space:pre-
     </header>
     <iframe bind:this={frame} title={view.subject} sandbox="allow-same-origin" {srcdoc} onload={onFrameLoad}></iframe>
     {#if view.attachments.length}
+      {@const v = view}
       <footer>
-        <strong>{t('reader.attachments', { n: view.attachments.length })}</strong>
+        <div class="att-head">
+          <strong>{t('reader.attachments', { n: v.attachments.length })}</strong>
+          {#if v.attachments.length > 1}
+            <button class="link" onclick={() => void saveAllAttachments(v.id)}>{t('attachments.saveAll')}</button>
+          {/if}
+        </div>
         <ul>
-          {#each view.attachments as a (a.index)}
-            <li>📎 {a.filename} <span class="size">{fileSize(a.size)}</span></li>
+          {#each v.attachments as a (a.index)}
+            <li>
+              <button
+                class="att"
+                class:blocked={isDangerousFile(a.filename)}
+                title={isDangerousFile(a.filename) ? t('attachments.openBlocked') : t('attachments.hint')}
+                aria-haspopup="menu"
+                onclick={(e) => {
+                  const r = (e.currentTarget as HTMLElement).getBoundingClientRect()
+                  openMenu(r.left, r.bottom + 4, attachmentMenu(v.id, a), a.filename)
+                }}
+                oncontextmenu={(e) => {
+                  e.preventDefault()
+                  openMenu(e.clientX, e.clientY, attachmentMenu(v.id, a), a.filename)
+                }}
+              >
+                <span aria-hidden="true">{isDangerousFile(a.filename) ? '⛔' : '📎'}</span>
+                <span class="att-name">{a.filename}</span>
+                <span class="size">{fileSize(a.size)}</span>
+              </button>
+            </li>
           {/each}
         </ul>
-        <small>{t('reader.attachmentsLater')}</small>
       </footer>
     {/if}
   {/if}
@@ -157,6 +225,25 @@ img{max-width:100%;height:auto}table{max-width:100%}.doar-plain{white-space:pre-
     background: var(--surface);
     min-width: 0;
   }
+  .multi {
+    margin: auto;
+    padding: 2rem;
+    text-align: center;
+  }
+  .count {
+    font-size: 1.1rem;
+    font-weight: 600;
+    margin: 0 0 1rem;
+  }
+  .multi-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    justify-content: center;
+  }
+  .btn.danger {
+    color: var(--danger);
+  }
   .empty {
     margin: auto;
     padding: 2rem;
@@ -169,11 +256,13 @@ img{max-width:100%;height:auto}table{max-width:100%}.doar-plain{white-space:pre-
   }
   .titlebar {
     display: flex;
-    gap: 0.5rem;
+    flex-wrap: wrap;
+    gap: 0 0.5rem;
     align-items: flex-start;
   }
   h1 {
-    flex: 1;
+    /* Pri úzkom paneli sa tlačidlá presunú pod nadpis, nadpis sa nesmie zúžiť na pár písmen. */
+    flex: 1 1 14rem;
     margin: 0 0 0.6rem;
     font-size: 1.2rem;
     font-weight: 650;
@@ -181,6 +270,7 @@ img{max-width:100%;height:auto}table{max-width:100%}.doar-plain{white-space:pre-
     overflow-wrap: anywhere;
   }
   .actions {
+    margin-bottom: 0.5rem;
     display: flex;
     gap: 0.3rem;
     align-items: center;
@@ -259,12 +349,45 @@ img{max-width:100%;height:auto}table{max-width:100%}.doar-plain{white-space:pre-
     margin: 0.3rem 0;
     display: flex;
     flex-wrap: wrap;
-    gap: 0.3rem 1rem;
+    gap: 0.4rem 0.5rem;
   }
   .size {
     color: var(--text-muted);
   }
-  footer small {
-    color: var(--text-muted);
+  .att-head {
+    display: flex;
+    gap: 1rem;
+    align-items: baseline;
+  }
+  .link {
+    border: 0;
+    background: none;
+    padding: 0;
+    color: var(--accent);
+    cursor: pointer;
+    font-size: 0.85rem;
+  }
+  .link:hover {
+    text-decoration: underline;
+  }
+  .att {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    max-width: 22rem;
+    padding: 0.3rem 0.6rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--surface-2);
+    cursor: pointer;
+    color: var(--text);
+  }
+  .att:hover {
+    border-color: var(--accent);
+  }
+  .att-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 </style>

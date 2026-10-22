@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto'
-import { createReadStream, existsSync, mkdirSync, openSync, writeSync, fsyncSync, closeSync, renameSync, unlinkSync, readFileSync, statSync } from 'node:fs'
+import { createReadStream, existsSync, mkdirSync, openSync, writeSync, fsyncSync, closeSync, renameSync, unlinkSync, readFileSync, statSync, readdirSync, rmdirSync } from 'node:fs'
 import { join } from 'node:path'
 import type { Readable } from 'node:stream'
 
@@ -65,5 +65,47 @@ export class BlobStore {
   /** Overí, že obsah súboru stále zodpovedá jeho hashu. */
   verify(sha: string): boolean {
     return BlobStore.hash(this.read(sha)) === sha
+  }
+
+  /**
+   * Zmaže súbory, na ktoré už nič neodkazuje (napr. po odstránení konta). Súbory novšie než `minAgeMs`
+   * nechá – mohli vzniknúť práve teraz a odkaz na ne sa ešte len zapisuje. Vráti počet zmazaných.
+   */
+  collectGarbage(referenced: Set<string>, minAgeMs = 10 * 60_000): number {
+    const limit = Date.now() - minAgeMs
+    let removed = 0
+    for (const a of safeList(this.root)) {
+      if (!/^[0-9a-f]{2}$/.test(a)) continue
+      for (const b of safeList(join(this.root, a))) {
+        if (!/^[0-9a-f]{2}$/.test(b)) continue
+        const dir = join(this.root, a, b)
+        for (const f of safeList(dir)) {
+          const m = /^([0-9a-f]{64})\.eml$/.exec(f)
+          if (!m || referenced.has(m[1]!)) continue
+          const p = join(dir, f)
+          try {
+            if (statSync(p).mtimeMs > limit) continue
+            unlinkSync(p)
+            removed++
+          } catch {
+            // súbor medzitým zmizol alebo je zamknutý – nevadí
+          }
+        }
+        try {
+          rmdirSync(dir) // len ak je prázdny
+        } catch {
+          /* nie je prázdny */
+        }
+      }
+    }
+    return removed
+  }
+}
+
+function safeList(dir: string): string[] {
+  try {
+    return readdirSync(dir)
+  } catch {
+    return []
   }
 }

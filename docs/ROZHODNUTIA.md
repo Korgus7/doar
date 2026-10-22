@@ -71,6 +71,64 @@ Záznam dohodnutých rozhodnutí. Nové rozhodnutia pridávaj na koniec s dátum
 - **Záloha beží na pozadí:** dialóg sa dá skryť, priebeh je v stavovom riadku (kliknutím sa dialóg znova otvorí), výsledok sa po dokončení ukáže vždy.
 - **Gmail:** pripravené podľa zadania (len Všetka pošta, Kôš, Spam + štítky), zatiaľ neoverené.
 
+## 2026-10-22 – presuny, Kôš, Archív, nový priečinok (0.2a)
+
+- **„Vrátiť späť“ bez zásahu na server:** presun sa odošle až po 8 s (oznámenie je vidieť 7 s, aby tlačidlo nikdy nesľubovalo nemožné). Ak už bol vykonaný, Doar to povie („Už sa nedá vrátiť“) a nič nepredstiera.
+- **Del** = do Koša. V Koši **Del** = natrvalo. **Shift+Del** = natrvalo kdekoľvek. Natrvalo vždy s potvrdením a bez možnosti vrátenia.
+- **E** = Archivovať (ako Gmail/Outlook). **Ctrl+Shift+V** = Presunúť do priečinka (ako Outlook).
+- **Chýbajúci Kôš/Archív/Spam** Doar na serveri založí pod bežným anglickým názvom (`Trash`, `Archive`, `Junk`), ktorý poznajú aj iné programy; v rozhraní sa zobrazí po slovensky.
+- **Presun medzi kontami** zatiaľ nie (rozhranie ho neponúkne, jadro ho odmietne). Pri spoločnej doručenej pošte fungujú Kôš/Archív/Spam pre každé konto zvlášť.
+- **Nový priečinok:** „+“ pri konte, „Nový podpriečinok…“ v ponuke priečinka a priamo v dialógu presunu. Diakritika je v poriadku (IMAP UTF-7 rieši imapflow). Odmietne sa prázdny názov, oddeľovač servera, `%`, `*` a duplicita.
+- **Oprava:** hlavné okno sa nenaťahovalo na celú výšku, keď nebol zobrazený pruh odosielania (chyba z 0.1).
+
+## 2026-10-22 – prílohy a preposlanie (0.2b)
+
+- **Cesty k súborom určuje len používateľ:** natívny dialóg (Priložiť, Uložiť ako, Uložiť všetky) alebo súbor pretiahnutý myšou. Main proces cestu oznámi jadru (`files.allow`); jadro odmietne každú inú cestu (`PATH_NOT_ALLOWED`). Cestu k pretiahnutému súboru zisťuje preload (`webUtils.getPathForFile`) – rozhranie ju nevie podvrhnúť.
+- **Otvorenie prílohy:** dočasná kópia v `<dáta>/otvorene-prilohy/` (staršie než deň sa pri štarte mažú) a otvorenie v predvolenom programe. **Spustiteľné súbory** (exe, bat, ps1, js, vbs, msi, lnk, iso, makrá Office…) a súbory bez prípony sa neotvárajú nikdy – dajú sa len uložiť. Kontrolu robí jadro aj main proces.
+- **Windows:** uložené a otvárané prílohy dostanú značku „stiahnuté z internetu“ (Mark of the Web, `Zone.Identifier`), takže systém (SmartScreen, chránené zobrazenie Office) pred nimi varuje ako pri prílohách z prehliadača.
+- **Uložiť všetky** nikdy neprepíše existujúci súbor („faktura (2).pdf“). Názvy sa čistia (zakázané znaky, rezervované mená Windows, znaky obracajúce smer textu).
+- **Veľkosť:** nad 20 MB upozornenie, nad 50 MB spolu sa správa neodošle (väčšinu takých správ by server aj tak odmietol).
+- **Preposlanie (Ctrl+F):** ako vložený text s hlavičkou „Preposlaná správa“ + prílohy pôvodnej správy (dajú sa jednotlivo odstrániť). Nie ako príloha .eml – bežní adresáti to čítajú pohodlnejšie. Vložené obrázky z HTML sa nepreposielajú (0.2 posiela čistý text).
+- **Citácia správy len v HTML:** text sa odvodí z HTML (predtým bola citácia prázdna).
+- **Pretiahnutie súborov do okna správy** automatický test nepokrýva (Playwright nevie simulovať skutočný súbor z disku); overené ručne na Windows 2026-10-22.
+
+## 2026-10-22 – koncepty (0.2c)
+
+- **Nič sa nestratí:** okno správy ukladá koncept 1,5 s po poslednej zmene do lokálnej databázy (aj s prílohami – kópia sa uloží do úložiska Doaru, takže súbor na disku už nie je potrebný). Ctrl+S uloží hneď.
+- **Na server** (priečinok Koncepty) sa koncept nahrá 30 s po poslednom uložení alebo hneď pri zatvorení okna – nie pri každom písmene. Nová verzia sa nahrá skôr, než sa stará zmaže; verzie sa hľadajú podľa stabilného Message-ID (aj na serveroch bez UIDPLUS).
+- **Zatvorenie okna** sa už nepýta: rozpísaná správa sa uloží ako koncept (ako v Gmaile/Outlooku). Prázdne okno nevytvorí nič; koncept, z ktorého používateľ všetko vymazal, sa zahodí. **Zahodiť** (s potvrdením) vymaže koncept aj zo servera.
+- **Otvorenie konceptu:** dvojklik/Enter v Konceptoch, alebo „Upraviť koncept“ v čítaní. Ak ho Doar upravoval, použije sa lokálna (najnovšia) verzia; koncept z iného programu sa načíta zo servera a ďalšie úpravy ho nahradia (Message-ID zostáva). Jeden koncept = jedno okno.
+- **Odoslanie konceptu** ho zmaže z Konceptov (hneď zo zoznamu, zo servera pri najbližšej synchronizácii).
+- **Zmena odosielateľa (Od)** presunie koncept: z Konceptov pôvodného konta sa odstráni, do nového sa nahrá.
+- **Obmedzenie:** koncept, ktorý sa ešte nestihol nahrať (napr. bez pripojenia), je zatiaľ len v tomto počítači a v zozname Konceptov sa ukáže až po nahratí. Úplná offline fronta je v 0.3.
+
+## 2026-10-22 – vyhľadávanie (0.2d)
+
+- **Lokálny fulltext** (SQLite FTS5 v tomto počítači), nie hľadanie na serveri: rýchle, funguje bez pripojenia a rovnako pri každom poskytovateľovi.
+- **Bez ohľadu na diakritiku a veľké písmená**, slová ako začiatky („faktur“ nájde „faktúra“), všetky slová musia byť v správe. „Presná fráza“ v úvodzovkách. Polia `od:`/`from:`, `komu:`/`to:`, `predmet:`/`subject:`. Syntax FTS5 od používateľa sa neinterpretuje (všetko je text).
+- **Rozsah:** predvolene všetky priečinky všetkých kont (aj Kôš a Spam – vo výsledku je vidieť priečinok), alebo len zobrazený priečinok. Výsledky od najnovších.
+- **Neúplná kópia:** ak niektoré správy v rozsahu ešte nemajú stiahnutý text, Doar to povie („hľadá sa v nich len v predmete a adresách“).
+- Ctrl+E = do poľa hľadania (ako v Outlooku), Esc = zrušiť, Enter = hľadať hneď (inak 0,3 s po dopísaní).
+
+## 2026-10-22 – nastavenia konta, upozornenia (0.2e)
+
+- **Nastavenia** (⚙, Súbor → Nastavenia…, Ctrl+,): kontá (meno odosielateľa, názov, farba, podpis, kópia v Odoslaných, server, odstránenie) a Všeobecné (jazyk, upozornenia).
+- **Podpis** = čistý text s oddeľovačom „-- “ (štandard, ktorý iné programy pri odpovedi samy odstraňujú). Vloží sa do novej správy a nad citáciu v odpovedi/preposlaní; pri zmene odosielateľa sa vymení, ak ho používateľ neupravil. Do konceptov sa nevkladá znova.
+- **Zmena servera alebo hesla** sa uloží len po úspešnom overení (prihlásenie IMAP aj SMTP). Bez zadania nového hesla sa overí uloženým. Heslo sa do rozhrania nikdy nevracia.
+- **Odstránenie konta** (s potvrdením): z Doaru zmizne konto, lokálna kópia pošty, koncepty uložené len tu a neodoslané správy (upozorní na ich počet). Na serveri sa nemení nič. Počas zálohy konta sa odstrániť nedá.
+- **Upratovanie úložiska:** originály, na ktoré už nič neodkazuje, sa mažú po odstránení konta a minútu po štarte (len súbory staršie ako 10 min., aby sa nezmazal práve zapisovaný).
+- **Upozornenie na novú poštu:** systémové oznámenie pre nové neprečítané správy v doručenej pošte (nie pri prvom načítaní konta, nie keď je Doar v popredí). Kliknutie otvorí správu. Dá sa vypnúť; odosielateľa a predmet možno skryť (uzamknutá obrazovka).
+- **Odznak neprečítaných:** počet v názve okna; na Windows červený bod na ikone v paneli úloh, na macOS/Linuxe číslo na ikone.
+
+## 2026-10-22 – formátovanie, našepkávanie adries, tlač (0.2f)
+
+- **Editor TipTap 3.31.4** (pevná verzia, vyše 3 týždne stará, MIT). Len to, čo sa bezpečne odošle e-mailom: tučné, kurzíva, podčiarknuté, prečiarknuté, nadpis, odrážky, číslovaný zoznam, citácia, odkaz (Ctrl+K). Žiadne obrázky ani farby v 0.2.
+- **Formátovaná správa** odchádza ako multipart/alternative: HTML (jadro ho vždy znova prečistí na tieto značky) + textová podoba, ktorú vytvorí jadro z HTML (odseky, „- “ a „1. “ v zoznamoch, „> “ citácia, odkaz „text <adresa>“). Text z rozhrania sa pri HTML nepoužije.
+- **Predvolene formátovane**, dá sa prepnúť na čistý text pri každej správe (pri strate formátovania s potvrdením) aj natrvalo v Nastaveniach. Koncept si formát pamätá.
+- **Odpoveď:** citácia ako blockquote (aj v textovej podobe „> “), nad ňou prázdny odsek s kurzorom a podpis. Podpis v HTML ako odsek „--“ + riadky; v textovej podobe vždy „-- “.
+- **Našepkávanie adries** v poliach Komu/Kópia/Skrytá kópia: najprv adresy, na ktoré používateľ písal (počet a čas), potom odosielatelia doručenej pošty; od začiatku slova v mene alebo adrese, bez diakritiky. Enter/Tab vyberie, Esc zavrie. Meno sa uloží už pri odoslaní (adresy v databáze, nikdy mimo počítača).
+- **Tlač** (Ctrl+P, 🖨 v čítaní, ponuka): dokument s hlavičkou a prečisteným telom vytlačí skryté okno bez JavaScriptu; CSP nedovolí nič načítať z internetu (sledovacie obrázky sa nenačítajú ani pri tlači). Dočasný súbor sa po tlači zmaže.
+
 ## Licencie závislostí (overené 2026-10-21 cez `npm view`)
 
 Všetky sú kompatibilné s MIT.
@@ -84,7 +142,7 @@ Všetky sú kompatibilné s MIT.
 | node:sqlite (súčasť Electronu/Node.js) | SQLite 3.53 | MIT (Node.js) | SQLite + FTS5 |
 | svelte | 5.57.2 | MIT | rozhranie |
 | @tanstack/svelte-virtual | 3.13.47 | MIT | virtualizovaný zoznam správ |
-| @tiptap/core | 3.32.0 | MIT | editor (0.2) |
+| @tiptap/core, @tiptap/starter-kit, @tiptap/pm | 3.31.4 (pevná verzia) | MIT | editor formátovaného textu (0.2f); závislosti ProseMirror, linkifyjs a pod. – MIT (overené 2026-10-22) |
 | sanitize-html | 2.18.1 | MIT | sanitizácia HTML pošty |
 | dompurify | 3.4.17 | MPL-2.0 OR Apache-2.0 | záložná sanitizácia (použijeme pod Apache-2.0) |
 | iconv-lite, libmime | – | MIT | kódovania |

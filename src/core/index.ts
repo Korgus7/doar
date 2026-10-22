@@ -12,6 +12,9 @@ import { realNet } from './providers/net'
 import { MailStore } from './store/mailstore'
 import { SyncManager } from './sync/manager'
 import { ExportManager } from './export/manager'
+import { FileGrants, cleanOpenDir } from './files'
+import { collectBlobs } from './account-admin'
+import { getSettings } from './settings'
 import type { CoreToMain, MainToCore, PortMessage } from '../shared/ipc'
 import { isRequestChannel } from '../shared/ipc'
 
@@ -32,6 +35,7 @@ if (!parentPort) throw new Error('Core musí bežať ako Electron utilityProcess
 const log = logger('core')
 let handlers: Handlers | null = null
 let exports: ExportManager | null = null
+const files = new FileGrants()
 const ports = new Set<MessagePortLike>()
 const secrets = new MainSecrets((msg: CoreToMain) => parentPort.postMessage(msg))
 const sessionSecrets = new MemorySecrets()
@@ -77,10 +81,35 @@ function init(dataDir: string, appVersion: string): void {
   const blobs = new BlobStore(join(dataDir, 'blobs'))
   const store = new MailStore(db)
   const emit: Parameters<typeof createHandlers>[0]['emit'] = (ch, data) => broadcast({ kind: 'evt', ch, data })
-  const sync = new SyncManager({ db, store, blobs, secrets, sessionSecrets, emit })
+  const sync = new SyncManager({
+    db,
+    store,
+    blobs,
+    secrets,
+    sessionSecrets,
+    emit,
+    // Nová pošta → systémové oznámenie (zobrazí main proces), ak ho používateľ nevypol.
+    onNewMail: ({ messageIds }) => {
+      const s = getSettings(db)
+      if (!s.notifyNewMail) return
+      const newest = messageIds.map((id) => store.message(id)).filter((m): m is NonNullable<typeof m> => m !== null)
+        .sort((a, b) => (b.internal_date ?? '').localeCompare(a.internal_date ?? ''))[0]
+      if (!newest) return
+      parentPort!.postMessage({
+        kind: 'newMail',
+        accountEmail: newest.account_email,
+        count: messageIds.length,
+        messageId: newest.id,
+        from: s.notifyShowContent ? newest.from_name || newest.from_addr || null : null,
+        subject: s.notifyShowContent ? newest.subject : null
+      } satisfies CoreToMain)
+    }
+  })
   exports = new ExportManager({ db, store, blobs, emit, newClient: (id) => sync.newImapClient(id) })
+  cleanOpenDir(dataDir)
   handlers = createHandlers({
     exports,
+    files,
     db,
     blobs,
     store,
@@ -96,6 +125,8 @@ function init(dataDir: string, appVersion: string): void {
   log.info('jadro pripravené', { node: process.versions.node, sqlite: sqliteVersion(db) })
   parentPort!.postMessage({ kind: 'ready' } satisfies CoreToMain)
   sync.startAll()
+  // Upratanie úložiska originálov chvíľu po štarte (nič neblokuje).
+  setTimeout(() => collectBlobs({ store, blobs }), 60_000).unref?.()
 }
 
 parentPort.on('message', (e) => {
@@ -112,6 +143,8 @@ parentPort.on('message', (e) => {
     if (p) attachPort(p)
   } else if (msg.kind === 'export.allow') {
     exports?.allow(msg.path)
+  } else if (msg.kind === 'files.allow') {
+    if (msg.mode === 'read' || msg.mode === 'write' || msg.mode === 'dir') files.allow(msg.path, msg.mode)
   } else if (msg.kind === 'secret.result') {
     secrets.resolve(msg)
   }

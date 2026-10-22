@@ -1,8 +1,19 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte'
-  import type { AccountSummary, Address, ComposeMode } from '../../shared/ipc'
+  import type { AccountSummary, Address, ComposeAttachment, ComposeMode, ComposePrefill } from '../../shared/ipc'
+  import { MAX_ATTACHMENTS_BYTES, WARN_ATTACHMENTS_BYTES } from '../../shared/ipc'
   import { t, i18n, type MessageKey } from './i18n/index.svelte'
-  import { fullDate } from './lib/format'
+  import { fileSize, fullDate, timeOnly } from './lib/format'
+  import { hasFormatting, htmlIsEmpty, htmlToText, quoteHtml, signatureHtml, textToHtml, escapeHtml } from './lib/compose-html'
+  import RichEditor from './components/RichEditor.svelte'
+  import AddressInput from './components/AddressInput.svelte'
+
+  interface Attached {
+    key: string
+    name: string
+    size: number
+    source: ComposeAttachment
+  }
 
   let { mode, messageId }: { mode: ComposeMode; messageId?: number } = $props()
 
@@ -13,18 +24,79 @@
   let bcc = $state('')
   let subject = $state('')
   let body = $state('')
+  /** Formátovaná správa (HTML editora) alebo čistý text. */
+  let format = $state<'html' | 'plain'>('html')
+  let html = $state('')
+  let editorRef: RichEditor | undefined = $state()
   let showCc = $state(false)
   let replyToMessage = $state<number | null>(null)
+  let attachments = $state<Attached[]>([])
+  let dropping = $state(false)
+  let dragDepth = 0
   let sending = $state(false)
   let error = $state<string | null>(null)
   let ready = $state(false)
-  let initial = ''
+  /** Koncept: lokálne ID, posledný uložený stav, stav ukladania. */
+  let draftId = $state<number | null>(null)
+  let savedSnap = ''
+  let savedAt = $state<string | null>(null)
+  let saveFailed = $state(false)
+  let saving: Promise<void> | null = null
+  let saveTimer: ReturnType<typeof setTimeout> | null = null
+  let closing = false
+  /** Práve vložený podpis (aby sa dal vymeniť pri zmene odosielateľa). */
+  let sigBlock = ''
+  const signatureBlock = (id: number | null): string => {
+    const sig = accounts.find((a) => a.id === id)?.signature?.trim()
+    return sig ? `\n\n-- \n${sig}` : ''
+  }
+
+  const signatureText = (id: number | null): string => accounts.find((a) => a.id === id)?.signature?.trim() ?? ''
+  /** Text podpisu, ktorý je práve v HTML správe. */
+  let sigText = ''
+
+  /** Iný odosielateľ → iný podpis (ak používateľ podpis medzitým neupravil). */
+  function onAccountChange(): void {
+    if (format === 'html') return swapHtmlSignature()
+    const next = signatureBlock(accountId)
+    if (sigBlock && body.includes(sigBlock)) body = body.replace(sigBlock, next)
+    else if (!sigBlock && next && !body.trim()) body = next
+    else return
+    sigBlock = next
+  }
+  function swapHtmlSignature(): void {
+    const next = signatureText(accountId)
+    const cur = editorRef?.getHTML() ?? html
+    const m = /<p>--<br>([\s\S]*?)<\/p>/.exec(cur)
+    const inner = m ? new DOMParser().parseFromString(m[1]!.replace(/<br\s*\/?>/g, '\n'), 'text/html').body.textContent ?? '' : null
+    if (m && sigText && inner?.trim() === sigText) editorRef?.setHTML(cur.replace(m[0], signatureHtml(next)))
+    else if (!sigText && next && htmlIsEmpty(cur)) editorRef?.setHTML(`<p></p>${signatureHtml(next)}`)
+    else return
+    sigText = next
+  }
+
+  /** Prepnutie formátovaný ↔ čistý text. */
+  function toggleFormat(): void {
+    if (format === 'html') {
+      const cur = editorRef?.getHTML() ?? html
+      if (hasFormatting(cur) && !confirm(t('compose.toPlainConfirm'))) return
+      body = htmlToText(cur)
+      format = 'plain'
+    } else {
+      html = textToHtml(body)
+      format = 'html'
+    }
+  }
+
   let bodyEl: HTMLTextAreaElement | undefined = $state()
   let toEl: HTMLInputElement | undefined = $state()
 
   const fmt = (list: Address[]): string => list.map((a) => (a.name ? `${a.name.replace(/[",<>]/g, '')} <${a.address}>` : a.address)).join(', ')
-  const snapshot = (): string => JSON.stringify([accountId, to, cc, bcc, subject, body])
-  const dirty = (): boolean => ready && snapshot() !== initial
+  const snapshot = (): string => JSON.stringify([accountId, to, cc, bcc, subject, format, format === 'html' ? html : body, attachments.map((a) => a.key)])
+  const totalSize = $derived(attachments.reduce((s, a) => s + a.size, 0))
+  /** Je niečo, čo ešte nie je uložené v koncepte? */
+  const unsaved = (): boolean => ready && snapshot() !== savedSnap
+  const isEmpty = (): boolean => !to.trim() && !cc.trim() && !bcc.trim() && !subject.trim() && (format === 'html' ? htmlIsEmpty(html) : !body.trim()) && attachments.length === 0
 
   function quoteText(q: { from: Address[]; date: string | null; text: string }): string {
     const sender = q.from[0] ? (q.from[0].name ? `${q.from[0].name} <${q.from[0].address}>` : q.from[0].address) : ''
@@ -37,37 +109,201 @@
     return `\n\n${header}\n${quoted}\n`
   }
 
+  function forwardText(f: NonNullable<ComposePrefill['forward']>): string {
+    const one = (a: Address): string => (a.name ? `${a.name} <${a.address}>` : a.address)
+    const lines = [
+      t('compose.fwdHeader'),
+      `${t('compose.from')}: ${f.from.map(one).join(', ')}`,
+      `${t('reader.date')}: ${fullDate(f.date)}`,
+      `${t('compose.subject')}: ${f.subject}`,
+      ...(f.to.length ? [`${t('compose.to')}: ${f.to.map(one).join(', ')}`] : []),
+      ...(f.cc.length ? [`${t('compose.cc')}: ${f.cc.map(one).join(', ')}`] : [])
+    ]
+    return `\n\n${lines.join('\n')}\n\n${f.text.replace(/\s+$/, '')}\n`
+  }
+
+  function addFiles(list: { path: string; name: string; size: number }[]): void {
+    const have = new Set(attachments.map((a) => a.key))
+    for (const f of list) {
+      const key = `file:${f.path}`
+      if (have.has(key)) continue
+      have.add(key)
+      attachments.push({ key, name: f.name, size: f.size, source: { kind: 'file', path: f.path } })
+    }
+  }
+
+  async function pickFiles(): Promise<void> {
+    addFiles(await window.doar.chooseAttachFiles())
+  }
+
+  function removeAttachment(key: string): void {
+    attachments = attachments.filter((a) => a.key !== key)
+  }
+
+  function hasFiles(e: DragEvent): boolean {
+    return !!e.dataTransfer && [...e.dataTransfer.types].includes('Files')
+  }
+
+  async function onDrop(e: DragEvent): Promise<void> {
+    if (!hasFiles(e)) return
+    e.preventDefault()
+    dragDepth = 0
+    dropping = false
+    if (sending) return
+    const files = [...(e.dataTransfer?.files ?? [])]
+    const got = await window.doar.filesFromDrop(files)
+    addFiles(got)
+    if (got.length < files.length) error = t('compose.dropSkipped')
+  }
+
+  function forwardHtml(f: NonNullable<ComposePrefill['forward']>): string {
+    const lines = forwardText(f).trim().split('\n\n')[0]!.split('\n')
+    return `<p>${lines.map(escapeHtml).join('<br>')}</p>${textToHtml(f.text.replace(/\s+$/, ''))}`
+  }
+
+  function quoteHeader(q: { from: Address[]; date: string | null }): string {
+    const sender = q.from[0] ? (q.from[0].name ? `${q.from[0].name} <${q.from[0].address}>` : q.from[0].address) : ''
+    return t('compose.quoteHeader', { date: fullDate(q.date), sender }).replace(/\s{2,}/g, ' ')
+  }
+
   onMount(() => {
     document.documentElement.lang = i18n.locale
     void (async () => {
       try {
         accounts = await window.doar.invoke('accounts.list')
+        const settings = await window.doar.invoke('settings.get').catch(() => null)
         const pre = await window.doar.invoke('compose.prepare', { mode, messageId })
         accountId = pre.accountId
-        to = fmt(pre.to)
-        cc = fmt(pre.cc)
-        showCc = pre.cc.length > 0
+        to = pre.draft ? pre.draft.to : fmt(pre.to)
+        cc = pre.draft ? pre.draft.cc : fmt(pre.cc)
+        bcc = pre.draft ? pre.draft.bcc : ''
+        showCc = !!(cc || bcc)
         subject = pre.subject
-        body = pre.quote ? quoteText(pre.quote) : ''
+        format = pre.draft ? (pre.draft.html ? 'html' : 'plain') : settings?.composeHtml === false ? 'plain' : 'html'
+        if (format === 'html') {
+          sigText = pre.draft ? '' : signatureText(pre.accountId)
+          html = pre.draft
+            ? pre.draft.html!
+            : `<p></p>${signatureHtml(sigText)}${pre.quote ? quoteHtml(quoteHeader(pre.quote), pre.quote.text) : pre.forward ? forwardHtml(pre.forward) : ''}`
+        } else {
+          sigBlock = pre.draft ? '' : signatureBlock(pre.accountId)
+          body = pre.draft ? pre.draft.text : sigBlock + (pre.quote ? quoteText(pre.quote) : pre.forward ? forwardText(pre.forward) : '')
+        }
         replyToMessage = pre.replyToMessage
+        attachments = pre.attachments.map((a, i) => ({ key: `pre:${i}`, name: a.filename, size: a.size, source: a.source }))
+        if (pre.draftId !== null) {
+          draftId = pre.draftId
+          // Ten istý koncept už upravuje iné okno → to sa zobrazí, toto sa zavrie.
+          if (!(await window.doar.claimDraft(pre.draftId))) {
+            closing = true
+            window.doar.closeWindow()
+            return
+          }
+        }
       } catch (e) {
         error = errText(e)
       }
-      initial = snapshot()
       ready = true
       await tick()
-      // Pri odpovedi kurzor na začiatok textu, pri novej správe do poľa Komu.
-      if (mode === 'new') toEl?.focus()
+      // Editor si HTML upraví do svojej podoby – porovnávať treba až s ňou.
+      if (format === 'html' && editorRef) html = editorRef.getHTML()
+      savedSnap = snapshot()
+      // Pri odpovedi kurzor na začiatok textu, pri novej a preposielanej správe do poľa Komu.
+      if (mode === 'new' || mode === 'forward') toEl?.focus()
+      else if (format === 'html') editorRef?.focus('start')
       else {
         bodyEl?.focus()
         bodyEl?.setSelectionRange(0, 0)
         if (bodyEl) bodyEl.scrollTop = 0
       }
     })()
-    return window.doar.onCloseRequest(() => {
-      if (!dirty() || confirm(t('compose.discard'))) window.doar.closeWindow()
-    })
+    return window.doar.onCloseRequest(() => void closeCompose())
   })
+
+  // Priebežné ukladanie konceptu: chvíľu po poslednej zmene.
+  $effect(() => {
+    const snap = snapshot()
+    if (!ready || sending || closing || snap === savedSnap) return
+    if (saveTimer) clearTimeout(saveTimer)
+    saveTimer = setTimeout(() => void saveDraft(false), 1500)
+  })
+
+  async function saveDraft(flush: boolean): Promise<boolean> {
+    if (saveTimer) clearTimeout(saveTimer)
+    saveTimer = null
+    while (saving) await saving
+    if (accountId === null) return false
+    const snap = snapshot()
+    if (snap === savedSnap) {
+      if (flush && draftId !== null) await window.doar.invoke('drafts.flush', { draftId }).catch(() => {})
+      return true
+    }
+    const keys = attachments.map((a) => a.key)
+    let ok = true
+    saving = (async () => {
+      try {
+        const r = await window.doar.invoke('drafts.save', {
+          draftId,
+          accountId: accountId!,
+          to,
+          cc,
+          bcc,
+          subject,
+          text: format === 'plain' ? body : htmlToText(html),
+          html: format === 'html' ? html : null,
+          replyToMessage,
+          attachments: attachments.map((a) => ({ ...a.source })),
+          flush
+        })
+        if (draftId === null) void window.doar.claimDraft(r.draftId)
+        draftId = r.draftId
+        // Prílohy sú odteraz uložené v koncepte (súbor na disku už nie je potrebný).
+        r.attachments.forEach((src, i) => {
+          const a = attachments.find((x) => x.key === keys[i])
+          if (a) a.source = src
+        })
+        savedSnap = snap
+        savedAt = new Date().toISOString()
+        saveFailed = false
+      } catch (e) {
+        ok = false
+        saveFailed = true
+        error = errText(e)
+      }
+    })()
+    await saving
+    saving = null
+    return ok
+  }
+
+  /** Zatvorenie okna: rozpísaná správa sa uloží ako koncept (nič sa nestratí). Prázdny koncept sa zahodí. */
+  async function closeCompose(): Promise<void> {
+    if (closing) return
+    closing = true
+    if (saveTimer) clearTimeout(saveTimer)
+    while (saving) await saving
+    try {
+      if (draftId !== null && isEmpty()) await window.doar.invoke('drafts.discard', { draftId })
+      else if (unsaved()) {
+        if (!(await saveDraft(true)) && !confirm(t('compose.closeUnsaved'))) {
+          closing = false
+          return
+        }
+      } else if (draftId !== null) await window.doar.invoke('drafts.flush', { draftId })
+    } catch {
+      // zatvoriť aj tak – posledná verzia je uložená lokálne
+    }
+    window.doar.closeWindow()
+  }
+
+  async function discard(): Promise<void> {
+    if (!isEmpty() && !confirm(t('compose.discardConfirm'))) return
+    closing = true
+    if (saveTimer) clearTimeout(saveTimer)
+    while (saving) await saving
+    if (draftId !== null) await window.doar.invoke('drafts.discard', { draftId }).catch(() => {})
+    window.doar.closeWindow()
+  }
 
   $effect(() => {
     document.title = subject.trim() || t('compose.titleNew')
@@ -75,6 +311,7 @@
 
   function errText(e: unknown): string {
     const err = e as { code?: string; message?: string }
+    if (err.code === 'ATTACHMENT_MISSING') return t('errors.ATTACHMENT_MISSING', { name: (err.message ?? '').split(': ').slice(1).join(': ') })
     if (err.code === 'INVALID_RECIPIENTS') return t('errors.INVALID_RECIPIENTS', { list: (err.message ?? '').split(': ').slice(1).join(': ') })
     const key = `errors.${err.code}` as MessageKey
     return t(key) !== key ? t(key) : t('errors.generic', { message: err.message ?? String(e) })
@@ -88,10 +325,29 @@
       toEl?.focus()
       return
     }
+    if (totalSize > MAX_ATTACHMENTS_BYTES) {
+      error = t('errors.ATTACHMENTS_TOO_LARGE')
+      return
+    }
     if (!subject.trim() && !confirm(t('compose.noSubject'))) return
     sending = true
+    if (saveTimer) clearTimeout(saveTimer)
+    while (saving) await saving
     try {
-      await window.doar.invoke('compose.send', { accountId, to, cc, bcc, subject, text: body, replyToMessage })
+      await window.doar.invoke('compose.send', {
+        accountId,
+        to,
+        cc,
+        bcc,
+        subject,
+        text: format === 'plain' ? body : htmlToText(html),
+        html: format === 'html' ? html : null,
+        replyToMessage,
+        // Proxy zo stavu Svelte sa cez MessagePort neprenesie – posielame obyčajné objekty.
+        attachments: attachments.map((a) => ({ ...a.source })),
+        draftId
+      })
+      closing = true
       // Správa je vo fronte – odošle sa hneď alebo hneď po obnovení spojenia. Okno môžeme zavrieť.
       window.doar.closeWindow()
     } catch (e) {
@@ -106,43 +362,71 @@
       void send()
     } else if (e.key === 'Escape') {
       e.preventDefault()
-      if (!dirty() || confirm(t('compose.discard'))) window.doar.closeWindow()
+      void closeCompose()
+    } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
+      e.preventDefault()
+      void saveDraft(true)
     }
   }
 </script>
 
-<svelte:window onkeydown={onKey} />
+<svelte:window
+  onkeydown={onKey}
+  ondragenter={(e) => {
+    if (!hasFiles(e)) return
+    dragDepth++
+    dropping = true
+  }}
+  ondragleave={(e) => {
+    if (!hasFiles(e)) return
+    dragDepth = Math.max(0, dragDepth - 1)
+    if (!dragDepth) dropping = false
+  }}
+  ondragover={(e) => {
+    if (!hasFiles(e)) return
+    e.preventDefault()
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy'
+  }}
+  ondrop={(e) => void onDrop(e)}
+/>
 
 <div class="compose">
   <header class="bar">
     <button class="btn btn-primary" onclick={send} disabled={sending || !ready} title={t('compose.shortcut')}>
       {sending ? t('compose.sending') : `${t('compose.send')} ➤`}
     </button>
-    <span class="hint">{t('compose.plainOnly')}</span>
+    <button class="btn" onclick={pickFiles} disabled={sending || !ready}>📎 {t('compose.attach')}</button>
+    <button class="btn" class:on={format === 'html'} aria-pressed={format === 'html'} onclick={toggleFormat} disabled={sending || !ready} title={t('compose.formatTitle')}>
+      {format === 'html' ? t('compose.formatOn') : t('compose.formatOff')}
+    </button>
+    <button class="btn" onclick={discard} disabled={sending || !ready} title={t('compose.discardTitle')}>🗑 {t('compose.discardBtn')}</button>
+    <span class="status" class:warn={saveFailed} role="status">
+      {#if saveFailed}{t('compose.draftFailed')}{:else if savedAt}{t('compose.draftSaved', { time: timeOnly(savedAt) })}{:else}{t('compose.plainOnly')}{/if}
+    </span>
   </header>
 
   <form class="fields" onsubmit={(e) => (e.preventDefault(), send())}>
     <label class="row">
       <span>{t('compose.from')}</span>
-      <select bind:value={accountId} disabled={sending}>
+      <select bind:value={accountId} disabled={sending} onchange={onAccountChange}>
         {#each accounts as a (a.id)}
           <option value={a.id}>{a.email}</option>
         {/each}
       </select>
     </label>
-    <label class="row">
-      <span>{t('compose.to')}</span>
-      <input bind:this={toEl} bind:value={to} type="text" autocomplete="off" spellcheck="false" placeholder={t('compose.toHint')} disabled={sending} />
-    </label>
+    <div class="row">
+      <label for="f-to">{t('compose.to')}</label>
+      <AddressInput id="f-to" label={t('compose.to')} bind:value={to} bind:inputEl={toEl} placeholder={t('compose.toHint')} disabled={sending} />
+    </div>
     {#if showCc}
-      <label class="row">
-        <span>{t('compose.cc')}</span>
-        <input bind:value={cc} type="text" autocomplete="off" spellcheck="false" disabled={sending} />
-      </label>
-      <label class="row">
-        <span>{t('compose.bcc')}</span>
-        <input bind:value={bcc} type="text" autocomplete="off" spellcheck="false" disabled={sending} />
-      </label>
+      <div class="row">
+        <label for="f-cc">{t('compose.cc')}</label>
+        <AddressInput id="f-cc" label={t('compose.cc')} bind:value={cc} disabled={sending} />
+      </div>
+      <div class="row">
+        <label for="f-bcc">{t('compose.bcc')}</label>
+        <AddressInput id="f-bcc" label={t('compose.bcc')} bind:value={bcc} disabled={sending} />
+      </div>
     {:else}
       <div class="row">
         <span></span>
@@ -155,28 +439,68 @@
     </label>
   </form>
 
-  <textarea bind:this={bodyEl} bind:value={body} aria-label={t('compose.body')} spellcheck="true" disabled={sending}></textarea>
+  {#if attachments.length}
+    <section class="attachments" aria-label={t('compose.attachments')}>
+      <ul>
+        {#each attachments as a (a.key)}
+          <li class="att">
+            <span aria-hidden="true">📎</span>
+            <span class="att-name" title={a.name}>{a.name}</span>
+            <span class="size">{fileSize(a.size)}</span>
+            <button type="button" class="remove" aria-label={t('compose.removeAttachment', { name: a.name })} title={t('compose.removeAttachment', { name: a.name })} disabled={sending} onclick={() => removeAttachment(a.key)}>×</button>
+          </li>
+        {/each}
+      </ul>
+      <p class="total" class:warn={totalSize > WARN_ATTACHMENTS_BYTES}>
+        {t('compose.attachmentsTotal', { size: fileSize(totalSize) })}
+        {#if totalSize > MAX_ATTACHMENTS_BYTES}· {t('errors.ATTACHMENTS_TOO_LARGE')}{:else if totalSize > WARN_ATTACHMENTS_BYTES}· {t('compose.attachmentsBig')}{/if}
+      </p>
+    </section>
+  {/if}
+
+  {#if format === 'html' && ready}
+    <RichEditor bind:this={editorRef} {html} label={t('compose.body')} disabled={sending} onchange={(h) => (html = h)} />
+  {:else if format === 'plain'}
+    <textarea bind:this={bodyEl} bind:value={body} aria-label={t('compose.body')} spellcheck="true" disabled={sending}></textarea>
+  {/if}
 
   {#if error}<p class="error" role="alert">{error}</p>{/if}
+  {#if dropping}
+    <div class="dropzone" aria-hidden="true"><span>📎 {t('compose.dropHere')}</span></div>
+  {/if}
 </div>
 
 <style>
   .compose {
-    display: grid;
-    grid-template-rows: auto auto 1fr auto;
+    /* Stĺpec: lišta, polia, (prílohy), text, (chyba) – text zaberie zvyšok výšky. */
+    display: flex;
+    flex-direction: column;
+    position: relative;
     height: 100%;
     background: var(--surface);
   }
   .bar {
     display: flex;
     align-items: center;
-    gap: 1rem;
+    gap: 0.5rem;
     padding: 0.6rem 1rem;
     border-bottom: 1px solid var(--border);
   }
-  .hint {
+  .bar .btn {
+    white-space: nowrap;
+    flex: none;
+  }
+  .status {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    margin-left: auto;
     font-size: 0.8rem;
     color: var(--text-muted);
+  }
+  .status.warn {
+    color: var(--warning);
   }
   .fields {
     padding: 0.4rem 1rem 0.2rem;
@@ -189,6 +513,7 @@
     gap: 0.5rem;
     padding: 0.2rem 0;
   }
+  .row > label,
   .row > span {
     color: var(--text-muted);
     font-size: 0.9rem;
@@ -212,14 +537,82 @@
     font-size: 0.85rem;
   }
   textarea {
+    flex: 1;
+    min-height: 0;
     width: 100%;
-    height: 100%;
     resize: none;
     border: 0;
     padding: 1rem 1.1rem;
     background: var(--surface);
     font: 15px/1.55 var(--font-ui);
     outline-offset: -2px;
+  }
+  .attachments {
+    padding: 0.5rem 1rem 0.3rem;
+    border-bottom: 1px solid var(--border);
+    max-height: 30vh;
+    overflow: auto;
+  }
+  .attachments ul {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+  }
+  .att {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    max-width: 20rem;
+    padding: 0.2rem 0.3rem 0.2rem 0.6rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--surface-2);
+    font-size: 0.88rem;
+  }
+  .att-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .size,
+  .total {
+    color: var(--text-muted);
+    font-size: 0.8rem;
+  }
+  .total {
+    margin: 0.35rem 0 0;
+  }
+  .total.warn {
+    color: var(--warning);
+  }
+  .remove {
+    border: 0;
+    background: none;
+    cursor: pointer;
+    color: var(--text-muted);
+    font-size: 1.05rem;
+    line-height: 1;
+    padding: 0 0.3rem;
+    border-radius: var(--radius-sm);
+  }
+  .remove:hover {
+    color: var(--danger);
+    background: color-mix(in srgb, var(--danger) 10%, transparent);
+  }
+  .dropzone {
+    position: absolute;
+    inset: 0.5rem;
+    display: grid;
+    place-items: center;
+    border: 3px dashed var(--accent);
+    border-radius: var(--radius);
+    background: color-mix(in srgb, var(--accent) 12%, var(--surface));
+    font-size: 1.2rem;
+    font-weight: 600;
+    pointer-events: none;
   }
   .error {
     margin: 0;

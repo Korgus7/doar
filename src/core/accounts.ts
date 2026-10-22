@@ -1,11 +1,12 @@
 import net from 'node:net'
 import type { Db } from './store/db'
-import type { AccountSettings, AccountSummary, AddAccountInput, ServerSettings } from '../shared/ipc'
+import type { AccountDetails, AccountPatch, AccountSettings, AccountSummary, AddAccountInput, ServerSettings } from '../shared/ipc'
+import { ACCOUNT_COLORS } from '../shared/ipc'
 import { passwordKey, type Secrets } from './secrets'
 import { emailDomain } from './providers/discover'
 
 /** Farby kont v poradí pridávania (dobre rozlíšiteľné v svetlej aj tmavej téme). */
-const COLORS = ['#3b82f6', '#e8590c', '#2f9e44', '#ae3ec9', '#0c8599', '#e03131', '#f08c00', '#5c7cfa']
+const COLORS = ACCOUNT_COLORS
 
 function err(code: string, message: string): Error {
   return Object.assign(new Error(message), { code })
@@ -36,8 +37,109 @@ export function validateSettings(input: unknown): AccountSettings {
   }
 }
 
+const SUMMARY_COLS = `id, email, name, color, display_name AS displayName, COALESCE(signature, '') AS signature`
+
 export function listAccounts(db: Db): AccountSummary[] {
-  return db.prepare('SELECT id, email, name, color FROM accounts ORDER BY sort_order, id').all() as unknown as AccountSummary[]
+  return db.prepare(`SELECT ${SUMMARY_COLS} FROM accounts ORDER BY sort_order, id`).all() as unknown as AccountSummary[]
+}
+
+export function accountSummary(db: Db, id: number): AccountSummary | null {
+  return (db.prepare(`SELECT ${SUMMARY_COLS} FROM accounts WHERE id = ?`).get(id) as unknown as AccountSummary | undefined) ?? null
+}
+
+export function getAccount(db: Db, id: number): AccountDetails {
+  const r = db
+    .prepare(
+      `SELECT ${SUMMARY_COLS}, username, imap_host, imap_port, imap_security, smtp_host, smtp_port, smtp_security, save_sent_copy, password_storage,
+              (SELECT COUNT(*) FROM outbox o WHERE o.account_id = accounts.id AND o.state IN ('queued','sending','error','uncertain')) AS pending
+       FROM accounts WHERE id = ?`
+    )
+    .get(id) as
+    | (AccountSummary & {
+        username: string
+        imap_host: string
+        imap_port: number
+        imap_security: 'tls' | 'starttls'
+        smtp_host: string
+        smtp_port: number
+        smtp_security: 'tls' | 'starttls'
+        save_sent_copy: number
+        password_storage: 'os' | 'session'
+        pending: number
+      })
+    | undefined
+  if (!r) throw err('NOT_FOUND', 'Konto neexistuje')
+  return {
+    id: r.id,
+    email: r.email,
+    name: r.name,
+    color: r.color,
+    displayName: r.displayName,
+    signature: r.signature,
+    username: r.username,
+    imap: { host: r.imap_host, port: r.imap_port, security: r.imap_security },
+    smtp: { host: r.smtp_host, port: r.smtp_port, security: r.smtp_security },
+    saveSentCopy: r.save_sent_copy === 1,
+    passwordStorage: r.password_storage,
+    pendingOutbox: r.pending
+  }
+}
+
+/** Zmena údajov konta, ktoré nesúvisia s pripojením (meno, názov, farba, podpis, kópia v Odoslaných). */
+export function updateAccount(db: Db, id: number, patch: AccountPatch): AccountSummary {
+  if (!accountSummary(db, id)) throw err('NOT_FOUND', 'Konto neexistuje')
+  const sets: string[] = []
+  const args: (string | number)[] = []
+  const text = (v: unknown, max: number): string | null => (typeof v === 'string' ? v.replace(/\r\n?/g, '\n').slice(0, max) : null)
+  const dn = text(patch?.displayName, 200)
+  if (dn !== null) {
+    sets.push('display_name = ?')
+    args.push(dn.trim())
+  }
+  const name = text(patch?.name, 100)
+  if (name !== null) {
+    if (!name.trim()) throw err('INVALID_NAME', 'Názov konta nesmie byť prázdny')
+    sets.push('name = ?')
+    args.push(name.trim())
+  }
+  if (typeof patch?.color === 'string') {
+    if (!/^#[0-9a-f]{6}$/i.test(patch.color)) throw err('INVALID_COLOR', 'Neplatná farba')
+    sets.push('color = ?')
+    args.push(patch.color.toLowerCase())
+  }
+  const sig = text(patch?.signature, 10_000)
+  if (sig !== null) {
+    sets.push('signature = ?')
+    args.push(sig.replace(/\s+$/, ''))
+  }
+  if (typeof patch?.saveSentCopy === 'boolean') {
+    sets.push('save_sent_copy = ?')
+    args.push(patch.saveSentCopy ? 1 : 0)
+  }
+  if (sets.length) db.prepare(`UPDATE accounts SET ${sets.join(', ')} WHERE id = ?`).run(...args, id)
+  return accountSummary(db, id)!
+}
+
+/** Uloží nové nastavenia servera (už overené) a prípadne nové heslo – do toho istého úložiska ako doteraz. */
+export async function saveServerSettings(
+  db: Db,
+  secrets: Secrets,
+  sessionSecrets: Secrets,
+  id: number,
+  s: { username: string; imap: ServerSettings; smtp: ServerSettings },
+  password?: string
+): Promise<void> {
+  const acc = getAccount(db, id)
+  if (password) await (acc.passwordStorage === 'os' ? secrets : sessionSecrets).set(passwordKey(id), password)
+  db.prepare(
+    `UPDATE accounts SET username = ?, imap_host = ?, imap_port = ?, imap_security = ?, smtp_host = ?, smtp_port = ?, smtp_security = ? WHERE id = ?`
+  ).run(s.username, s.imap.host, s.imap.port, s.imap.security, s.smtp.host, s.smtp.port, s.smtp.security, id)
+}
+
+/** Uložené heslo konta (na overenie nových nastavení servera bez opätovného zadania hesla). */
+export async function storedPassword(db: Db, secrets: Secrets, sessionSecrets: Secrets, id: number): Promise<string | null> {
+  const acc = getAccount(db, id)
+  return (acc.passwordStorage === 'os' ? secrets : sessionSecrets).get(passwordKey(id))
 }
 
 /**
@@ -66,7 +168,7 @@ export async function addAccount(db: Db, secrets: Secrets, sessionSecrets: Secre
       `INSERT INTO accounts (email, display_name, name, imap_host, imap_port, imap_security, smtp_host, smtp_port, smtp_security,
         auth_type, username, provider_key, save_sent_copy, color, sort_order, password_storage)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'password', ?, ?, ?, ?, ?, ?)
-       RETURNING id, email, name, color`
+       RETURNING ${SUMMARY_COLS}`
     )
     .get(
       settings.email,

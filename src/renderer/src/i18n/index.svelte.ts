@@ -27,6 +27,12 @@ function storedLocale(): string | null {
   }
 }
 
+/** Voľba používateľa: konkrétny jazyk, alebo „podľa systému“. */
+export function localeChoice(): Locale | 'auto' {
+  const s = storedLocale()
+  return s === 'sk' || s === 'en' ? s : 'auto'
+}
+
 export const i18n = $state({ locale: pickLocale(storedLocale() ?? window.doar?.locale) })
 
 export function setLocale(locale: Locale | 'auto'): void {

@@ -5,13 +5,16 @@ import type { Secrets } from '../secrets'
 import { passwordKey } from '../secrets'
 import type { CoreEvents, EventChannel, SyncStatus } from '../../shared/ipc'
 import type { ImapFlow } from 'imapflow'
-import { AccountSync, type AccountRow, type SyncDeps } from './account-sync'
+import { AccountSync, type AccountRow, type MovePayload, type SyncDeps } from './account-sync'
 import { createImapClient } from '../mail/imap'
 
 /** Spravuje synchronizáciu všetkých kont. */
 export class SyncManager {
   private syncs = new Map<number, AccountSync>()
   private deps: SyncDeps
+  private undoDelayMs: number
+  /** Odstup nahratia konceptu na server od posledného uloženia (ms). */
+  readonly draftDelayMs: number
 
   constructor(opts: {
     db: Db
@@ -22,7 +25,13 @@ export class SyncManager {
     emit<E extends EventChannel>(ch: E, data: CoreEvents[E]): void
     clientFactory?: SyncDeps['clientFactory']
     smtpSend?: SyncDeps['smtpSend']
+    /** Čas na „Vrátiť späť“ pred vykonaním presunu na serveri (ms). */
+    undoDelayMs?: number
+    draftDelayMs?: number
+    onNewMail?: SyncDeps['onNewMail']
   }) {
+    this.undoDelayMs = opts.undoDelayMs ?? 8000
+    this.draftDelayMs = opts.draftDelayMs ?? 30_000
     this.deps = {
       db: opts.db,
       store: opts.store,
@@ -30,6 +39,7 @@ export class SyncManager {
       emit: opts.emit,
       clientFactory: opts.clientFactory,
       smtpSend: opts.smtpSend,
+      onNewMail: opts.onNewMail,
       getPassword: (acc) => (acc.password_storage === 'session' ? opts.sessionSecrets : opts.secrets).get(passwordKey(acc.id))
     }
   }
@@ -59,6 +69,7 @@ export class SyncManager {
   startAll(): void {
     // Odosielanie prerušené pádom aplikácie: nevieme, či správa odišla → rozhodne používateľ.
     this.deps.store.recoverInterruptedSends()
+    this.deps.store.resetRunningOperations()
     const ids = (this.deps.db.prepare('SELECT id FROM accounts ORDER BY sort_order, id').all() as { id: number }[]).map((r) => r.id)
     for (const id of ids) this.start(id)
   }
@@ -78,6 +89,12 @@ export class SyncManager {
     await s?.stop()
   }
 
+  /** Nové nastavenia servera: synchronizácia konta začne odznova s novým pripojením. */
+  async restart(accountId: number): Promise<void> {
+    await this.stop(accountId)
+    this.start(accountId)
+  }
+
   async stopAll(): Promise<void> {
     await Promise.all([...this.syncs.keys()].map((id) => this.stop(id)))
   }
@@ -93,6 +110,115 @@ export class SyncManager {
   async syncNow(accountId?: number): Promise<void> {
     const list = accountId === undefined ? [...this.syncs.values()] : [this.syncs.get(accountId)].filter((s): s is AccountSync => !!s)
     await Promise.allSettled(list.map((s) => s.requestSync()))
+  }
+
+  /**
+   * Presun správ (Kôš, Archív, Spam, Doručená pošta alebo konkrétny priečinok).
+   * Správy sa hneď skryjú; na serveri sa presun vykoná až po uplynutí času na „Vrátiť späť“.
+   * Vráti ID operácií pre „Vrátiť späť“.
+   */
+  moveMessages(ids: number[], target: { folderId?: number; special?: 'trash' | 'archive' | 'junk' | 'inbox' }): { undo: number[]; count: number } {
+    const store = this.deps.store
+    const groups = new Map<number, { accountId: number; fromFolderId: number; uids: number[]; messageIds: number[] }>()
+    for (const id of ids) {
+      const r = store.message(id)
+      if (!r) continue
+      const g = groups.get(r.folder_id) ?? { accountId: r.account_id, fromFolderId: r.folder_id, uids: [], messageIds: [] }
+      g.uids.push(r.uid)
+      g.messageIds.push(r.id)
+      groups.set(r.folder_id, g)
+    }
+    const err = (code: string, msg: string): Error => Object.assign(new Error(msg), { code })
+    const targetRow = target.folderId !== undefined ? store.folder(target.folderId) : null
+    if (target.folderId !== undefined && !targetRow) throw err('NO_TARGET', 'Cieľový priečinok neexistuje')
+
+    const plans: { g: (typeof groups extends Map<number, infer V> ? V : never); payload: MovePayload }[] = []
+    for (const g of groups.values()) {
+      let toFolderId: number | undefined
+      let toSpecial: MovePayload['toSpecial']
+      if (targetRow) {
+        if (targetRow.account_id !== g.accountId) throw err('CROSS_ACCOUNT', 'Presun medzi kontami zatiaľ nie je podporovaný')
+        toFolderId = targetRow.id
+      } else if (target.special === 'inbox') {
+        const inbox = store.specialFolder(g.accountId, 'inbox')
+        if (!inbox) throw err('NO_TARGET', 'Konto nemá doručenú poštu')
+        toFolderId = inbox.id
+      } else if (target.special) {
+        // Archív: ak server nemá \Archive, ale má „Všetku poštu“ (Gmail), archivuje sa tam.
+        const f = store.specialFolder(g.accountId, target.special) ?? (target.special === 'archive' ? store.specialFolder(g.accountId, 'all') : null)
+        if (f) toFolderId = f.id
+        else toSpecial = target.special
+      } else throw err('NO_TARGET', 'Chýba cieľ presunu')
+      if (toFolderId === g.fromFolderId) continue
+      plans.push({ g, payload: { fromFolderId: g.fromFolderId, uids: g.uids, messageIds: g.messageIds, toFolderId, toSpecial } })
+    }
+    const undo: number[] = []
+    let count = 0
+    const notBefore = new Date(Date.now() + this.undoDelayMs)
+    for (const { g, payload } of plans) {
+      store.setHidden(g.messageIds, true)
+      undo.push(store.enqueueOperation(g.accountId, 'move', payload, notBefore))
+      count += g.messageIds.length
+      this.syncs.get(g.accountId)?.scheduleDelayedOperations()
+    }
+    this.afterLocalChange(plans.map((p) => p.g.fromFolderId))
+    return { undo, count }
+  }
+
+  /** Natrvalo vymazať (len po potvrdení používateľom v rozhraní). Bez možnosti vrátenia. */
+  deleteForever(ids: number[]): void {
+    const store = this.deps.store
+    const groups = new Map<number, { accountId: number; folderId: number; uids: number[]; messageIds: number[] }>()
+    for (const id of ids) {
+      const r = store.message(id)
+      if (!r) continue
+      const g = groups.get(r.folder_id) ?? { accountId: r.account_id, folderId: r.folder_id, uids: [], messageIds: [] }
+      g.uids.push(r.uid)
+      g.messageIds.push(r.id)
+      groups.set(r.folder_id, g)
+    }
+    for (const g of groups.values()) {
+      store.setHidden(g.messageIds, true)
+      store.enqueueOperation(g.accountId, 'expunge', g)
+      void this.syncs.get(g.accountId)?.pushOperations().catch(() => {})
+    }
+    this.afterLocalChange([...groups.keys()])
+  }
+
+  /** „Vrátiť späť“: zruší presuny, ktoré sa na serveri ešte nevykonali. */
+  undo(opIds: number[]): { undone: boolean } {
+    const store = this.deps.store
+    let all = true
+    const folders: number[] = []
+    for (const id of opIds) {
+      const op = store.cancelOperation(id)
+      if (!op) {
+        all = false
+        continue
+      }
+      const p = op.payload as MovePayload
+      store.setHidden(p.messageIds, false)
+      folders.push(p.fromFolderId)
+    }
+    this.afterLocalChange(folders)
+    return { undone: all }
+  }
+
+  async createFolder(accountId: number, parentFolderId: number | null, name: string): Promise<number> {
+    const clean = name.trim()
+    if (!clean || clean.length > 200 || /[%*\u0000-\u001f]/.test(clean)) throw Object.assign(new Error('Neplatný názov priečinka'), { code: 'INVALID_FOLDER_NAME' })
+    const s = this.syncs.get(accountId)
+    if (!s) throw Object.assign(new Error('Konto neexistuje'), { code: 'NO_ACCOUNT' })
+    const parent = parentFolderId === null ? null : this.deps.store.folder(parentFolderId)
+    if (parentFolderId !== null && (!parent || parent.account_id !== accountId)) throw Object.assign(new Error('Nadradený priečinok neexistuje'), { code: 'NO_TARGET' })
+    return s.createFolder(parent?.path ?? null, clean)
+  }
+
+  private afterLocalChange(folderIds: number[]): void {
+    const unique = [...new Set(folderIds)]
+    this.deps.emit('messages.changed', { folderIds: unique })
+    const accounts = new Set(unique.map((id) => this.deps.store.folder(id)?.account_id).filter((x): x is number => x !== undefined))
+    for (const a of accounts) this.deps.emit('folders.changed', { accountId: a })
   }
 
   /**

@@ -53,7 +53,7 @@ test('písanie: nová správa, odpoveď s citáciou, nejasný výsledok, zatvore
 
   // 1. Nová správa
   const c1 = await openCompose(() => win.getByRole('button', { name: /Nová správa/ }).click())
-  await expect(c1.getByLabel('Od')).toHaveValue(/\d+/)
+  await expect(c1.getByRole('combobox', { name: /^Od/ })).toHaveValue(/\d+/)
   await c1.getByLabel('Komu').fill('Gita <gita@doar.test>')
   await c1.getByLabel('Predmet').fill('Pozdrav z Doaru')
   await c1.getByLabel('Text správy').fill('Ahoj Gita,\npíšem z nového klienta Doar.\n\nFilip')
@@ -71,17 +71,24 @@ test('písanie: nová správa, odpoveď s citáciou, nejasný výsledok, zatvore
   const c2 = await openCompose(() => win.getByRole('button', { name: /^↩ Odpovedať$/ }).click())
   await expect(c2.getByLabel('Komu')).toHaveValue('Gita <gita@doar.test>')
   await expect(c2.getByLabel('Predmet')).toHaveValue('Re: Obed v piatok?')
-  const body = await c2.getByLabel('Text správy').inputValue()
-  expect(body).toMatch(/^\n\nDňa \S.+ Gita <gita@doar\.test> napísal\(a\):\n> Ideme na obed v piatok o 12:00\?/)
-  await c2.getByLabel('Text správy').press('Control+Home')
-  await c2.keyboard.type('Áno, budem tam.')
+  // Formátovaná odpoveď: prázdny odsek na písanie, hlavička citácie, citácia ako blockquote.
+  const editor = c2.getByRole('textbox', { name: 'Text správy' })
+  expect(await editor.innerHTML()).toMatch(/^<p><br[^>]*><\/p><p>Dňa \S.+ Gita &lt;gita@doar\.test&gt; napísal\(a\):<\/p><blockquote><p>Ideme na obed v piatok o 12:00\?<\/p><\/blockquote>(<p><br[^>]*><\/p>)?$/)
+  await expect(editor).toBeFocused() // kurzor je hneď pripravený na začiatku
+  await c2.keyboard.type('Áno, ')
+  await c2.keyboard.press('Control+b')
+  await c2.keyboard.type('budem')
+  await c2.keyboard.press('Control+b')
+  await c2.keyboard.type(' tam.')
   await c2.screenshot({ path: 'test-results/odpoved.png' })
   await Promise.all([c2.waitForEvent('close'), c2.getByRole('button', { name: /Odoslať/ }).click()])
   await expect.poll(async () => (await sources('gita')).some((s) => s.includes('Subject: Re: Obed v piatok?')), { timeout: 20_000 }).toBe(true)
   const replyRaw = (await sources('gita')).find((s) => s.includes('Subject: Re: Obed v piatok?'))!
   const reply = await simpleParser(replyRaw)
   expect(reply.inReplyTo).toBe('<obed-1@doar.test>')
-  expect(reply.text).toMatch(/^Áno, budem tam\.\n\nDňa .+ Gita <gita@doar\.test> napísal\(a\):\n> Ideme na obed v piatok o 12:00\?/)
+  expect(reply.text).toMatch(/^Áno, budem tam\.\n\nDňa .+ Gita <gita@doar\.test> napísal\(a\):\n\n> Ideme na obed v piatok o 12:00\?/)
+  expect(reply.html).toContain('Áno, <strong>budem</strong> tam.')
+  expect(reply.html).toMatch(/<blockquote style="[^"]+"><p[^>]*>Ideme na obed v piatok o 12:00\?<\/p><\/blockquote>/)
 
   // 3. Nejasný výsledok → upozornenie, bezpečná voľba „Neodosielať“
   const c3 = await openCompose(() => win.getByRole('button', { name: /Nová správa/ }).click())
@@ -95,14 +102,10 @@ test('písanie: nová správa, odpoveď s citáciou, nejasný výsledok, zatvore
   await banner.getByRole('button', { name: 'Neodosielať' }).click()
   await expect(banner).toBeHidden()
 
-  // 4. Zatvorenie rozpísanej správy: najprv otázka (zrušiť = okno ostane), potom potvrdiť.
+  // 4. Zatvorenie rozpísanej správy: bez otázky – uloží sa ako koncept (podrobne v drafts.spec.ts).
   const c4 = await openCompose(() => win.getByRole('button', { name: /Nová správa/ }).click())
   await c4.getByLabel('Text správy').fill('Rozpísané…')
-  c4.once('dialog', (d) => void d.dismiss())
-  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().find((w) => w.getTitle() === 'Nová správa')?.close())
-  await c4.waitForTimeout(500)
-  expect(c4.isClosed()).toBe(false)
-  c4.once('dialog', (d) => void d.accept())
+  await expect(c4.getByRole('status')).toContainText('Koncept uložený', { timeout: 10_000 })
   await Promise.all([c4.waitForEvent('close'), app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().find((w) => w.getTitle() === 'Nová správa')?.close())])
 
   await app.close()

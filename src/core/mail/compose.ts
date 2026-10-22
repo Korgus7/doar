@@ -2,6 +2,7 @@ import MailComposer from 'nodemailer/lib/mail-composer'
 import addressparser from 'nodemailer/lib/addressparser'
 import { randomUUID } from 'node:crypto'
 import { simpleParser } from 'mailparser'
+import { htmlToPlain } from './parse'
 import type { Address } from '../../shared/ipc'
 
 /** Rozparsuje zoznam adries zadaný používateľom („Ján <jan@x.sk>, eva@y.sk“). Neplatné vráti zvlášť. */
@@ -28,6 +29,11 @@ export interface ComposeInput {
   text: string
   inReplyTo?: string | null
   references?: string[]
+  attachments?: { filename: string; content: Buffer; contentType?: string }[]
+  /** Pevné Message-ID (koncept má rovnaké naprieč verziami); inak sa vytvorí nové. */
+  messageId?: string
+  /** Formátovaná podoba (už prečistené HTML na odoslanie). Text je potom alternatíva (multipart/alternative). */
+  html?: string | null
 }
 
 /**
@@ -36,7 +42,7 @@ export interface ComposeInput {
  */
 export async function composeMessage(input: ComposeInput): Promise<{ raw: Buffer; messageId: string }> {
   const domain = input.from.address.split('@')[1] ?? 'doar.local'
-  const messageId = `<${randomUUID()}@${domain}>`
+  const messageId = input.messageId ?? `<${randomUUID()}@${domain}>`
   const mail = new MailComposer({
     from: input.from,
     to: input.to,
@@ -44,11 +50,13 @@ export async function composeMessage(input: ComposeInput): Promise<{ raw: Buffer
     bcc: input.bcc.length ? input.bcc : undefined,
     subject: input.subject,
     text: input.text,
+    html: input.html ?? undefined,
     messageId,
     date: new Date(),
     inReplyTo: input.inReplyTo ?? undefined,
     references: input.references?.length ? input.references : undefined,
     textEncoding: 'quoted-printable',
+    attachments: input.attachments?.map((a) => ({ filename: a.filename, content: a.content, contentType: a.contentType })),
     headers: { 'X-Mailer': 'Doar' }
   })
   const compiled = mail.compile()
@@ -86,9 +94,13 @@ export interface ReplySource {
   replyTo: Address[]
   to: Address[]
   cc: Address[]
+  bcc: Address[]
+  inReplyTo: string | null
   subject: string
   date: string | null
   text: string
+  /** HTML pôvodnej správy (ak ho má) – na otvorenie konceptu z iného programu. */
+  html: string | null
 }
 
 export async function replySource(raw: Buffer): Promise<ReplySource> {
@@ -105,10 +117,25 @@ export async function replySource(raw: Buffer): Promise<ReplySource> {
     replyTo: addrs(p.replyTo),
     to: addrs(p.to),
     cc: addrs(p.cc),
+    bcc: addrs(p.bcc),
+    inReplyTo: p.inReplyTo ?? null,
     subject: p.subject ?? '',
     date: p.date ? p.date.toISOString() : null,
-    text: (p.text ?? '').replace(/\r\n/g, '\n')
+    // Správa len v HTML: text na citáciu si odvodíme sami (rovnako ako náhľad v zozname).
+    html: typeof p.html === 'string' && p.html.trim() ? p.html : null,
+    text: (typeof p.text === 'string' && p.text.trim() ? p.text : typeof p.html === 'string' ? htmlToPlain(p.html) : '').replace(/\r\n/g, '\n')
   }
+}
+
+/** Nové Message-ID v doméne odosielateľa. */
+export function newMessageId(fromAddress: string): string {
+  return `<${randomUUID()}@${fromAddress.split('@')[1] ?? 'doar.local'}>`
+}
+
+/** „Fwd:“ len raz (aj keď predmet už má Fwd:/Fw:/PD:/WG:). */
+export function forwardSubject(subject: string): string {
+  const s = subject.trim()
+  return /^(fwd?|pd|wg|tr|rv|vs)\s*:/i.test(s) ? s : `Fwd: ${s}`
 }
 
 /** „Re:“ len raz, aj keď pôvodný predmet už nejakú predponu má (Re:, RE:, Odp:, AW:, Fwd:…). */

@@ -10,6 +10,7 @@ import { MemorySecrets } from '../../src/core/secrets'
 import { addAccount } from '../../src/core/accounts'
 import { SyncManager } from '../../src/core/sync/manager'
 import { createHandlers, type Handlers } from '../../src/core/handlers'
+import { FileGrants } from '../../src/core/files'
 import { ExportManager } from '../../src/core/export/manager'
 
 const srv = inject('testserver')
@@ -63,6 +64,7 @@ function newManager(): SyncManager {
   const emit = () => {}
   const m = new SyncManager({ db, store, blobs, secrets, sessionSecrets: new MemorySecrets(), emit })
   h = createHandlers({
+    files: new FileGrants(),
     db, blobs, store, sync: m, secrets,
     exports: new ExportManager({ db, store, blobs, emit, newClient: (id) => m.newImapClient(id) }), sessionSecrets: new MemorySecrets(), emit,
     dataDir: '', appVersion: 'test', sqlite: 'x',

@@ -37,6 +37,19 @@ const USERS = [
   { name: 'gita' },
   { name: 'hana' },
   { name: 'ivan' },
+  { name: 'jozef' },
+  { name: 'karol' },
+  { name: 'lenka' },
+  { name: 'marek' },
+  { name: 'nina' },
+  { name: 'olga' },
+  { name: 'pavol' },
+  { name: 'rado' },
+  { name: 'sona' },
+  { name: 'tomas' },
+  { name: 'urban' },
+  { name: 'vlado' },
+  { name: 'zuzana' },
   { name: 'plna', quota: '20K' }
 ]
 

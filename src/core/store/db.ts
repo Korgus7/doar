@@ -5,13 +5,17 @@ import m001 from './migrations/001_init'
 import m002 from './migrations/002_password_storage'
 import m003 from './migrations/003_sync'
 import m004 from './migrations/004_outbox'
+import m005 from './migrations/005_actions'
+import m006 from './migrations/006_drafts'
 
 /** Zoznam migrácií v poradí. Pridávaj len na koniec. */
 export const MIGRATIONS: readonly { version: number; name: string; sql: string }[] = [
   { version: 1, name: 'init', sql: m001 },
   { version: 2, name: 'password_storage', sql: m002 },
   { version: 3, name: 'sync', sql: m003 },
-  { version: 4, name: 'outbox', sql: m004 }
+  { version: 4, name: 'outbox', sql: m004 },
+  { version: 5, name: 'actions', sql: m005 },
+  { version: 6, name: 'drafts', sql: m006 }
 ]
 
 export type Db = DatabaseSync
