@@ -8,7 +8,7 @@ test('aplikácia sa spustí, rozhranie sa spojí s jadrom a vytvorí databázu',
   const win = await app.firstWindow()
   await expect(win.getByRole('heading', { name: /Vitajte v Doar|Welcome to Doar/ })).toBeVisible()
   // Stavový riadok ukáže verziu SQLite až po odpovedi jadra.
-  await expect(win.getByRole('status')).toContainText('Doar 0.1.0 · SQLite', { timeout: 15_000 })
+  await expect(win.getByRole('status')).toContainText('Doar 0.2.0 · SQLite', { timeout: 15_000 })
   expect(existsSync(join(dataDir, 'doar.db'))).toBe(true)
 
   // Bezpečnosť: rozhranie nemá Node.js ani require.

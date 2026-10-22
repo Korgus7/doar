@@ -129,6 +129,12 @@ Záznam dohodnutých rozhodnutí. Nové rozhodnutia pridávaj na koniec s dátum
 - **Našepkávanie adries** v poliach Komu/Kópia/Skrytá kópia: najprv adresy, na ktoré používateľ písal (počet a čas), potom odosielatelia doručenej pošty; od začiatku slova v mene alebo adrese, bez diakritiky. Enter/Tab vyberie, Esc zavrie. Meno sa uloží už pri odoslaní (adresy v databáze, nikdy mimo počítača).
 - **Tlač** (Ctrl+P, 🖨 v čítaní, ponuka): dokument s hlavičkou a prečisteným telom vytlačí skryté okno bez JavaScriptu; CSP nedovolí nič načítať z internetu (sledovacie obrázky sa nenačítajú ani pri tlači). Dočasný súbor sa po tlači zmaže.
 
+## 2026-10-22 – uzavretie 0.2
+
+- **Heslá:** prechod na asynchrónne šifrovanie Electronu (`safeStorage.encryptStringAsync`/`decryptStringAsync`); staré synchrónne funkcie sú označené na zrušenie. Heslá uložené predtým sa prečítajú bez zmeny; ak systém zmení kľúč, heslo sa uloží znova. Overené ručne na Windows (konto sa pripojí bez nového zadania hesla).
+- **0.2 overená** testami (unit, integračné proti Dovecotu, rozhranie) a ručne na Windows so skutočným kontom (cami.sk / Websupport): Kôš a Vrátiť späť, prílohy vrátane pretiahnutia súboru, koncepty, vyhľadávanie, upozornenia a odznak, formátovaná správa, našepkávanie adries.
+- **Neoverené ručne:** dialóg tlače vo Windows (test overuje len tlačený dokument), Gmail.
+
 ## Licencie závislostí (overené 2026-10-21 cez `npm view`)
 
 Všetky sú kompatibilné s MIT.

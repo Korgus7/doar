@@ -48,20 +48,23 @@ function startCore(): UtilityProcess {
     }
     const reply = (r: Omit<Extract<MainToCore, { kind: 'secret.result' }>, 'kind'>): void =>
       child.postMessage({ kind: 'secret.result', ...r } satisfies MainToCore)
-    try {
-      if (msg.kind === 'secret.get') reply({ id: msg.id, ok: true, value: secrets.get(msg.key) })
-      else if (msg.kind === 'secret.set') {
-        secrets.set(msg.key, msg.value)
-        reply({ id: msg.id, ok: true })
-      } else if (msg.kind === 'secret.delete') {
-        secrets.delete(msg.key)
-        reply({ id: msg.id, ok: true })
-      } else if (msg.kind === 'secret.status') {
-        reply({ id: msg.id, ok: true, value: secrets.status().available ? 'secure' : 'insecure' })
+    // Šifrovanie systému beží asynchrónne – odpoveď jadru príde, keď je hotové.
+    void (async () => {
+      try {
+        if (msg.kind === 'secret.get') reply({ id: msg.id, ok: true, value: await secrets.get(msg.key) })
+        else if (msg.kind === 'secret.set') {
+          await secrets.set(msg.key, msg.value)
+          reply({ id: msg.id, ok: true })
+        } else if (msg.kind === 'secret.delete') {
+          secrets.delete(msg.key)
+          reply({ id: msg.id, ok: true })
+        } else if (msg.kind === 'secret.status') {
+          reply({ id: msg.id, ok: true, value: (await secrets.status()).available ? 'secure' : 'insecure' })
+        }
+      } catch (e) {
+        reply({ id: (msg as { id: number }).id, ok: false, error: e instanceof Error ? e.message : 'ERROR' })
       }
-    } catch (e) {
-      reply({ id: (msg as { id: number }).id, ok: false, error: e instanceof Error ? e.message : 'ERROR' })
-    }
+    })()
   })
 
   child.on('exit', (code) => {

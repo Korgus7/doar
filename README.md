@@ -10,7 +10,7 @@ Jednoduchý, rýchly a bezplatný e-mailový klient pre desktop – v duchu Outl
 - slovenčina a angličtina
 - bez telemetrie
 
-**Stav:** vo vývoji – verzia 0.1 (jedno konto, čítanie, odosielanie, odpoveď, záloha do mbox).
+**Stav:** vo vývoji – verzia 0.2: viac kont a spoločná doručená pošta, čítanie a písanie (aj formátované), odpoveď a preposlanie, prílohy, koncepty, Kôš, Archív a presuny, vyhľadávanie, podpis, upozornenia na novú poštu, tlač, záloha do mbox. Ďalej: 0.3 (práca bez pripojenia, obnova zo zálohy, archív).
 
 Zadanie: [docs/ZADANIE.md](docs/ZADANIE.md) · Architektúra: [docs/ARCHITEKTURA.md](docs/ARCHITEKTURA.md)
 

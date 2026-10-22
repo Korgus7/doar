@@ -13,8 +13,8 @@ export class SecretStore {
   constructor(private readonly file: string) {}
 
   /** Je k dispozícii skutočné šifrovanie operačného systému? */
-  status(): { available: boolean; backend: string } {
-    const available = safeStorage.isEncryptionAvailable()
+  async status(): Promise<{ available: boolean; backend: string }> {
+    const available = await safeStorage.isAsyncEncryptionAvailable()
     let backend = process.platform === 'win32' ? 'dpapi' : process.platform === 'darwin' ? 'keychain' : 'unknown'
     if (process.platform === 'linux') {
       try {
@@ -41,17 +41,20 @@ export class SecretStore {
     renameSync(tmp, this.file)
   }
 
-  get(key: string): string | null {
+  async get(key: string): Promise<string | null> {
     const enc = this.load()[key]
     if (!enc) return null
-    return safeStorage.decryptString(Buffer.from(enc, 'base64'))
+    const { result, shouldReEncrypt } = await safeStorage.decryptStringAsync(Buffer.from(enc, 'base64'))
+    // Systém zmenil kľúč (napr. po aktualizácii) – uložiť znova novým kľúčom.
+    if (shouldReEncrypt) await this.set(key, result)
+    return result
   }
 
-  set(key: string, value: string): void {
-    if (!this.status().available) {
+  async set(key: string, value: string): Promise<void> {
+    if (!(await this.status()).available) {
       throw new Error('SECURE_STORAGE_UNAVAILABLE')
     }
-    this.load()[key] = safeStorage.encryptString(value).toString('base64')
+    this.load()[key] = (await safeStorage.encryptStringAsync(value)).toString('base64')
     this.save()
   }
 
