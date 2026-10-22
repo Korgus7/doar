@@ -1,0 +1,34 @@
+# Balík Doar Mail pre Windows (electron-builder). Zostavenie: npm run dist → dist\Doar-Mail-<verzia>-win-x64.zip
+#
+# Prečo nie inštalátor (.exe): Windows (inteligentná kontrola aplikácií) blokuje nepodpísané programy,
+# ktoré nepozná. Originálny Electron pozná a púšťa – preto ho necháme bit po bite nezmenený
+# (bez vloženej ikony a bez kontrolného súčtu asar) a len ho premenujeme na „Doar Mail.exe“.
+# Ikonu v ponuke Štart a na ploche si Doar Mail vytvorí sám pri prvom spustení (odkazy s vlastnou ikonou).
+# Podpísaný inštalátor príde, keď bude certifikát.
+appId: sk.doar.app
+productName: Doar Mail
+copyright: Copyright © 2026 Milan Caputa
+directories:
+  output: dist
+  buildResources: build
+files:
+  - out/**
+  - resources/**
+  - package.json
+  - "!**/*.map"
+# Ikona pre odkazy v ponuke Štart a na ploche – musí byť skutočný súbor (nie v app.asar).
+extraResources:
+  - from: build/icon.ico
+    to: icon.ico
+# Bez natívnych modulov (SQLite je súčasť Electronu) – netreba nič kompilovať.
+npmRebuild: false
+asar: true
+# Kontrolný súčet asar by sa zapísal do .exe a zmenil ho – Windows by ho potom nepoznal.
+disableAsarIntegrity: true
+win:
+  # .exe zostane originálny Electron (žiadna úprava ikony ani podpis).
+  signAndEditExecutable: false
+  target:
+    - target: zip
+      arch: [x64]
+  artifactName: Doar-Mail-${version}-win-${arch}.${ext}

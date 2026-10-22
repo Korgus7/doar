@@ -13,6 +13,7 @@
   import ImportDialog from './components/ImportDialog.svelte'
   import { restore, initRestoreEvents } from './lib/restore.svelte'
   import { initArchiveEvents, openArchive, archivePercent } from './lib/archive.svelte'
+  import { initUpdateEvents, checkUpdates } from './lib/update.svelte'
   import SettingsDialog from './components/SettingsDialog.svelte'
   import { openSettings } from './lib/settings.svelte'
   import { setSelection } from './lib/mail.svelte'
@@ -69,6 +70,7 @@
         else if (action === 'backup' && mail.accounts.length) backup.open = true
         else if (action === 'restore' && mail.accounts.length) restore.open = true
         else if (action === 'open-archive') void openArchive()
+        else if (action === 'check-updates') checkUpdates()
         else if (action === 'locale:sk' || action === 'locale:en') setLocale(action.slice(7) as Locale)
         else if (action === 'settings') openSettings({ tab: mail.accounts.length ? 'accounts' : 'general' })
         else if (action.startsWith('open-message:')) {
@@ -80,6 +82,7 @@
       initBackupEvents(),
       initRestoreEvents(),
       initArchiveEvents(),
+      initUpdateEvents(),
       window.doar.on('accounts.changed', () => void loadAccounts().then(() => scheduleRefresh([], true))),
       window.doar.on('folders.changed', () => scheduleRefresh()),
       window.doar.on('messages.changed', (d) => scheduleRefresh(d.folderIds)),

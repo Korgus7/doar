@@ -5,6 +5,11 @@
   "description": "Jednoduchý e-mailový klient pre desktop (IMAP/SMTP) so zálohou do mbox.",
   "license": "MIT",
   "author": "Milan Caputa",
+  "homepage": "https://github.com/Korgus7/doar",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Korgus7/doar.git"
+  },
   "private": true,
   "main": "out/main/index.js",
   "type": "module",
@@ -20,7 +25,8 @@
     "test:integration": "vitest run --project integration",
     "test:e2e": "playwright test",
     "testserver": "node scripts/testserver.mjs",
-    "rebuild:electron": "echo nič na zostavenie"
+    "rebuild:electron": "echo nič na zostavenie",
+    "dist": "electron-vite build && electron-builder --win --publish never && node scripts/release-manifest.mjs"
   },
   "dependencies": {
     "imapflow": "^2.5.9",
@@ -40,6 +46,7 @@
     "@types/nodemailer": "^8.0.2",
     "@types/sanitize-html": "^2.16.2",
     "electron": "^45.0.0",
+    "electron-builder": "26.15.3",
     "electron-vite": "^6.0.0",
     "smtp-server": "^3.20.2",
     "svelte": "^5.57.2",

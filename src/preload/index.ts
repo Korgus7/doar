@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
-import type { DoarApi, EventChannel, PortMessage, RequestChannel } from '../shared/ipc'
+import type { DoarApi, EventChannel, PortMessage, RequestChannel, UpdateState } from '../shared/ipc'
 
 /**
  * Jediný most medzi rozhraním a zvyškom aplikácie.
@@ -109,6 +109,32 @@ const api: DoarApi = {
   },
   setUnreadCount(n) {
     if (Number.isInteger(n)) ipcRenderer.send('unread-count', n)
+  },
+  updateState() {
+    return ipcRenderer.invoke('update-state') as Promise<UpdateState>
+  },
+  updateCheck() {
+    ipcRenderer.send('update-cmd', 'check')
+  },
+  updateDownload() {
+    ipcRenderer.send('update-cmd', 'download')
+  },
+  updateCancel() {
+    ipcRenderer.send('update-cmd', 'cancel')
+  },
+  updateRestart() {
+    ipcRenderer.send('update-cmd', 'restart')
+  },
+  updateSetAuto(on) {
+    ipcRenderer.send('update-cmd', on ? 'auto-on' : 'auto-off')
+  },
+  updateOpenPage() {
+    ipcRenderer.send('update-cmd', 'open-page')
+  },
+  onUpdateState(fn) {
+    const h = (_e: unknown, s: UpdateState): void => fn(s)
+    ipcRenderer.on('update-state', h)
+    return () => ipcRenderer.removeListener('update-state', h)
   },
   claimDraft(draftId) {
     return ipcRenderer.invoke('claim-draft', draftId) as Promise<boolean>

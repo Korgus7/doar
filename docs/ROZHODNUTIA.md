@@ -190,6 +190,31 @@ Záznam dohodnutých rozhodnutí. Nové rozhodnutia pridávaj na koniec s dátum
 - Overené testami (unit, integračné proti Dovecotu – opakovane, rozhranie) a ručne na Windows so skutočným kontom: práca bez pripojenia, obnova zo zálohy, archív.
 - **Neoverené:** Gmail (záloha, obnova so štítkami), servery bez UIDPLUS; kam sa pri prvej obnove do pôvodného konta (pred opravou porovnávania) nahrali 4 správy navyše – používateľ ich zmazal.
 
+## 2026-10-22 – balík pre Windows (0.4a)
+
+- **electron-builder 26.15.3** (MIT, len vývojový nástroj), konfigurácia `electron-builder.yml`, príkaz `npm run dist` → `dist\Doar-Mail-<verzia>-win-x64.zip` (dá sa zostaviť na Windowse aj na Linuxe).
+- **Prečo nie inštalátor:** inteligentná kontrola aplikácií (Smart App Control) na Windowse zablokovala (overené na počítači používateľa): 1. pomocný program, ktorý electron-builder spúšťa pri tvorbe inštalátora NSIS, 2. aj samotný `Doar Mail.exe`, do ktorého electron-builder vloží ikonu a údaje o verzii. Oba sú nepodpísané a Windows ich nepozná. Originálny `electron.exe` (tiež nepodpísaný) púšťa – je známy (`npm run dev` sa otvorí).
+- **Riešenie bez vypnutia ochrany:** `Doar Mail.exe` je **bit po bite originálny Electron**, len premenovaný (`signAndEditExecutable: false`, `disableAsarIntegrity: true`; overené zhodou SHA-256 s `electron.exe` 45.0.0). Naša aplikácia je v `resources\app.asar`, ikona pre odkazy v `resources\icon.ico`.
+- **Bez inštalátora:** zip sa rozbalí do ľubovoľného priečinka (odporúčané `%LOCALAPPDATA%\Programs\Doar Mail`). Pri spustení si Doar Mail sám vytvorí odkaz v ponuke Štart (vždy, ak chýba – viaže sa naň AppUserModelID pre oznámenia) a pri prvom spustení na ploche; po presune priečinka odkazy opraví. Odstránenie = zmazať priečinok a odkazy; pošta, kontá a nastavenia zostávajú v `%APPDATA%\Doar`.
+- `.exe` má ikonu Electronu (v Prieskumníkovi pri súbore); odkazy, okno a panel úloh majú ikonu Doar Mail.
+- **Neskôr:** podpísaný inštalátor (certifikát na podpisovanie kódu, napr. Certum pre open source) – potom aj vlastná ikona v `.exe` a bežný inštalátor/odinštalátor.
+
+## 2026-10-22 – aktualizácie (0.4b)
+
+- **Zdroj:** GitHub Releases (`Korgus7/doar`, najnovšie vydanie, bez predbežných). Vydanie musí mať prílohy `Doar-Mail-<verzia>-win-x64.zip` a `doar-mail-update.json` (verzia, súbor, veľkosť, SHA-256 – vytvorí ho `npm run dist`). Vydanie bez manifestu Doar Mail ignoruje.
+- **Súkromie:** Doar Mail sa pýta len GitHubu (`api.github.com`, bez identifikátorov, User-Agent „Doar-Mail-Updater“). Automatická kontrola 30 s po štarte a potom každých 12 h, dá sa vypnúť (Nastavenia → Všeobecné → Aktualizácie); ručne cez Pomocník → Skontrolovať aktualizácie…. Pri vývoji (`npm run dev`) sa automaticky nekontroluje.
+- **Nič bez súhlasu:** nová verzia sa len ponúkne (pruh pod panelom nástrojov, „Čo je nové“ z popisu vydania). Po kliknutí na Stiahnuť: stiahnutie do dočasného priečinka → overenie veľkosti a SHA-256 → rozbalenie **vedľa** bežiacej verzie (`…\Programs\Doar Mail 0.4.1`, najprv do `.part`, ochrana proti ceste mimo priečinka) → „Reštartovať teraz“. Bežiace súbory sa nikdy neprepisujú.
+- Nová verzia pri štarte sama presmeruje odkazy (ponuka Štart, plocha). Na disku zostáva bežiaca a **jedna predošlá** verzia (návrat späť = spustiť `Doar Mail.exe` zo starého priečinka); staršie sa zmažú – len priečinky, z ktorých Doar Mail naozaj bežal a obsahujú `Doar Mail.exe` aj `resources\app.asar`.
+- `Doar Mail.exe` je v každej verzii originálny Electron → inteligentná kontrola aplikácií ho púšťa aj po aktualizácii (pokiaľ sa nezmení verzia Electronu na takú, ktorú Windows ešte nepozná – vtedy treba overiť).
+- Overenie pravosti: SHA-256 z manifestu chráni pred poškodeným/neúplným súborom, nie pred kompromitovaným účtom na GitHube (to vyrieši až podpis kódu).
+- Starší Doar Mail nespustí databázu novšej verzie (`DB_TOO_NEW`) – pri návrate späť po migrácii treba použiť zálohu `doar.db.bak-v<verzia>`.
+- **Sieť:** okná majú internet zablokovaný (sledovacie obrázky), preto aktualizácie idú cez vlastnú reláciu `session.fromPartition('doar-update')` – inak `net::ERR_BLOCKED_BY_CLIENT` (zistené na Windows, test `update.spec` s náhradným GitHub API).
+- **asar:** Electron v main procese považuje `*.asar` za archív aj pri zápise/mazaní („Invalid package …\app.asar“). Rozbaľovanie a upratovanie preto bežia s `process.noAsar = true`.
+- Výsledky kontroly a chyby aktualizácií sa zapisujú do `%APPDATA%\Doar\logs\doar.log` (`[update]`).
+- **Overené na Windows (2026-10-22):** 0.3.0 → 0.3.1-test z testovacieho zdroja: stiahnutie, rozbalenie vedľa, reštart, odkazy v ponuke Štart aj na ploche presmerované na novú verziu. Neoverené: skutočné vydanie na GitHube, upratanie po druhej aktualizácii.
+- **Testovací zdroj:** premenná prostredia `DOAR_UPDATE_FEED` = priečinok s `doar-mail-update.json` a zipom (napr. `D:\_Doar\dist`); `DOAR_UPDATE_API` = náhradná adresa GitHub API (len testy).
+- Kód: `src/main/update-core.ts` (bez Electronu, unit testy), `src/main/updater.ts`, `scripts/release-manifest.mjs`, rozhranie `UpdateBanner.svelte`.
+
 ## Licencie závislostí (overené 2026-10-21 cez `npm view`)
 
 Všetky sú kompatibilné s MIT.
@@ -208,7 +233,7 @@ Všetky sú kompatibilné s MIT.
 | dompurify | 3.4.17 | MPL-2.0 OR Apache-2.0 | záložná sanitizácia (použijeme pod Apache-2.0) |
 | iconv-lite, libmime | – | MIT | kódovania |
 | vite, electron-vite, @sveltejs/vite-plugin-svelte | – | MIT | zostavenie |
-| electron-builder, electron-updater | – | MIT | inštalátor, aktualizácie |
+| electron-builder | 26.15.3 (pevná verzia) | MIT | inštalátor pre Windows (len vývoj) |
 | vitest | 5.0.5 | MIT | unit testy (len vývoj) |
 | @playwright/test | 1.64.1 | Apache-2.0 | testy UI (len vývoj) |
 | smtp-server | 3.20.2 | MIT-0 | testovací SMTP server (len vývoj) |

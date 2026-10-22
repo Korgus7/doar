@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { upd, checkUpdates } from '../lib/update.svelte'
+  import { timeOnly } from '../lib/format'
   import { tick } from 'svelte'
   import type { AccountDetails, AppSettings, ConnectionTestResult, ServerSettings } from '../../../shared/ipc'
   import { ACCOUNT_COLORS } from '../../../shared/ipc'
@@ -291,6 +293,20 @@
                 />
                 <span>{t('general.notifyShowContent')}<small>{t('general.notifyShowContentHint')}</small></span>
               </label>
+            </fieldset>
+          {/if}
+          {#if upd.s}
+            {@const u = upd.s}
+            <fieldset class="field">
+              <legend>{t('general.updates')}</legend>
+              <p class="note">{t('general.version', { version: u.current })}{#if u.lastCheck} · {t('general.lastCheck', { time: timeOnly(u.lastCheck) })}{/if}</p>
+              <label class="check">
+                <input type="checkbox" checked={u.auto} onchange={(e) => window.doar.updateSetAuto((e.currentTarget as HTMLInputElement).checked)} />
+                <span>{t('general.updatesAuto')}<small>{t('general.updatesPrivacy')}</small></span>
+              </label>
+              <div>
+                <button class="btn" disabled={u.phase === 'checking' || u.phase === 'downloading' || u.phase === 'installing'} onclick={checkUpdates}>{t('general.updatesCheck')}</button>
+              </div>
             </fieldset>
           {/if}
         </div>

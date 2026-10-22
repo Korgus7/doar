@@ -8,6 +8,8 @@ import { fileURLToPath } from 'node:url'
 import { SecretStore } from './secrets'
 import { buildMenu, systemUiLocale, translate } from './menu'
 import { loadWindowState, trackWindowState } from './window-state'
+import { ensureShortcuts } from './shortcuts'
+import { Updater } from './updater'
 import type { CoreToMain, MainToCore, UiLocale } from '../shared/ipc'
 import { incompletePath, isComposeMode, isDangerousFile, OPEN_ATTACHMENTS_DIR, type ComposeMode, type PickedFile } from '../shared/ipc'
 
@@ -279,6 +281,7 @@ function hardenSecurity(): void {
 }
 
 let quitting = false
+let updater: Updater | null = null
 
 const gotLock = app.requestSingleInstanceLock()
 if (!gotLock) {
@@ -298,6 +301,21 @@ if (!gotLock) {
     buildMenu(uiLocale, () => mainWindow, DEV_URL !== undefined)
     // Windows: oznámenia sa zobrazia pod menom aplikácie (nie „electron.app.Electron“).
     if (process.platform === 'win32') app.setAppUserModelId('sk.doar.app')
+    // Balík bez inštalátora: odkazy v ponuke Štart a na ploche si aplikácia vytvorí sama.
+    ensureShortcuts(APP_NAME, 'sk.doar.app')
+    // Aktualizácie (GitHub Releases) – nič sa nestiahne bez súhlasu používateľa.
+    updater = new Updater(() => [...appWindows])
+    ipcMain.handle('update-state', () => updater!.getState())
+    ipcMain.on('update-cmd', (e, cmd: unknown) => {
+      if (!mainWindow || e.sender !== mainWindow.webContents || !updater) return
+      if (cmd === 'check') void updater.check(true)
+      else if (cmd === 'download') void updater.download()
+      else if (cmd === 'cancel') updater.cancel()
+      else if (cmd === 'restart') updater.restart()
+      else if (cmd === 'auto-on' || cmd === 'auto-off') updater.setAuto(cmd === 'auto-on')
+      else if (cmd === 'open-page') updater.openPage()
+    })
+    updater.start()
     // Tlač správy: dokument pripraví rozhranie (prečistené HTML z jadra), vytlačí ho skryté okno bez skriptov a siete.
     ipcMain.on('print-html', (e, html: unknown, title: unknown) => {
       const owner = senderWindow(e)
@@ -479,6 +497,7 @@ if (!gotLock) {
 
   app.on('before-quit', () => {
     quitting = true
+    updater?.stop()
     core?.kill()
   })
 

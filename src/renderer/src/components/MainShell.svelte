@@ -7,6 +7,7 @@
   import MessageList from './MessageList.svelte'
   import Reader from './Reader.svelte'
   import OutboxBanner from './OutboxBanner.svelte'
+  import UpdateBanner from './UpdateBanner.svelte'
   import ContextMenu from './ContextMenu.svelte'
   import MoveDialog from './MoveDialog.svelte'
   import NewFolderDialog from './NewFolderDialog.svelte'
@@ -173,6 +174,7 @@
       {/if}
     </div>
   </div>
+  <UpdateBanner />
   <OutboxBanner />
   <div class="panes" style:grid-template-columns={`${widths.folders}px 5px ${widths.list}px 5px minmax(0, 1fr)`}>
     <FolderPane {onAddAccount} />
@@ -214,7 +216,7 @@
 <style>
   .shell {
     display: grid;
-    grid-template-rows: auto auto 1fr;
+    grid-template-rows: auto auto auto 1fr;
     height: 100%;
     min-height: 0;
   }
@@ -284,7 +286,7 @@
   }
   .panes {
     /* Vždy tretí riadok – aj keď pruh odosielania (2. riadok) nie je zobrazený. */
-    grid-row: 3;
+    grid-row: 4;
     display: grid;
     min-height: 0;
     height: 100%;

@@ -73,6 +73,8 @@ export function buildMenu(locale: UiLocale, getWindow: () => BrowserWindow | nul
     {
       label: t('menu.help'),
       submenu: [
+        { label: t('menu.checkUpdates'), click: () => send('check-updates') },
+        { type: 'separator' },
         {
           label: t('menu.about'),
           click: () => {

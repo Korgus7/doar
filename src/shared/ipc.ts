@@ -667,6 +667,28 @@ export type PortMessage =
 
 export type UiLocale = 'sk' | 'en'
 
+/** Stav aktualizácií (spravuje main proces). */
+export interface UpdateState {
+  phase: 'idle' | 'checking' | 'none' | 'available' | 'downloading' | 'installing' | 'ready' | 'error'
+  /** Bežiaca verzia. */
+  current: string
+  /** Ponúkaná verzia (available/downloading/installing/ready). */
+  version: string | null
+  notes: string
+  pageUrl: string | null
+  sizeBytes: number
+  /** 0–1 pri sťahovaní a rozbaľovaní. */
+  progress: number
+  error: string | null
+  /** Kontrolu spustil používateľ (rozhranie ukáže aj „máte najnovšiu verziu“). */
+  manual: boolean
+  /** Automatická kontrola (raz za čas). */
+  auto: boolean
+  /** Inštalovať sa dá len v zabalenej verzii na Windowse (nie pri vývoji). */
+  canInstall: boolean
+  lastCheck: string | null
+}
+
 /** API sprístupnené rozhraniu cez preload (window.doar). */
 export interface DoarApi {
   invoke<C extends RequestChannel>(ch: C, data?: RequestInput<C>): Promise<RequestOutput<C>>
@@ -710,6 +732,15 @@ export interface DoarApi {
   setUnreadCount(n: number): void
   /** Vytlačí pripravený dokument (správu) cez systémový dialóg tlače. */
   printHtml(html: string, title: string): void
+  /** Aktualizácie (GitHub Releases): stav, kontrola, stiahnutie, reštart do novej verzie. */
+  updateState(): Promise<UpdateState>
+  updateCheck(): void
+  updateDownload(): void
+  updateCancel(): void
+  updateRestart(): void
+  updateSetAuto(on: boolean): void
+  updateOpenPage(): void
+  onUpdateState(fn: (s: UpdateState) => void): () => void
 }
 
 /** Správy core ↔ main (tajomstvá a pod.). Rozhranie k nim nemá prístup. */
