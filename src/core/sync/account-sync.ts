@@ -3,6 +3,7 @@ import type { Db } from '../store/db'
 import type { BlobStore } from '../store/blobs'
 import { MailStore, type FolderInfo, type FolderRow, type HeaderInput } from '../store/mailstore'
 import type { CoreEvents, EventChannel, SpecialUse, SyncStatus } from '../../shared/ipc'
+import { OFFLINE_CODES } from '../../shared/ipc'
 import { createImapClient } from '../mail/imap'
 import { indexInfo } from '../mail/parse'
 import { classifyError } from '../mail/connection-test'
@@ -14,7 +15,12 @@ import { logger } from '../log'
 
 const log = logger('sync')
 
-const DEFAULT_NAMES = { sent: 'Sent', trash: 'Trash', archive: 'Archive', junk: 'Junk', drafts: 'Drafts' } as const
+/** Server zmenu odmietol (imapflow vrátil false). Klasifikuje sa ako odmietnutie, nie výpadok spojenia. */
+function rejected(what: string): Error {
+  return Object.assign(new Error(`Server odmietol zmenu (${what})`), { code: 'REJECTED' })
+}
+
+export const DEFAULT_NAMES = { sent: 'Sent', trash: 'Trash', archive: 'Archive', junk: 'Junk', drafts: 'Drafts' } as const
 
 const HEADER_CHUNK = 250
 const BODY_CHUNK = 20
@@ -123,7 +129,13 @@ export class AccountSync {
     private account: AccountRow,
     private deps: SyncDeps
   ) {
-    this.status = { accountId: account.id, state: 'idle', pendingBodies: deps.store.countNeedingBodies(account.id), lastSync: null }
+    this.status = {
+      accountId: account.id,
+      state: 'idle',
+      pendingBodies: deps.store.countNeedingBodies(account.id),
+      pendingChanges: deps.store.countPendingChanges(account.id),
+      lastSync: null
+    }
   }
 
   get id(): number {
@@ -134,7 +146,7 @@ export class AccountSync {
     this.stopped = false
     void this.processOutboxNow().catch(() => {})
     void this.pushOperations().catch(() => {})
-    void this.requestSync()
+    void this.requestSync().catch(() => {})
     void this.startWatcher()
     const t = setInterval(() => void this.requestSync(), PERIODIC_MS)
     this.timers.add(t)
@@ -217,14 +229,41 @@ export class AccountSync {
   }
 
   private setStatus(patch: Partial<SyncStatus>): void {
-    this.status = { ...this.status, ...patch, pendingBodies: this.deps.store.countNeedingBodies(this.account.id) }
+    this.status = {
+      ...this.status,
+      ...patch,
+      pendingBodies: this.deps.store.countNeedingBodies(this.account.id),
+      pendingChanges: this.deps.store.countPendingChanges(this.account.id)
+    }
     this.deps.emit('sync.status', this.status)
+  }
+
+  private retryTimer: NodeJS.Timeout | null = null
+
+  /** Sieť je znova dostupná (systém sa prebudil, pripojil k sieti) – skúsiť hneď, nečakať na odklad. */
+  reconnectNow(): void {
+    if (this.stopped) return
+    if (this.retryTimer) {
+      clearTimeout(this.retryTimer)
+      this.timers.delete(this.retryTimer)
+      this.retryTimer = null
+    }
+    if (this.outboxRetry) {
+      clearTimeout(this.outboxRetry)
+      this.timers.delete(this.outboxRetry)
+      this.outboxRetry = null
+    }
+    this.backoff = 0
+    this.outboxBackoff = 0
+    void this.requestSync().catch(() => {})
+    void this.processOutboxNow().catch(() => {})
+    void this.startWatcher()
   }
 
   private handleError(e: unknown): void {
     if (this.stopped) return // ukončenie aplikácie / odstránenie konta – nie je to chyba
     const code = (e as { code?: string }).code === 'PASSWORD_REQUIRED' ? 'PASSWORD_REQUIRED' : classifyError(e).code
-    const offline = code === 'HOST_NOT_FOUND' || code === 'CONNECTION_REFUSED' || code === 'TIMEOUT' || code === 'PROTOCOL'
+    const offline = OFFLINE_CODES.includes(code ?? '')
     ;(this.backoff === 0 && offline ? log.info : log.warn)('synchronizácia prerušená', { account: this.account.id, code, error: e })
     if (!this.client?.usable || code === 'AUTH_FAILED') {
       try {
@@ -237,12 +276,16 @@ export class AccountSync {
     this.setStatus({ state: offline ? 'offline' : 'error', code })
     // Zlé heslo nemá zmysel skúšať dookola – počká sa na používateľa.
     if (code === 'AUTH_FAILED' || code === 'PASSWORD_REQUIRED' || code?.startsWith('CERT_') || this.stopped) return
+    // Ďalší pokus je už naplánovaný (napr. viac zmien bez pripojenia) – nepridávať ďalšie.
+    if (this.retryTimer) return
     // Prvý pokus hneď (server mohol len zavrieť spojenie), potom 15 s, 30 s, … najviac 5 min.
     this.backoff = this.backoff === 0 ? 1000 : Math.min(Math.max(this.backoff * 2, 15_000), MAX_BACKOFF_MS)
     const t = setTimeout(() => {
       this.timers.delete(t)
+      this.retryTimer = null
       void this.requestSync().catch(() => {})
     }, this.backoff)
+    this.retryTimer = t
     this.timers.add(t)
   }
 
@@ -278,8 +321,12 @@ export class AccountSync {
 
   // ---------- sledovanie doručenej pošty (IDLE) ----------
 
+  private watcherStarting = false
+
   private async startWatcher(): Promise<void> {
-    if (this.stopped) return
+    // Už beží (alebo sa práve spúšťa) – napr. po „pripojení k sieti“ aj z naplánovaného pokusu.
+    if (this.stopped || this.watcher || this.watcherStarting) return
+    this.watcherStarting = true
     try {
       const w = await this.newClient(false)
       await w.connect()
@@ -317,6 +364,8 @@ export class AccountSync {
     } catch (e) {
       log.info('sledovanie doručenej pošty sa nespustilo', { account: this.account.id, code: classifyError(e).code })
       if (!this.stopped) this.later(() => void this.startWatcher(), 60_000)
+    } finally {
+      this.watcherStarting = false
     }
   }
 
@@ -348,6 +397,9 @@ export class AccountSync {
   private async fullSync(): Promise<void> {
     const client = await this.ensureClient()
     this.setStatus({ state: 'syncing', code: undefined })
+    // Správy, ktorých obsah sa nedal stiahnuť, skúsime po synchronizácii znova (priečinok mohol byť
+    // medzitým nahradený a ID riadku použité pre inú správu).
+    this.missingBodies.clear()
     await this.processOperations()
 
     const list = await client.list()
@@ -383,14 +435,29 @@ export class AccountSync {
 
   private emitOutbox(): void {
     this.deps.emit('outbox.changed', null)
+    this.setStatus({})
   }
+
+  /** Prepočíta čakajúce zmeny a oznámi stav (po lokálnej zmene, ktorá čaká na server). */
+  refreshStatus(): void {
+    this.setStatus({})
+  }
+
+  /** Posledný pokus o odoslanie zlyhal pre nedostupnosť servera – ďalšie správy v tomto kole neskúšať. */
+  private outboxOffline = false
 
   private async processOutbox(): Promise<void> {
     const store = this.deps.store
     // 1. Odoslanie čakajúcich – potrebuje len SMTP (IMAP môže byť nedostupný).
+    this.outboxOffline = false
     for (const r of store.outboxRows(this.account.id).filter((x) => x.state === 'queued')) {
-      if (this.stopped) return
+      if (this.stopped || this.outboxOffline) break
       await this.sendOne(r)
+    }
+    if (this.outboxOffline) {
+      this.setStatus({})
+      this.retryOutboxLater()
+      return
     }
     // 2. Kroky, ktoré potrebujú IMAP: overenie nejasných odoslaní a kópie do Odoslaných.
     const rest = store.outboxRows(this.account.id).filter(
@@ -422,10 +489,16 @@ export class AccountSync {
       outcome = { status: 'failed', code: (e as { code?: string }).code ?? 'UNKNOWN', detail: String((e as Error).message ?? e) }
     }
     if (outcome.status === 'sent') {
+      this.outboxBackoff = 0
       store.setOutbox(r.id, { state: 'sent', smtpResponse: outcome.response.slice(0, 500), error: outcome.rejected.length ? `REJECTED_SOME:${outcome.rejected.join(',')}`.slice(0, 500) : null })
       store.rememberAddresses((JSON.parse(r.recipients_json) as string[]).map((address) => ({ name: '', address })))
       if (r.reply_to_message) this.markAnswered(r.reply_to_message)
       log.info('správa odoslaná', { account: a.id, outbox: r.id })
+    } else if (outcome.status === 'failed' && OFFLINE_CODES.includes(outcome.code)) {
+      // Bez pripojenia: správa určite neodišla (chyba pred odoslaním obsahu) → zostane vo fronte a odošle sa sama.
+      store.setOutbox(r.id, { state: 'queued', error: 'OFFLINE' })
+      log.info('odoslanie počká na pripojenie', { account: a.id, outbox: r.id, code: outcome.code })
+      this.outboxOffline = true
     } else if (outcome.status === 'failed') {
       store.setOutbox(r.id, { state: 'error', error: outcome.code })
       log.warn('správu sa nepodarilo odoslať', { account: a.id, outbox: r.id, code: outcome.code, responseCode: (outcome as { responseCode?: number }).responseCode })
@@ -434,6 +507,22 @@ export class AccountSync {
       log.warn('nejasný výsledok odoslania – správa sa automaticky neopakuje', { account: a.id, outbox: r.id })
     }
     this.emitOutbox()
+  }
+
+  private outboxRetry: NodeJS.Timeout | null = null
+  private outboxBackoff = 0
+
+  /** Bez pripojenia: odoslanie sa zopakuje samo (15 s, 30 s, … najviac 5 min.) – správa určite neodišla. */
+  private retryOutboxLater(): void {
+    if (this.stopped || this.outboxRetry) return
+    this.outboxBackoff = Math.min(Math.max(this.outboxBackoff * 2, 15_000), MAX_BACKOFF_MS)
+    const t = setTimeout(() => {
+      this.timers.delete(t)
+      this.outboxRetry = null
+      void this.processOutboxNow().catch(() => {})
+    }, this.outboxBackoff)
+    this.outboxRetry = t
+    this.timers.add(t)
   }
 
   private markAnswered(messageId: number): void {
@@ -633,6 +722,12 @@ export class AccountSync {
         continue
       }
       try {
+        if (folder.uidvalidity && Number(client.mailbox && client.mailbox.uidValidity) !== folder.uidvalidity) {
+          // Priečinok bol na serveri nahradený (iné UIDVALIDITY) – rovnaké UID je iná správa.
+          // Nič nesťahujeme; synchronizácia priečinok načíta znova (má prednosť pred sťahovaním obsahu).
+          void this.requestSync().catch(() => {})
+          continue
+        }
         const byUid = new Map(list.map((r) => [r.uid, r]))
         const seen = new Set<number>()
         for await (const m of client.fetch(list.map((r) => r.uid).join(','), { uid: true, source: true }, { uid: true })) {
@@ -684,6 +779,7 @@ export class AccountSync {
       }
     }
     this.scheduleDelayedOperations()
+    this.setStatus({})
   }
 
   private delayedTimer: NodeJS.Timeout | null = null
@@ -712,8 +808,9 @@ export class AccountSync {
       const lock = await client.getMailboxLock(folder.path)
       try {
         const range = p.uids.join(',')
-        if (p.add.length) await client.messageFlagsAdd(range, p.add, { uid: true })
-        if (p.remove.length) await client.messageFlagsRemove(range, p.remove, { uid: true })
+        // imapflow pri odmietnutí servera nevyhodí chybu, ale vráti false – nesmie sa to brať ako úspech.
+        if (p.add.length && (await client.messageFlagsAdd(range, p.add, { uid: true })) === false) throw rejected('príznaky')
+        if (p.remove.length && (await client.messageFlagsRemove(range, p.remove, { uid: true })) === false) throw rejected('príznaky')
       } finally {
         lock.release()
       }
@@ -730,7 +827,9 @@ export class AccountSync {
       let uidMap: Map<number, number> | undefined
       try {
         const res = await client.messageMove(p.uids.join(','), target.path, { uid: true })
-        uidMap = res ? res.uidMap : undefined
+        // false = server presun odmietol (napr. cieľ medzitým zmazaný) – správa zostala v pôvodnom priečinku.
+        if (!res) throw rejected('presun')
+        uidMap = res.uidMap
       } finally {
         lock.release()
       }
@@ -743,7 +842,7 @@ export class AccountSync {
       if (!folder) return
       const lock = await client.getMailboxLock(folder.path)
       try {
-        await client.messageDelete(p.uids.join(','), { uid: true })
+        if ((await client.messageDelete(p.uids.join(','), { uid: true })) === false) throw rejected('vymazanie')
       } finally {
         lock.release()
       }

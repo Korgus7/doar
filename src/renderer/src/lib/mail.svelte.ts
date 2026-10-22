@@ -1,4 +1,5 @@
-import type { AccountSummary, FolderItem, MessageListItem, SyncStatus } from '../../../shared/ipc'
+import type { AccountSummary, ArchiveSummary, FolderItem, MessageListItem, SyncStatus } from '../../../shared/ipc'
+import { isArchiveId } from '../../../shared/ipc'
 
 /**
  * Stav pošty v rozhraní. Údaje drží jadro; tu je len to, čo je práve zobrazené.
@@ -9,6 +10,9 @@ export const PAGE = 200
 export const mail = $state({
   accounts: [] as AccountSummary[],
   folders: [] as FolderItem[],
+  /** Otvorené lokálne archívy (súbory mbox len na čítanie) a ich priečinky (záporné ID). */
+  archives: [] as ArchiveSummary[],
+  archiveFolders: [] as FolderItem[],
   /** null = spoločná doručená pošta všetkých kont */
   folderId: null as number | null,
   total: 0,
@@ -27,9 +31,27 @@ export const mail = $state({
   searchNotDownloaded: 0
 })
 
-/** Rozsah hľadania pre jadro. Pri spoločnej doručenej pošte „tento priečinok“ = všade. */
-function searchScope(): { folderId: number | null } {
+/** Rozsah hľadania pre jadro. Pri spoločnej doručenej pošte „tento priečinok“ = všade; v archíve „všade“ = celý archív. */
+function searchScope(): { folderId: number | null; archiveId?: number } {
+  if (isArchiveId(mail.folderId) && mail.search?.scope !== 'folder') {
+    const f = findFolder(mail.folderId)
+    if (f) return { folderId: null, archiveId: -f.accountId }
+  }
   return { folderId: mail.search?.scope === 'folder' ? mail.folderId : null }
+}
+
+/** Priečinok podľa ID (konto aj archív). */
+export function findFolder(id: number | null | undefined): FolderItem | undefined {
+  if (id == null) return undefined
+  return isArchiveId(id) ? mail.archiveFolders.find((f) => f.id === id) : mail.folders.find((f) => f.id === id)
+}
+
+export async function loadArchives(): Promise<void> {
+  const r = await window.doar.invoke('archives.list')
+  mail.archives = r.archives
+  mail.archiveFolders = r.folders
+  // Zobrazený priečinok archívu zmizol (archív zatvorený alebo sa načítava znova) → doručená pošta.
+  if (isArchiveId(mail.folderId) && !mail.archiveFolders.some((f) => f.id === mail.folderId)) await selectFolder(null)
 }
 
 /** Kľúč zobrazeného zoznamu – výsledky, ktoré prídu po zmene priečinka alebo hľadania, sa zahodia. */
@@ -116,7 +138,10 @@ export function patchMessage(id: number, patch: Partial<MessageListItem>): void 
   }
 }
 
-export async function setFlags(ids: number[], change: { seen?: boolean; flagged?: boolean }): Promise<void> {
+export async function setFlags(list: number[], change: { seen?: boolean; flagged?: boolean }): Promise<void> {
+  // Archív je len na čítanie.
+  const ids = list.filter((id) => !isArchiveId(id))
+  if (!ids.length) return
   for (const id of ids) patchMessage(id, { ...change, localState: 'pending' })
   await window.doar.invoke('messages.setFlags', { ids: [...ids], ...change })
 }

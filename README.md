@@ -1,4 +1,4 @@
-# Doar
+# Doar Mail
 
 Jednoduchý, rýchly a bezplatný e-mailový klient pre desktop – v duchu Outlook Expressu a starej aplikácie Pošta pre Windows.
 
@@ -10,7 +10,7 @@ Jednoduchý, rýchly a bezplatný e-mailový klient pre desktop – v duchu Outl
 - slovenčina a angličtina
 - bez telemetrie
 
-**Stav:** vo vývoji – verzia 0.2: viac kont a spoločná doručená pošta, čítanie a písanie (aj formátované), odpoveď a preposlanie, prílohy, koncepty, Kôš, Archív a presuny, vyhľadávanie, podpis, upozornenia na novú poštu, tlač, záloha do mbox. Ďalej: 0.3 (práca bez pripojenia, obnova zo zálohy, archív).
+**Stav:** vo vývoji – verzia 0.3: viac kont a spoločná doručená pošta, čítanie a písanie (aj formátované), odpoveď a preposlanie, prílohy, koncepty, Kôš, Archív a presuny, vyhľadávanie, podpis, upozornenia na novú poštu, tlač, práca bez pripojenia, záloha do mbox, obnova zo zálohy do konta (bez duplicít, s pokračovaním po prerušení) a lokálny archív mbox len na čítanie. Ďalej: 0.4 (inštalátor pre Windows, aktualizácie, voliteľné AI).
 
 Zadanie: [docs/ZADANIE.md](docs/ZADANIE.md) · Architektúra: [docs/ARCHITEKTURA.md](docs/ARCHITEKTURA.md)
 

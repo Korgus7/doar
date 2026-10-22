@@ -70,7 +70,7 @@ test('nastavenia: názov, farba, podpis v novej správe, server, upozornenia, od
   await win.getByRole('button', { name: 'Nastavenia', exact: true }).click()
   win.once('dialog', (d) => void d.accept())
   await dlg.getByRole('button', { name: 'Odstrániť konto…' }).click()
-  await expect(win.getByRole('heading', { name: 'Vitajte v Doar' })).toBeVisible({ timeout: 15_000 })
+  await expect(win.getByRole('heading', { name: 'Vitajte v Doar Mail' })).toBeVisible({ timeout: 15_000 })
   const imap = new ImapFlow({ host: '127.0.0.1', port: srv!.ports.imaps, secure: true, auth: { user: `${USER}@doar.test`, pass: srv!.password }, tls: { ca: readFileSync(process.env['DOAR_TEST_CA']!) }, logger: false })
   await imap.connect()
   const st = await imap.status('INBOX', { messages: true })

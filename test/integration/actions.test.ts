@@ -52,7 +52,7 @@ const idOf = (subject: string, folderId = folder('inbox').id) => visible(folderI
 beforeAll(async () => {
   other = new ImapFlow({ host: '127.0.0.1', port: srv.ports.imaps, secure: true, auth: { user: USER, pass: srv.password }, tls: { ca: readFileSync(srv.caPath) }, logger: false })
   await other.connect()
-  for (const s of ['Do koša', 'Vrátiť späť', 'Neskoro', 'Archivovať', 'Spam správa', 'Do projektu', 'Natrvalo', 'Odmietnutá', 'Druhá do koša']) await other.append('INBOX', msg(s), [])
+  for (const s of ['Do koša', 'Vrátiť späť', 'Neskoro', 'Archivovať', 'Spam správa', 'Do projektu', 'Natrvalo', 'Odmietnutá', 'Druhá do koša', 'Hneď v cieli', 'Späť z cieľa', 'Najprv sem', 'Skupina A', 'Skupina B']) await other.append('INBOX', msg(s), [])
 
   const dir = mkdtempSync(join(tmpdir(), 'doar-actions-'))
   db = openDb(join(dir, 'doar.db'))
@@ -149,11 +149,14 @@ describe('presuny a mazanie', () => {
   it('server presun opakovane odmietne → správa sa znova zobrazí, označená ako neúspešná', async () => {
     const tmpId = await sync.createFolder(accountId, null, 'Dočasný')
     const id = idOf('Odmietnutá')
+    // Cieľ zmizne na serveri (iný program) skôr, než sa o tom Doar dozvie – presun server odmietne.
+    await other.mailboxDelete('Dočasný')
     sync.moveMessages([id], { folderId: tmpId })
-    await other.mailboxDelete('Dočasný') // cieľ zmizne skôr, než sa presun vykoná
-    await until(() => store.message(id)?.local_state === 'failed', 20_000)
-    // Ďalšie pokusy spustí ďalšia synchronizácia; po 3 odmietnutiach sa správa vráti do zoznamu.
-    for (let i = 0; i < 3; i++) await sync.syncNow(accountId)
+    await new Promise((r) => setTimeout(r, DELAY + 200)) // čas na „Vrátiť späť“
+    // Každá synchronizácia presun skúsi znova; po 3 odmietnutiach sa správa vráti do zoznamu ako neúspešná.
+    // (Predtým test čakal, že pokusy spustí niečo samo – podľa načasovania to občas nestihlo.)
+    for (let i = 0; i < 6 && store.message(id)?.local_state !== 'failed'; i++) await sync.syncNow(accountId)
+    expect(store.message(id)?.local_state).toBe('failed')
     await until(() => visible(folder('inbox').id).some((m) => m.id === id))
     expect(visible(folder('inbox').id).find((m) => m.id === id)!.localState).toBe('failed')
     expect(await serverSubjects('INBOX')).toContain('Odmietnutá')
@@ -176,5 +179,62 @@ describe('presuny a mazanie', () => {
     expect(store.claimOperation(opId)).toBe(true)
     store.resetRunningOperations()
     expect((db.prepare('SELECT state FROM operations WHERE id = ?').get(opId) as { state: string }).state).toBe('pending')
+  })
+})
+
+describe('presun sa ukáže hneď v cieľovom priečinku', () => {
+  const inTarget = (folderId: number, subject: string) => visible(folderId).filter((m) => m.subject === subject)
+
+  it('hneď v cieli so značkou „presúva sa“, počty priečinkov sedia; po vykonaní ten istý záznam, bez duplicity', async () => {
+    const trash = folder('trash').id
+    const inbox = folder('inbox').id
+    const before = store.listFolders(accountId).find((f) => f.id === trash)!.localCount
+    const id = idOf('Hneď v cieli')
+    sync.moveMessages([id], { special: 'trash' })
+    expect(visible(inbox).some((m) => m.id === id)).toBe(false)
+    const now = inTarget(trash, 'Hneď v cieli')
+    expect(now).toHaveLength(1)
+    expect(now[0]).toMatchObject({ id, folderId: trash, localState: 'pending' })
+    expect(store.listFolders(accountId).find((f) => f.id === trash)!.localCount).toBe(before + 1)
+    expect(store.listIds(trash)).toContain(id)
+    expect(await serverSubjects('INBOX')).toContain('Hneď v cieli') // server ešte čaká
+    await until(async () => (await serverSubjects('Trash')).includes('Hneď v cieli'))
+    await until(() => inTarget(trash, 'Hneď v cieli')[0]?.localState === 'synced')
+    await sync.syncNow(accountId)
+    expect(inTarget(trash, 'Hneď v cieli')).toHaveLength(1)
+    expect(inTarget(trash, 'Hneď v cieli')[0]!.id).toBe(id)
+  })
+
+  it('Vrátiť späť: zmizne z cieľa a je späť v pôvodnom priečinku', async () => {
+    const trash = folder('trash').id
+    const id = idOf('Späť z cieľa')
+    const { undo } = sync.moveMessages([id], { special: 'trash' })
+    expect(inTarget(trash, 'Späť z cieľa')).toHaveLength(1)
+    expect(sync.undo(undo)).toEqual({ undone: true })
+    expect(inTarget(trash, 'Späť z cieľa')).toHaveLength(0)
+    expect(visible(folder('inbox').id).find((m) => m.id === id)?.localState).toBe('synced')
+  })
+
+  it('ďalší presun počas čakania: platí posledná voľba, ostatné správy z prvého presunu idú pôvodne', async () => {
+    const trash = folder('trash').id
+    const archive = folder('archive').id
+    const a = idOf('Skupina A')
+    const b = idOf('Skupina B')
+    const n = idOf('Najprv sem')
+    sync.moveMessages([a, b, n], { special: 'trash' })
+    expect(inTarget(trash, 'Najprv sem')).toHaveLength(1)
+    // Používateľ si to rozmyslí: jednu z troch hneď presunie do Archívu.
+    sync.moveMessages([n], { special: 'archive' })
+    expect(inTarget(trash, 'Najprv sem')).toHaveLength(0)
+    expect(inTarget(archive, 'Najprv sem')).toHaveLength(1)
+    expect(inTarget(trash, 'Skupina A')).toHaveLength(1)
+    await until(async () => (await serverSubjects('Archive')).includes('Najprv sem') && (await serverSubjects('Trash')).includes('Skupina B'))
+    expect(await serverSubjects('Trash')).not.toContain('Najprv sem')
+    expect(await serverSubjects('Trash')).toContain('Skupina A')
+    expect(await serverSubjects('INBOX')).not.toContain('Najprv sem')
+    await sync.syncNow(accountId)
+    expect(inTarget(archive, 'Najprv sem')).toHaveLength(1)
+    expect(inTarget(trash, 'Najprv sem')).toHaveLength(0)
+    expect(visible(folder('inbox').id).some((m) => ['Skupina A', 'Skupina B', 'Najprv sem'].includes(m.subject))).toBe(false)
   })
 })

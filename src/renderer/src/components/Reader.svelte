@@ -4,7 +4,7 @@
   import { addressLine, fileSize, fullDate } from '../lib/format'
   import { mail, patchMessage, setFlags, itemsById } from '../lib/mail.svelte'
   import { saveAllAttachments, attachmentMenu, openMenu } from '../lib/actions.svelte'
-  import { isDangerousFile } from '../../../shared/ipc'
+  import { isArchiveId, isDangerousFile } from '../../../shared/ipc'
   import { isDraft } from '../lib/actions.svelte'
   import { printDocument } from '../lib/print'
   import { remove, archive, allInArchive, allInTrash, openMoveDialog, singleAccount, toggleSpam, allInJunk } from '../lib/actions.svelte'
@@ -143,18 +143,23 @@ img{max-width:100%;height:auto}table{max-width:100%}.doar-plain{white-space:pre-
               <button class="btn small" title="Ctrl+Shift+R" onclick={() => window.doar.openCompose('replyAll', view!.id)}>↩↩ {t('toolbar.replyAll')}</button>
               <button class="btn small" title="Ctrl+F" onclick={() => window.doar.openCompose('forward', view!.id)}>↪ {t('toolbar.forward')}</button>
             {/if}
-            <button class="icon" title={listItem.flagged ? t('reader.unflag') : t('reader.flag')} aria-label={listItem.flagged ? t('reader.unflag') : t('reader.flag')} class:on={listItem.flagged} onclick={toggleFlag}>{listItem.flagged ? '★' : '☆'}</button>
-            <button class="icon" title={listItem.seen ? t('reader.markUnread') : t('reader.markRead')} aria-label={listItem.seen ? t('reader.markUnread') : t('reader.markRead')} onclick={toggleSeen}>{listItem.seen ? '◉' : '○'}</button>
-            {#if !allInArchive([listItem.id])}
-              <button class="icon" title={`${t('actions.archive')} (E)`} aria-label={t('actions.archive')} onclick={() => archive([listItem!.id])}>🗄</button>
+            {#if isArchiveId(view.id)}
+              <span class="readonly" title={t('archive.readOnlyHint')}>🗃 {t('archive.readOnly')}</span>
+              <button class="icon" title={`${t('reader.print')} (Ctrl+P)`} aria-label={t('reader.print')} onclick={() => window.doar.printHtml(printDocument(view!), view!.subject)}>🖨</button>
+            {:else}
+              <button class="icon" title={listItem.flagged ? t('reader.unflag') : t('reader.flag')} aria-label={listItem.flagged ? t('reader.unflag') : t('reader.flag')} class:on={listItem.flagged} onclick={toggleFlag}>{listItem.flagged ? '★' : '☆'}</button>
+              <button class="icon" title={listItem.seen ? t('reader.markUnread') : t('reader.markRead')} aria-label={listItem.seen ? t('reader.markUnread') : t('reader.markRead')} onclick={toggleSeen}>{listItem.seen ? '◉' : '○'}</button>
+              {#if !allInArchive([listItem.id])}
+                <button class="icon" title={`${t('actions.archive')} (E)`} aria-label={t('actions.archive')} onclick={() => archive([listItem!.id])}>🗄</button>
+              {/if}
+              <button class="icon" title={`${t('reader.print')} (Ctrl+P)`} aria-label={t('reader.print')} onclick={() => window.doar.printHtml(printDocument(view!), view!.subject)}>🖨</button>
+              <button
+                class="icon"
+                title={`${allInTrash([listItem.id]) ? t('actions.deleteForever') : t('actions.delete')} (Del)`}
+                aria-label={allInTrash([listItem.id]) ? t('actions.deleteForever') : t('actions.delete')}
+                onclick={() => remove([listItem!.id])}>🗑</button
+              >
             {/if}
-            <button class="icon" title={`${t('reader.print')} (Ctrl+P)`} aria-label={t('reader.print')} onclick={() => window.doar.printHtml(printDocument(view!), view!.subject)}>🖨</button>
-            <button
-              class="icon"
-              title={`${allInTrash([listItem.id]) ? t('actions.deleteForever') : t('actions.delete')} (Del)`}
-              aria-label={allInTrash([listItem.id]) ? t('actions.deleteForever') : t('actions.delete')}
-              onclick={() => remove([listItem!.id])}>🗑</button
-            >
           </div>
         {/if}
       </div>
@@ -243,6 +248,14 @@ img{max-width:100%;height:auto}table{max-width:100%}.doar-plain{white-space:pre-
   }
   .btn.danger {
     color: var(--danger);
+  }
+  .readonly {
+    align-self: center;
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    padding: 0.1rem 0.5rem;
+    border: 1px solid var(--border);
+    border-radius: 999px;
   }
   .empty {
     margin: auto;

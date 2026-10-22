@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, MessageChannelMain, nativeImage, Notification, session, shell, utilityProcess, type UtilityProcess } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, MessageChannelMain, nativeImage, Notification, powerMonitor, session, shell, utilityProcess, type UtilityProcess } from 'electron'
 import { deflateSync } from 'node:zlib'
 import { basename, join, relative, isAbsolute } from 'node:path'
 import { statSync, writeFileSync, rmSync } from 'node:fs'
@@ -13,9 +13,15 @@ import { incompletePath, isComposeMode, isDangerousFile, OPEN_ATTACHMENTS_DIR, t
 
 const here = fileURLToPath(new URL('.', import.meta.url))
 const DEV_URL = process.env['ELECTRON_RENDERER_URL']
+/** Zobrazovaný názov aplikácie (okná, tlač, O aplikácii). */
+const APP_NAME = 'Doar Mail'
+/** Ikona okna a panela úloh (zdroj: resources/icon.svg). */
+const APP_ICON = join(app.getAppPath(), 'resources', 'icon.png')
 
 // Samostatný dátový priečinok (testy, prenosná verzia).
+// Dátový priečinok je vždy „Doar“ (nezávisle od zobrazovaného názvu „Doar Mail“), aby sa pri premenovaní nestratili kontá ani pošta.
 if (process.env['DOAR_DATA_DIR']) app.setPath('userData', process.env['DOAR_DATA_DIR'])
+else app.setPath('userData', join(app.getPath('appData'), 'Doar'))
 
 // Žiadna telemetria, žiadne zbytočné služby Chromia.
 app.commandLine.appendSwitch('disable-features', 'SpareRendererForSitePerProcess')
@@ -195,7 +201,8 @@ function createWindow(): BrowserWindow {
     minWidth: 720,
     minHeight: 480,
     show: false,
-    title: 'Doar',
+    title: APP_NAME,
+    icon: APP_ICON,
     backgroundColor: '#00000000',
     webPreferences: webPreferences()
   })
@@ -219,7 +226,8 @@ function createComposeWindow(mode: ComposeMode, messageId?: number): BrowserWind
     minHeight: 400,
     ...(b ? { x: b.x + 60, y: b.y + 40 } : {}),
     show: false,
-    title: 'Doar',
+    title: APP_NAME,
+    icon: APP_ICON,
     webPreferences: webPreferences()
   })
   win.setMenuBarVisibility(false)
@@ -299,7 +307,7 @@ if (!gotLock) {
       const w = new BrowserWindow({
         show: false,
         parent: owner,
-        title: typeof title === 'string' ? title.slice(0, 200) : 'Doar',
+        title: typeof title === 'string' ? title.slice(0, 200) : APP_NAME,
         webPreferences: { javascript: false, sandbox: true, contextIsolation: true, nodeIntegration: false, webSecurity: true }
       })
       const cleanup = (): void => {
@@ -370,6 +378,23 @@ if (!gotLock) {
       const w = BrowserWindow.fromWebContents(e.sender)
       return w && appWindows.has(w) ? w : null
     }
+    // Obnova zo zálohy: súbor vyberá používateľ; jadro ho smie len čítať.
+    ipcMain.handle('choose-import-file', async (e) => {
+      const w = BrowserWindow.fromWebContents(e.sender)
+      if (!w || w !== mainWindow) return null
+      const r = await dialog.showOpenDialog(w, {
+        defaultPath: app.getPath('documents'),
+        filters: [
+          { name: 'mbox', extensions: ['mbox', 'mbx'] },
+          { name: '*', extensions: ['*'] }
+        ],
+        properties: ['openFile']
+      })
+      const path = r.canceled ? null : (r.filePaths[0] ?? null)
+      if (!path || !picked(path)) return null
+      allow(path, 'read')
+      return path
+    })
     ipcMain.handle('choose-attach-files', async (e) => {
       const w = windowOf(e)
       if (!w) return []
@@ -442,6 +467,10 @@ if (!gotLock) {
       w.close()
     })
     core = startCore()
+    // Po prebudení počítača sa netreba spoliehať na odklad opakovania – pripojiť sa hneď.
+    const reconnect = (): void => core?.postMessage({ kind: 'reconnect' } satisfies MainToCore)
+    powerMonitor.on('resume', reconnect)
+    powerMonitor.on('unlock-screen', reconnect)
     mainWindow = createWindow()
     mainWindow.on('closed', () => (mainWindow = null))
   })

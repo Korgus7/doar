@@ -30,7 +30,9 @@ Verzia návrhu: 1 (2026-10-21). Mení sa len s odôvodnením v `ROZHODNUTIA.md`.
 | `mail` | pripojenia IMAP (imapflow) a SMTP (nodemailer), skladanie a parsovanie správ |
 | `providers` | tabuľka známych poskytovateľov, autoconfig, rozpoznanie špeciálnych priečinkov |
 | `sync` | synchronizácia priečinkov a správ, IDLE, fronta operácií, odosielacia fronta |
-| `export` | export a import mboxrd, lokálny archív |
+| `export` | export mboxrd (záloha) |
+| `import` | čítanie mbox prúdom, obnova do konta (IMAP APPEND, duplicity, pokračovanie) |
+| `archive` | lokálny archív – súbor mbox len na čítanie (zoznam, fulltext, čítanie zo súboru); v rozhraní záporné ID |
 | `ai` | volania AI poskytovateľov (0.4) |
 | `jobs` | dlhé úlohy s priebehom a zrušením (sync, export, import) |
 
@@ -91,7 +93,8 @@ messages(
   seen, flagged, answered, draft, keywords_json,
   gm_msgid, gm_labels_json,                         -- len Gmail
   local_state,          -- synced | pending | failed (čakajúca lokálna zmena)
-  hidden,               -- 1 = čaká na presun/vymazanie, v zozname sa nezobrazuje (0.2)
+  hidden,               -- 1 = čaká na presun/vymazanie, v pôvodnom priečinku sa nezobrazuje (0.2)
+  moving_to,            -- cieľ čakajúceho presunu – správa sa už zobrazuje tam (0.3)
   UNIQUE(folder_id, uid))
 
 messages_fts USING fts5(subject, from_text, to_text, body_text,
@@ -121,8 +124,18 @@ outbox(
 jobs(id PK, kind, account_id, state, started_at, finished_at,
      progress_json, summary_json)                   -- export, import, úvodná sync
 
-import_items(job_id, seq, mbox_offset, fingerprint, target_folder,
-             state, appended_uid, error)            -- pokračovanie po prerušení (0.3)
+import_items(job_id, seq, mbox_offset, mbox_length, fingerprint, weak_key, size,
+             target_desc, target_folder, target_uidvalidity,
+             state,                -- pending | appending | appended | duplicate | failed | skipped
+             appended_uid, error, changed_outside, foreign_format)
+                                                    -- obnova zo zálohy, pokračovanie po prerušení (0.3b)
+
+archives(id PK, path UNIQUE, name, size, mtime_ms, state, message_count, doar, source, error)
+archive_folders(id PK, archive_id, key, name, special_use, total, unread)
+archive_messages(id PK, archive_id, folder_id, seq, mbox_offset, mbox_length, fingerprint,
+                 subject, from_name, from_addr, to_json, date, seen, flagged, answered,
+                 has_attachments, snippet)        -- lokálny archív (0.3c), súbor sa nemení
+archive_fts (fts5, contentless, rowid = archive_messages.id)
 
 settings(key PK, value_json)
 remote_content_allow(sender PK, created_at)
@@ -139,6 +152,7 @@ remote_content_allow(sender PK, created_at)
 - **Presun, Kôš, Archív, Spam** (0.2): správy sa hneď skryjú (`hidden = 1`) a operácia `move` dostane `not_before` = teraz + 8 s. Dovtedy ju „Vrátiť späť“ jednoducho zmaže z fronty a správy odkryje – server sa nič nedozvie. Potom `UID MOVE` (imapflow si poradí aj bez MOVE: COPY + \Deleted + EXPUNGE). Nové UID z UIDPLUS (COPYUID) sa zapíšu k tomu istému lokálnemu záznamu, takže sa originál nesťahuje znova; bez UIDPLUS si správu v cieli nájde ďalšia synchronizácia.
 - **Cieľ podľa úlohy priečinka:** Kôš/Archív/Spam sa hľadajú podľa SPECIAL-USE a známych názvov; ak chýbajú, Doar založí `Trash`/`Archive`/`Junk`. Archív na Gmaile = „Všetka pošta“.
 - **Natrvalo vymazať** (`expunge`): len na výslovný pokyn s potvrdením, bez oneskorenia: `\Deleted` + `UID EXPUNGE` len pre tieto UID.
+- **Bez pripojenia (0.3):** `SyncStatus.pendingChanges` = čakajúce operácie + neodoslané správy. Odoslanie, ktoré zlyhalo pred pripojením (`OFFLINE_CODES`), zostáva `queued` s `error = 'OFFLINE'` a opakuje sa samo. `reconnectAll()` (udalosť `online`, `powerMonitor`) zruší odklad.
 - **Chyby:** výpadok spojenia operáciu len vráti do fronty (bez započítania pokusu). Po 3 odmietnutiach serverom sa správy znova zobrazia s ⚠. Operácia v stave `running` po páde aplikácie sa pri ďalšom spustení zopakuje.
 
 ## 6. Odosielanie
@@ -188,7 +202,9 @@ doar/
       mail/      connection-test.ts, imap.ts, smtp.ts, compose.ts, parse.ts, sanitize.ts, remote.ts
       providers/ known.ts, autoconfig.ts, discover.ts, net.ts (neskôr special-folders.ts)
       sync/      account-sync.ts (vrátane odosielacej fronty), manager.ts
-      export/    mboxrd.ts, export-account.ts, manager.ts (neskôr import-account.ts, archive.ts)
+      export/    mboxrd.ts, export-account.ts, manager.ts
+      import/    mbox-reader.ts, import-account.ts, manager.ts
+      archive/   archive.ts
       jobs/      job-runner.ts
       ai/        (0.4)
     renderer/    index.html, src/ (App.svelte, ComposeApp.svelte, components/, lib/, i18n/, styles/)

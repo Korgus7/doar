@@ -41,6 +41,7 @@
   let savedSnap = ''
   let savedAt = $state<string | null>(null)
   let saveFailed = $state(false)
+  let savedOffline = $state(false)
   let saving: Promise<void> | null = null
   let saveTimer: ReturnType<typeof setTimeout> | null = null
   let closing = false
@@ -265,6 +266,9 @@
         savedSnap = snap
         savedAt = new Date().toISOString()
         saveFailed = false
+        // Bez pripojenia je koncept zatiaľ len v tomto počítači – povedať to.
+        const st = await window.doar.invoke('sync.status').catch(() => [])
+        savedOffline = st.some((x) => x.accountId === accountId && (x.state === 'offline' || x.state === 'error'))
       } catch (e) {
         ok = false
         saveFailed = true
@@ -401,7 +405,7 @@
     </button>
     <button class="btn" onclick={discard} disabled={sending || !ready} title={t('compose.discardTitle')}>🗑 {t('compose.discardBtn')}</button>
     <span class="status" class:warn={saveFailed} role="status">
-      {#if saveFailed}{t('compose.draftFailed')}{:else if savedAt}{t('compose.draftSaved', { time: timeOnly(savedAt) })}{:else}{t('compose.plainOnly')}{/if}
+      {#if saveFailed}{t('compose.draftFailed')}{:else if savedAt && savedOffline}{t('compose.draftSavedLocal', { time: timeOnly(savedAt) })}{:else if savedAt}{t('compose.draftSaved', { time: timeOnly(savedAt) })}{:else}{t('compose.plainOnly')}{/if}
     </span>
   </header>
 

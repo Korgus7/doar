@@ -24,7 +24,7 @@ Vždy sa vracaj k:
 - `npm run dev` – vývoj s okamžitým obnovením
 - `npm run typecheck` · `npm run build`
 - `npm test` – unit testy · `npm run test:integration` – proti testovaciemu serveru (Linux/WSL, Dovecot) · `npm run test:e2e` – Playwright (na Linuxe cez `xvfb-run -a`)
-- `npm run testserver` – testovací IMAP/SMTP server (kontá alice, bob, carol, dana, emil, filip, gita, hana, ivan, jozef, karol, lenka, marek, nina, olga, pavol, rado, sona, tomas, urban, vlado, zuzana a plna@doar.test, heslo doar-test-heslo)
+- `npm run testserver` – testovací IMAP/SMTP server (kontá alice, bob, carol, dana, emil, filip, gita, hana, ivan, jozef, karol, lenka, marek, nina, olga, pavol, rado, sona, tomas, urban, vlado, zuzana, xaver, yvona, adam, beata, cyril, dusan, plna@doar.test (kvóta 20 kB) a mala@doar.test (kvóta 12 kB), heslo doar-test-heslo)
 
 ## Etapy
 

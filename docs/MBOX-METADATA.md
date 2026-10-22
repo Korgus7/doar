@@ -104,6 +104,16 @@ Pred začatím sa skontroluje voľné miesto (odhad = súčet veľkostí × 1,05
 - Overené testami proti Dovecotu: úplná záloha bez lokálnej kópie (všetko sa stiahne), záloha s lokálnou kópiou (nič sa nesťahuje), originály bit po bite (hash), priečinky s diakritikou, vnorené a s `&`, interné dátumy, príznaky, mboxrd (`From`, `>From`), správa bez koncového nového riadku, 8-bitový obsah, správa zmazaná počas zálohy (→ `-NEUPLNA`), zrušenie, plný disk počas zápisu, nedostatok miesta vopred, pád aplikácie počas zálohy, čítanie súboru cudzím nástrojom (Python `mailbox`) vrátane prílohy.
 - **Neoverené:** Gmail (štítky, Všetka pošta) – testovací server Gmail nemá; logika výberu priečinkov je pripravená podľa bodu 6.
 
+## 7b. Obnova – implementácia a overenie (2026-10-22)
+
+- Kód: `src/core/import/mbox-reader.ts` (čítanie prúdom, oddeľovače, odstránenie bloku, príznaky cudzích súborov), `import-account.ts` (priečinky, duplicity, nahrávanie), `manager.ts` (úlohy, pokračovanie, obnova po páde).
+- Oddeľovač: riadok `From ` na začiatku súboru alebo za prázdnym riadkom, ktorý obsahuje čas a rok (chráni pred rozdelením cudzích súborov, kde `From ` v texte nie je escapované). Súbory s CRLF sa čítajú rovnako.
+- Cudzí mbox: `Status: R` → prečítané, `X-Status: A/F/T` → odpovedané / hviezdička / koncept; interný dátum z oddeľovača (rok 1970 = neznámy), inak z hlavičky `Date`.
+- Duplicity, pokračovanie a nejasný výsledok: pozri `docs/ROZHODNUTIA.md` (0.3b).
+- Overené testami proti Dovecotu: záloha → obnova do prázdneho konta a porovnanie po priečinkoch (obsah bit po bite, interné dátumy, príznaky vrátane `$Forwarded`), príloha, vnorený priečinok s diakritikou a `&`, dve rovnaké kópie v priečinku, tá istá správa v dvoch priečinkoch, opakovaná obnova (nič nové), obnova do pôvodného konta s originálmi bez koncového CRLF a s holými LF/CR (nič nové), doplnenie jednej chýbajúcej kópie, všetko do jedného priečinka, cudzí mbox (príznaky, dátum, správa bez Message-ID), zrušenie a pokračovanie, výpadok spojenia počas `APPEND` (odpoveď stratená po uložení aj pred odoslaním), pád aplikácie počas `APPEND` (jedna správa na serveri je, druhá nie), plná schránka a pokračovanie po uvoľnení miesta, zmenený súbor, súbor, ktorý nie je mbox, súbor nevybraný v dialógu.
+- Správa označená na zmazanie (`\Deleted`, ešte nevymazaná) sa zálohuje a obnoví ako bežná správa.
+- **Neoverené:** obnova do Gmailu (štítky), servery bez UIDPLUS.
+
 ## 8. Hranice verzie 1
 
 - Priečinky bez možnosti výberu (`\Noselect`, napr. nadradený priečinok, ktorý slúži len na zoskupenie) sa neexportujú; ich podpriečinky áno.

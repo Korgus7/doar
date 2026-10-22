@@ -42,6 +42,7 @@ function schedulePush(ctx: Ctx, draftId: number, accountId: number, now: boolean
     ctx.store.enqueueOperation(accountId, 'draft', payload, now ? undefined : new Date(Date.now() + ctx.sync.draftDelayMs))
   } else if (now) ctx.store.expediteOperation(accountId, 'draft', payload)
   const s = ctx.sync.get(accountId)
+  s?.refreshStatus()
   if (now) void s?.pushOperations().catch(() => {})
   else s?.scheduleDelayedOperations()
 }

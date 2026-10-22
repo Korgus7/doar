@@ -1,7 +1,8 @@
 <script lang="ts">
   import { t } from '../i18n/index.svelte'
   import { listDate } from '../lib/format'
-  import { mail, messageAt, loadPage, PAGE, setFlags, setSelection, indexOf, allIds, itemsById } from '../lib/mail.svelte'
+  import { mail, messageAt, loadPage, PAGE, setFlags, setSelection, indexOf, allIds, itemsById, findFolder } from '../lib/mail.svelte'
+  import { isArchiveId } from '../../../shared/ipc'
   import { ui, messageMenu, openMenu, remove, removeForever, archive, openMoveDialog, selectAll, isDraft, folderLabel, folderById } from '../lib/actions.svelte'
   import { runSearch } from '../lib/mail.svelte'
 
@@ -14,7 +15,7 @@
   /** Kotva pre Shift + klik / Shift + šípky. */
   let anchor: number | null = null
 
-  const currentFolder = $derived(mail.folderId === null ? null : mail.folders.find((f) => f.id === mail.folderId))
+  const currentFolder = $derived(findFolder(mail.folderId) ?? null)
   const showRecipients = $derived(!mail.search && (currentFolder?.specialUse === 'sent' || currentFolder?.specialUse === 'drafts'))
   const searching = $derived(mail.search !== null)
   const unified = $derived(searching ? mail.accounts.length > 1 : mail.folderId === null)
@@ -154,6 +155,11 @@
   }
 
   function onDragStart(e: DragEvent, i: number, id: number): void {
+    // Správy archívu sa nedajú presúvať.
+    if (isArchiveId(id)) {
+      e.preventDefault()
+      return
+    }
     if (!selected.has(id)) {
       anchor = i
       setSelection([id])
@@ -232,20 +238,25 @@
                   {/if}
                 </span>
                 {#if m.localState === 'pending'}<span class="state" title={t('list.pending')}>⏳</span>{/if}
+                {#if !m.downloaded}<span class="state cloud" title={t('list.notDownloaded')} aria-label={t('list.notDownloaded')}>☁</span>{/if}
                 {#if m.localState === 'failed'}<span class="state warn" title={t('list.failed')}>⚠</span>{/if}
                 <span class="date">{listDate(m.date)}</span>
               </div>
               <div class="line2">
                 <span class="subject">{m.subject || t('list.noSubject')}</span>
                 {#if m.hasAttachments}<span class="clip" title={t('list.attachment')}>📎</span>{/if}
-                <button
-                  class="star"
-                  class:on={m.flagged}
-                  title={m.flagged ? t('reader.unflag') : t('reader.flag')}
-                  aria-label={m.flagged ? t('reader.unflag') : t('reader.flag')}
-                  tabindex="-1"
-                  onclick={(e) => toggleFlag(e, m.id, m.flagged)}>{m.flagged ? '★' : '☆'}</button
-                >
+                {#if isArchiveId(m.id)}
+                  {#if m.flagged}<span class="star on" aria-label={t('reader.flagged')}>★</span>{/if}
+                {:else}
+                  <button
+                    class="star"
+                    class:on={m.flagged}
+                    title={m.flagged ? t('reader.unflag') : t('reader.flag')}
+                    aria-label={m.flagged ? t('reader.unflag') : t('reader.flag')}
+                    tabindex="-1"
+                    onclick={(e) => toggleFlag(e, m.id, m.flagged)}>{m.flagged ? '★' : '☆'}</button
+                  >
+                {/if}
               </div>
               <div class="line3">
                 {#if searching}{@const f = folderById(m.folderId)}<span class="accname">{f ? folderLabel(f) : ''}{unified ? ` (${m.accountName})` : ''} · </span>{:else if unified}<span class="accname">{m.accountName} · </span>{/if}{m.snippet}
@@ -408,6 +419,10 @@
   }
   .state {
     font-size: 0.75rem;
+  }
+  .state.cloud {
+    color: var(--text-muted);
+    opacity: 0.7;
   }
   .state.warn {
     color: var(--warning);

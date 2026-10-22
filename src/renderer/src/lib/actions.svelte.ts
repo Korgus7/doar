@@ -1,7 +1,7 @@
 import type { AttachmentInfo, FolderItem } from '../../../shared/ipc'
-import { isDangerousFile } from '../../../shared/ipc'
+import { isArchiveId, isDangerousFile } from '../../../shared/ipc'
 import { t, type MessageKey } from '../i18n/index.svelte'
-import { mail, setSelection, indexOf, messageAt, itemsById, allIds, setFlags, loadFolders } from './mail.svelte'
+import { mail, setSelection, indexOf, messageAt, itemsById, allIds, setFlags, loadFolders, findFolder } from './mail.svelte'
 
 /**
  * Akcie nad správami (Kôš, Archív, presun, spam, natrvalo) a stav okolo nich:
@@ -61,11 +61,17 @@ export function errorText(e: unknown): string {
 
 export function folderLabel(f: FolderItem): string {
   if (f.specialUse) return t(`folder.${f.specialUse}` as MessageKey)
-  return f.name
+  // Archív zo súboru bez priečinkov (cudzí mbox): jeden priečinok bez mena.
+  return f.name || t('archive.messages')
 }
 
 export function folderById(id: number | null | undefined): FolderItem | undefined {
-  return id == null ? undefined : mail.folders.find((f) => f.id === id)
+  return findFolder(id)
+}
+
+/** Správy kont (správy archívu sa nedajú meniť, presúvať ani mazať). */
+function writable(ids: number[]): number[] {
+  return ids.filter((id) => !isArchiveId(id))
 }
 
 function specialOf(ids: number[]): string | null | undefined {
@@ -75,7 +81,7 @@ function specialOf(ids: number[]): string | null | undefined {
 
 /** Je správa koncept (v priečinku Koncepty)? */
 export function isDraft(id: number): boolean {
-  return specialOf([id]) === 'drafts'
+  return !isArchiveId(id) && specialOf([id]) === 'drafts'
 }
 
 /** Sú všetky správy v Koši (Del potom maže natrvalo)? */
@@ -128,7 +134,7 @@ function targetLabel(target: { folderId?: number; special?: Special }): string {
 
 export async function moveTo(list: number[], target: { folderId?: number; special?: Special }): Promise<void> {
   // Polia zo stavu Svelte sú proxy – cez MessagePort sa dajú poslať len obyčajné hodnoty.
-  const ids = [...list]
+  const ids = writable([...list])
   if (!ids.length) return
   const before = [...ids]
   try {
@@ -163,7 +169,8 @@ export async function undoLast(): Promise<void> {
 }
 
 /** Del: do Koša; v Koši natrvalo (s potvrdením). */
-export function remove(ids: number[]): void {
+export function remove(list: number[]): void {
+  const ids = writable(list)
   if (!ids.length) return
   if (allInTrash(ids)) void removeForever(ids)
   else void moveTo(ids, { special: 'trash' })
@@ -171,7 +178,7 @@ export function remove(ids: number[]): void {
 
 /** Shift+Del: natrvalo, vždy s potvrdením. */
 export async function removeForever(list: number[]): Promise<void> {
-  const ids = [...list]
+  const ids = writable([...list])
   if (!ids.length) return
   const q = ids.length === 1 ? t('actions.confirmForeverOne') : t('actions.confirmForeverMany', { n: ids.length })
   if (!confirm(q)) return
@@ -185,16 +192,20 @@ export async function removeForever(list: number[]): Promise<void> {
   }
 }
 
-export function archive(ids: number[]): void {
+export function archive(list: number[]): void {
+  const ids = writable(list)
   if (ids.length && !allInArchive(ids)) void moveTo(ids, { special: 'archive' })
 }
 
-export function toggleSpam(ids: number[]): void {
+export function toggleSpam(list: number[]): void {
+  const ids = writable(list)
   if (!ids.length) return
   void moveTo(ids, { special: allInJunk(ids) ? 'inbox' : 'junk' })
 }
 
-export function openMoveDialog(ids: number[]): void {
+export function openMoveDialog(list: number[]): void {
+  const ids = writable(list)
+  if (!ids.length) return
   const accountId = singleAccount(ids)
   if (accountId === null) {
     showToast(t('errors.CROSS_ACCOUNT'), { tone: 'error' })
@@ -235,6 +246,11 @@ export function messageMenu(ids: number[]): MenuEntry[] {
       { label: t('reader.print'), shortcut: 'Ctrl+P', run: () => window.dispatchEvent(new Event('doar-print')) },
       'sep'
     )
+  }
+  // Archív je len na čítanie: odpovedať, preposlať, vytlačiť.
+  if (!writable(ids).length) {
+    if (entries.at(-1) === 'sep') entries.pop()
+    return entries
   }
   entries.push(
     { label: anyUnread ? t('reader.markRead') : t('reader.markUnread'), run: () => void setFlags(ids, { seen: anyUnread }) },

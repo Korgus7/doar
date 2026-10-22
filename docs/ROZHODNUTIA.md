@@ -135,6 +135,61 @@ Záznam dohodnutých rozhodnutí. Nové rozhodnutia pridávaj na koniec s dátum
 - **0.2 overená** testami (unit, integračné proti Dovecotu, rozhranie) a ručne na Windows so skutočným kontom (cami.sk / Websupport): Kôš a Vrátiť späť, prílohy vrátane pretiahnutia súboru, koncepty, vyhľadávanie, upozornenia a odznak, formátovaná správa, našepkávanie adries.
 - **Neoverené ručne:** dialóg tlače vo Windows (test overuje len tlačený dokument), Gmail.
 
+## 2026-10-22 – práca bez pripojenia (0.3a)
+
+- **Odoslanie bez pripojenia:** ak sa k SMTP serveru nedá pripojiť (sieť, DNS, odmietnuté spojenie, časový limit), správa určite neodišla – zostane vo fronte so stavom „čaká na pripojenie“ a odošle sa sama (15 s, 30 s, … najviac 5 min., hneď po pripojení k sieti alebo prebudení počítača). Používateľ ju môže zrušiť. Chyby servera (odmietnutý adresát, zlé heslo) ostávajú chybou, o ktorej rozhodne používateľ; nejasný výsledok sa nikdy neopakuje sám.
+- **Fronta zmien** (príznaky, presuny, mazanie, koncepty) a odosielania je v databáze – prežije reštart aj pád. Stavový riadok ukazuje „bez pripojenia · na server čaká: N“.
+- **Nestiahnutý obsah** je v zozname označený ☁; otvorenie bez pripojenia povie, že obsah nie je k dispozícii.
+- **Opätovné pripojenie:** udalosť siete v rozhraní (`online`) a prebudenie/odomknutie počítača (main `powerMonitor`) zrušia čakanie a pripoja sa hneď. Opakovanie po chybe je vždy len jedno naplánované (žiadne hromadenie pokusov pri mnohých zmenách bez siete).
+- Nový kód chyby `NO_NETWORK` (ENETUNREACH a pod.).
+
+## 2026-10-22 – obnova zo zálohy do konta (0.3b)
+
+- **Spustenie:** Súbor → Obnoviť zo zálohy… (aj odkaz v ľavom paneli). Súbor vyberá používateľ v natívnom dialógu, jadro ho smie len čítať (`files.allow`, režim read). Pôvodný súbor sa nikdy nemení.
+- **Dva režimy:** *do pôvodných priečinkov* (len záloha Doar) – špeciálne priečinky podľa funkcie (`\Sent` → Odoslané servera, aj keď sa volá inak; ak chýba, založí sa), ostatné podľa cesty (chýbajúce sa založia aj s nadradenými, oddeľovač a menný priestor servera sa doplnia). *Všetko do jedného priečinka* – nový (predvolene „Import – názov súboru“) alebo existujúci. Správy bez metadát Doar idú vždy do zvoleného priečinka.
+- **Postup:** 1. prečítanie súboru prúdom (v pamäti je naraz jedna správa) a zápis zoznamu správ do `import_items` (pozícia v súbore, odtlačok, kľúč na porovnanie, cieľ), 2. príprava priečinkov, 3. kontrola duplicít, 4. `APPEND` s príznakmi a interným dátumom. Vlastné štítky (kľúčové slová) len ak ich priečinok povoľuje (`PERMANENTFLAGS \*`), inak sa v súhrne uvedie počet.
+- **Duplicity** (nespolieha sa len na Message-ID): porovnáva sa **v rámci cieľového priečinka**. Kandidáti na serveri sa vyberú podľa Message-ID (bez neho podľa dátumu z hlavičky a odosielateľa) a zhoda sa vždy overí **celým obsahom** (SHA-256 kanonického tvaru – z lokálnej kópie, chýbajúce sa stiahnu po dávkach). Veľkosť sa nepoužíva: server môže originál uložiť inak (bez koncového CRLF, s holými LF) – pôvodne to spôsobilo zdvojenie 4 správ pri obnove do pôvodného konta (opravené, pokryté testom). Ak sa kľúč nezhoduje, skúsi sa ešte zhoda obsahu s lokálnou kópiou priečinka. Každá správa na serveri „pokryje“ najviac jednu správu zo súboru – preto sa správne obnovia aj dve rovnaké kópie v jednom priečinku a tá istá správa v dvoch priečinkoch je legitímne v oboch. Pri opakovanej obnove sa navyše použijú UID správ nahraných predošlými obnovami (aj keby ich server pri uložení upravil).
+- **Prerušenie a pokračovanie:** stav každej správy sa ukladá hneď (`pending` → `appending` → `appended`/`duplicate`/`failed`). Zrušenie, výpadok spojenia, plná schránka aj pád aplikácie nechajú obnovu „nedokončenú“ – dialóg ponúkne Pokračovať (alebo Zahodiť; na serveri sa nič nemaže). Pokračuje sa len so súborom, ktorý sa nezmenil (veľkosť, čas zmeny, odtlačok každej správy).
+- **Nejasný výsledok** (spojenie spadlo počas `APPEND`, pád aplikácie): pred opakovaním sa priečinok znova porovná so súborom; správa, ktorá na serveri je, sa označí ako nahraná a nenahrá sa druhýkrát.
+- **Plná schránka** (`OVERQUOTA`): obnova sa zastaví, súhrn ukáže, čo sa nahralo, čo čaká, a ako pokračovať (uvoľniť miesto → Pokračovať). Správu, ktorú server odmietol (napr. príliš veľká), označí ako odmietnutú a pokračuje ďalej.
+- **Súhrn:** po priečinkoch – v zálohe / nahrané / už boli / odmietnuté / čaká; počet správ zmenených mimo Doar (nesedí hash), správ bez metadát, preskočených záznamov a štítkov, ktoré server neuložil. Po obnove sa konto synchronizuje.
+- Na obnovu sa používa samostatné IMAP spojenie (synchronizácia nečaká). Naraz beží jedna obnova.
+- Migrácia 007 (stĺpce `import_items`), nové testovacie kontá `adam`, `beata`, `cyril`, `dusan` a `mala` (kvóta 12 kB).
+- **Neoverené:** Gmail ako cieľ (štítky cez `X-GM-LABELS`) a servery, ktoré pri uložení menia obsah správy.
+- **Oprava synchronizácie (nájdená opakovaným spúšťaním testov):** sťahovanie obsahu teraz overí UIDVALIDITY otvoreného priečinka – ak bol priečinok na serveri medzitým nahradený, nestiahne obsah inej správy s rovnakým UID a najprv sa priečinok synchronizuje. Zoznam správ, ktorých obsah sa nedal stiahnuť, sa pri každej synchronizácii vynuluje (ID riadku mohlo byť použité pre novú správu – jej obsah by sa inak nestiahol). Test „server presun odmietne“ mal časový súbeh – opravené poradie krokov.
+
+## 2026-10-22 – lokálny archív (0.3c)
+
+- **Otvorenie:** Súbor → Otvoriť archív… (aj odkaz v ľavom paneli). Súbor .mbox (záloha Doar aj cudzí) sa otvorí **len na čítanie** – nič sa nenahráva na server a súbor sa nikdy nemení. Jadro ho smie len čítať (súbor vybraný v dialógu).
+- **Načítanie:** súbor sa prejde prúdom; do databázy sa uloží len zoznam správ (pozícia a dĺžka v súbore, odtlačok obsahu), údaje pre zoznam a fulltext (rovnaký tokenizér ako pošta – bez diakritiky). Obsah správy a prílohy sa pri otvorení čítajú zo súboru.
+- **Priečinky:** záloha Doar podľa metadát (Doručená pošta, Odoslané… podľa funkcie, ostatné s cestou „Faktúry / 2026“); cudzí mbox = jeden priečinok „Správy“. Stav prečítania a hviezdička podľa metadát / `Status`, `X-Status`.
+- **V rozhraní** je archív samostatná sekcia v ľavom paneli pod kontami (s ×  na zatvorenie). Priečinky a správy archívu majú záporné ID – rovnaké požiadavky (zoznam, čítanie, vyhľadávanie, prílohy, odpoveď) fungujú pre poštu aj archív a nedajú sa pomiešať. Zmeny (prečítané, hviezdička, presun, mazanie, ťahanie) sa na archív neuplatnia; v čítaní je označenie „Archív – len na čítanie“.
+- **Odpoveď / preposlanie** správy z archívu: z konta, z ktorého záloha pochádza (ak je v Doare), inak z prvého konta.
+- **Zmenený súbor:** pred zobrazením sa obsah overí odtlačkom; ak nesedí, správa sa nezobrazí a archív sa načíta znova. **Chýbajúci súbor** (odpojený disk): archív zostane v zozname s upozornením, po vrátení súboru funguje ďalej. Po štarte aplikácie sa kontroluje, nedokončené načítanie sa zopakuje.
+- **Zatvorenie** zmaže len zoznam a fulltext v Doare, súbor zostane.
+- Migrácia 008 (`archives`, `archive_folders`, `archive_messages`, `archive_fts`).
+
+## 2026-10-22 – názov Doar Mail, ikona, jazyk (koniec 0.3)
+
+- **Názov** zobrazovaný používateľovi je **Doar Mail** (okná, ponuka Štart, O aplikácii, stavový riadok, `productName`). Interne zostáva `doar` a **dátový priečinok je vždy `%APPDATA%\Doar`** (pevne nastavený v main procese) – premenovanie nezmení kontá, poštu, heslá ani nastavenia.
+- **Ikona:** vlastný návrh – biela obálka na modrom podklade (`resources/icon.svg`, pre 16–32 px zjednodušená `icon-small.svg`). Z nich vznikajú `resources/icon.png` (okno, panel úloh) a `build/icon.ico`, `build/icon.png` (inštalátor v 0.4). Licencia MIT ako zvyšok projektu.
+- **Jazyk:** okrem Nastavenia → Všeobecné (Automaticky / Slovenčina / English) aj v menu **Zobraziť → Jazyk / Language** (dvojjazyčný názov, aby ho našiel aj ten, kto aktuálnemu jazyku nerozumie). Zmena platí hneď, aj pre menu.
+- **Oprava (nájdená opakovaným spúšťaním testov):** imapflow pri odmietnutí presunu, zmeny príznakov alebo vymazania nevyhodí chybu, ale vráti `false`. Doar to bral ako úspech – napr. presun do priečinka, ktorý medzitým niekto zmazal, sa lokálne „vykonal“ a správa zo zoznamu zmizla, hoci na serveri zostala. Teraz sa `false` berie ako odmietnutie: zmena sa skúsi znova a po 3 pokusoch sa správa vráti do zoznamu označená ako neúspešná. Test presunu opravený, aby nezávisel od načasovania.
+
+## 2026-10-22 – presun sa ukáže hneď (koniec 0.3)
+
+- Presunutá (aj odstránená do Koša, archivovaná, spam) správa sa **hneď objaví v cieľovom priečinku** so značkou ⏳ „čaká na server“; na server ide ako doteraz až po čase na „Vrátiť späť“ (8 s). Počty v priečinkoch sa menia hneď.
+- Riešené stĺpcom `messages.moving_to` (migrácia 009): pôvodné umiestnenie (`folder_id`, `uid`) platí, kým presun nepotvrdí server; zoznam, počty, „Vybrať všetko“ a vyhľadávanie ukazujú správu v cieli.
+- **Vrátiť späť** ju vráti na pôvodné miesto; **odmietnutý presun** (po 3 pokusoch) tiež – s označením ⚠.
+- **Ďalšia akcia počas čakania** (iný presun, natrvalo zmazať): predošlý presun sa zruší a platí posledná voľba; ostatné správy z pôvodného presunu idú tam, kam mali. Ak sa presun na serveri práve vykonáva, Doar povie „skúste o chvíľu“ (aby sa správa nepresúvala dvakrát).
+- Špeciálny priečinok, ktorý na serveri ešte neexistuje (Doar ho pri presune založí), sa takto vopred neukáže – správa sa v ňom objaví po vykonaní.
+
+## 2026-10-22 – uzavretie 0.3
+
+- Verzia **0.3.0**: práca bez pripojenia (trvalá fronta), obnova zo zálohy do konta s kontrolou duplicít a pokračovaním, lokálny archív mbox, názov Doar Mail, ikona, prepínanie jazyka v menu, presun viditeľný hneď.
+- Overené testami (unit, integračné proti Dovecotu – opakovane, rozhranie) a ručne na Windows so skutočným kontom: práca bez pripojenia, obnova zo zálohy, archív.
+- **Neoverené:** Gmail (záloha, obnova so štítkami), servery bez UIDPLUS; kam sa pri prvej obnove do pôvodného konta (pred opravou porovnávania) nahrali 4 správy navyše – používateľ ich zmazal.
+
 ## Licencie závislostí (overené 2026-10-21 cez `npm view`)
 
 Všetky sú kompatibilné s MIT.

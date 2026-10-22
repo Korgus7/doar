@@ -107,6 +107,11 @@ export class SyncManager {
     return [...this.syncs.values()].map((s) => s.status)
   }
 
+  /** Sieť je znova k dispozícii – všetky kontá skúsia hneď (bez čakania na odklad). */
+  reconnectAll(): void {
+    for (const s of this.syncs.values()) s.reconnectNow()
+  }
+
   async syncNow(accountId?: number): Promise<void> {
     const list = accountId === undefined ? [...this.syncs.values()] : [this.syncs.get(accountId)].filter((s): s is AccountSync => !!s)
     await Promise.allSettled(list.map((s) => s.requestSync()))
@@ -119,6 +124,7 @@ export class SyncManager {
    */
   moveMessages(ids: number[], target: { folderId?: number; special?: 'trash' | 'archive' | 'junk' | 'inbox' }): { undo: number[]; count: number } {
     const store = this.deps.store
+    const released = this.releasePendingMoves(ids)
     const groups = new Map<number, { accountId: number; fromFolderId: number; uids: number[]; messageIds: number[] }>()
     for (const id of ids) {
       const r = store.message(id)
@@ -157,17 +163,50 @@ export class SyncManager {
     const notBefore = new Date(Date.now() + this.undoDelayMs)
     for (const { g, payload } of plans) {
       store.setHidden(g.messageIds, true)
+      // V cieľovom priečinku sa správa ukáže hneď (so značkou „presúva sa“); na server ide po čase na „Vrátiť späť“.
+      if (payload.toFolderId !== undefined) store.setMoving(g.messageIds, payload.toFolderId)
       undo.push(store.enqueueOperation(g.accountId, 'move', payload, notBefore))
       count += g.messageIds.length
       this.syncs.get(g.accountId)?.scheduleDelayedOperations()
     }
-    this.afterLocalChange(plans.map((p) => p.g.fromFolderId))
+    this.afterLocalChange([...released, ...plans.map((p) => p.g.fromFolderId), ...plans.flatMap((p) => (p.payload.toFolderId !== undefined ? [p.payload.toFolderId] : []))])
     return { undo, count }
+  }
+
+  /**
+   * Správa, ktorá ešte čaká na presun (napr. ju používateľ hneď presúva inam alebo maže): predošlý presun
+   * sa zruší a platí posledná voľba. Ostatné správy z toho istého presunu sa presunú ako predtým.
+   */
+  private releasePendingMoves(ids: number[]): number[] {
+    const store = this.deps.store
+    const rows = ids.map((id) => store.message(id)).filter((r): r is NonNullable<typeof r> => !!r && r.moving_to !== null)
+    if (!rows.length) return []
+    const touched: number[] = []
+    const want = new Set(rows.map((r) => r.id))
+    for (const accountId of new Set(rows.map((r) => r.account_id))) {
+      for (const op of store.pendingMoves(accountId)) {
+        const p = op.payload as MovePayload
+        const hit = p.messageIds.filter((id) => want.has(id))
+        if (!hit.length) continue
+        if (!store.cancelOperation(op.id)) continue
+        const keep = p.messageIds.map((id, i) => ({ id, uid: p.uids[i]! })).filter((x) => !want.has(x.id))
+        if (keep.length) {
+          store.enqueueOperation(accountId, 'move', { ...p, messageIds: keep.map((x) => x.id), uids: keep.map((x) => x.uid) }, op.notBefore ? new Date(op.notBefore) : undefined)
+        }
+        store.setHidden(hit, false)
+        touched.push(p.fromFolderId, ...(p.toFolderId !== undefined ? [p.toFolderId] : []))
+        for (const id of hit) want.delete(id)
+      }
+    }
+    // Presun sa na serveri práve vykonáva – výsledok počkáme (inak by sa správa presúvala dvakrát).
+    if (want.size) throw Object.assign(new Error('Správa sa práve presúva'), { code: 'MOVE_IN_PROGRESS' })
+    return touched
   }
 
   /** Natrvalo vymazať (len po potvrdení používateľom v rozhraní). Bez možnosti vrátenia. */
   deleteForever(ids: number[]): void {
     const store = this.deps.store
+    const released = this.releasePendingMoves(ids)
     const groups = new Map<number, { accountId: number; folderId: number; uids: number[]; messageIds: number[] }>()
     for (const id of ids) {
       const r = store.message(id)
@@ -182,7 +221,7 @@ export class SyncManager {
       store.enqueueOperation(g.accountId, 'expunge', g)
       void this.syncs.get(g.accountId)?.pushOperations().catch(() => {})
     }
-    this.afterLocalChange([...groups.keys()])
+    this.afterLocalChange([...released, ...groups.keys()])
   }
 
   /** „Vrátiť späť“: zruší presuny, ktoré sa na serveri ešte nevykonali. */
@@ -198,7 +237,7 @@ export class SyncManager {
       }
       const p = op.payload as MovePayload
       store.setHidden(p.messageIds, false)
-      folders.push(p.fromFolderId)
+      folders.push(p.fromFolderId, ...(p.toFolderId !== undefined ? [p.toFolderId] : []))
     }
     this.afterLocalChange(folders)
     return { undone: all }
@@ -218,7 +257,10 @@ export class SyncManager {
     const unique = [...new Set(folderIds)]
     this.deps.emit('messages.changed', { folderIds: unique })
     const accounts = new Set(unique.map((id) => this.deps.store.folder(id)?.account_id).filter((x): x is number => x !== undefined))
-    for (const a of accounts) this.deps.emit('folders.changed', { accountId: a })
+    for (const a of accounts) {
+      this.deps.emit('folders.changed', { accountId: a })
+      this.syncs.get(a)?.refreshStatus()
+    }
   }
 
   /**
@@ -246,6 +288,9 @@ export class SyncManager {
       touched.add(g.accountId)
     }
     this.deps.emit('messages.changed', { folderIds: [...new Set(rows.map((r) => r.folder_id))] })
-    for (const id of touched) void this.syncs.get(id)?.pushOperations().catch(() => {})
+    for (const id of touched) {
+      this.syncs.get(id)?.refreshStatus()
+      void this.syncs.get(id)?.pushOperations().catch(() => {})
+    }
   }
 }

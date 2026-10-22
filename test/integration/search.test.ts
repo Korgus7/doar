@@ -12,6 +12,8 @@ import { SyncManager } from '../../src/core/sync/manager'
 import { createHandlers, type Handlers } from '../../src/core/handlers'
 import { FileGrants } from '../../src/core/files'
 import { ExportManager } from '../../src/core/export/manager'
+import { ImportManager } from '../../src/core/import/manager'
+import { ArchiveManager } from '../../src/core/archive/archive'
 
 const srv = inject('testserver')
 const USER = 'rado@doar.test'
@@ -71,6 +73,8 @@ beforeAll(async () => {
   h = createHandlers({
     files: new FileGrants(), db, blobs, store, sync, secrets,
     exports: new ExportManager({ db, store, blobs, emit, newClient: (id) => sync.newImapClient(id) }), sessionSecrets: new MemorySecrets(), emit,
+    imports: new ImportManager({ db, store, blobs, emit, files: new FileGrants(), newClient: (id) => sync.newImapClient(id) }),
+    archives: new ArchiveManager({ db, files: new FileGrants(), emit }),
     dataDir: dir, appVersion: 'test', sqlite: 'x',
     net: { fetchText: async () => null, resolveSrv: async () => [], resolveMx: async () => [], probe: async () => ({ ok: false }) }
   })
@@ -111,13 +115,18 @@ describe('vyhľadávanie v pošte', () => {
     expect((await h['messages.search']({ query: 'faktura', offset: 0, limit: 10 })).notDownloaded).toBe(1)
   })
 
-  it('presunutá do Koša: vo výsledkoch hneď nie je pôvodný priečinok, po presune je v Koši', async () => {
+  it('presunutá do Koša: vo výsledkoch je hneď v Koši (čaká na server), po presune tiež – raz', async () => {
     const id = (await h['messages.search']({ query: 'september', offset: 0, limit: 5 })).items[0]!.id
+    const trashId = store.listFolders(accountId).find((f) => f.specialUse === 'trash')!.id
     sync.moveMessages([id], { special: 'trash' })
-    expect(await subjects('september')).toEqual([]) // skrytá počas času na „Vrátiť späť“
-    await until(async () => (await subjects('september')).length === 1)
-    const hit = (await h['messages.search']({ query: 'september', offset: 0, limit: 5 })).items[0]!
-    expect(store.listFolders(accountId).find((f) => f.id === hit.folderId)?.specialUse).toBe('trash')
+    // Počas času na „Vrátiť späť“: jeden výsledok, už v Koši, so značkou „čaká na server“.
+    const now = (await h['messages.search']({ query: 'september', offset: 0, limit: 5 })).items
+    expect(now.map((m) => [m.id, m.folderId, m.localState])).toEqual([[id, trashId, 'pending']])
+    expect(await h['messages.search']({ query: 'september', folderId: trashId, offset: 0, limit: 5 })).toMatchObject({ total: 1 })
+    await until(async () => (await h['messages.search']({ query: 'september', offset: 0, limit: 5 })).items[0]?.localState === 'synced')
+    const hit = (await h['messages.search']({ query: 'september', offset: 0, limit: 5 })).items
+    expect(hit).toHaveLength(1)
+    expect(hit[0]!.folderId).toBe(trashId)
   })
 
   it('prázdny alebo nezmyselný dotaz → nič (bez chyby)', async () => {

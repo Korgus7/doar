@@ -45,6 +45,7 @@ export function classifyError(e: unknown): ProtocolTestResult {
     return r('CERT_UNTRUSTED')
   if (errs.some((x) => x.authenticationFailed) || has('EAUTH') || errs.some((x) => x.serverResponseCode === 'AUTHENTICATIONFAILED') || errs.some((x) => x.responseCode === 535) || /authentication failed|invalid credentials|AUTHENTICATIONFAILED/i.test(text))
     return r('AUTH_FAILED')
+  if (has('ENETUNREACH', 'ENETDOWN', 'EHOSTUNREACH', 'EHOSTDOWN')) return r('NO_NETWORK')
   if (has('ENOTFOUND', 'EAI_AGAIN', 'EDNS') || /getaddrinfo/i.test(text)) return r('HOST_NOT_FOUND')
   if (has('ECONNREFUSED')) return r('CONNECTION_REFUSED')
   if (has('ETIMEDOUT', 'ETIMEOUT', 'CONNECT_TIMEOUT', 'GREETING_TIMEOUT', 'ESOCKETTIMEDOUT') || /timed? ?out/i.test(text)) return r('TIMEOUT')

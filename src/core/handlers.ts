@@ -1,15 +1,16 @@
 import type { Db } from './store/db'
 import type { BlobStore } from './store/blobs'
 import type { MailStore } from './store/mailstore'
-import type { CoreEvents, CoreRequests, EventChannel, MessageView, RequestChannel } from '../shared/ipc'
+import type { CoreEvents, CoreRequests, EventChannel, RequestChannel } from '../shared/ipc'
 import type { Secrets } from './secrets'
 import type { DiscoveryNet } from './providers/net'
 import type { SyncManager } from './sync/manager'
 import type { ExportManager } from './export/manager'
+import type { ImportManager } from './import/manager'
+import type { ArchiveManager } from './archive/archive'
+import { buildView } from './view'
 import { discover } from './providers/discover'
 import { testConnection } from './mail/connection-test'
-import { renderMessage } from './mail/parse'
-import { fetchRemoteImages } from './mail/remote'
 import { addAccount, getAccount, listAccounts, updateAccount, validateSettings } from './accounts'
 import { removeAccount, updateServer } from './account-admin'
 import { getSettings, setSettings } from './settings'
@@ -18,7 +19,7 @@ import { prepareOpen, saveAllAttachments, saveAttachment } from './attachments'
 import { discardDraft, flushDraft, saveDraft } from './drafts'
 import { buildFtsQuery } from './search'
 import type { FileGrants } from './files'
-import { isComposeMode } from '../shared/ipc'
+import { isArchiveId, isComposeMode } from '../shared/ipc'
 
 export interface CoreContext {
   db: Db
@@ -26,6 +27,8 @@ export interface CoreContext {
   store: MailStore
   sync: SyncManager
   exports: ExportManager
+  imports: ImportManager
+  archives: ArchiveManager
   files: FileGrants
   dataDir: string
   appVersion: string
@@ -51,14 +54,20 @@ function err(code: string, message: string): Error {
   return Object.assign(new Error(message), { code })
 }
 
+/** ID správ kont (archív je len na čítanie – jeho záporné ID sa pri zmenách ignorujú). */
 function ids(v: unknown): number[] {
-  return Array.isArray(v) ? v.filter((x): x is number => Number.isInteger(x)).slice(0, 10_000) : []
+  return Array.isArray(v) ? v.filter((x): x is number => Number.isInteger(x) && x > 0).slice(0, 10_000) : []
 }
 
-function searchScope(data: { folderId?: unknown; accountId?: unknown } | undefined): { folderId: number | null; accountId: number | null } {
+function searchScope(data: { folderId?: unknown; accountId?: unknown; archiveId?: unknown } | undefined): {
+  folderId: number | null
+  accountId: number | null
+  archiveId: number | null
+} {
   return {
     folderId: Number.isInteger(data?.folderId) ? (data!.folderId as number) : null,
-    accountId: Number.isInteger(data?.accountId) ? (data!.accountId as number) : null
+    accountId: Number.isInteger(data?.accountId) ? (data!.accountId as number) : null,
+    archiveId: Number.isInteger(data?.archiveId) && (data!.archiveId as number) > 0 ? (data!.archiveId as number) : null
   }
 }
 
@@ -94,11 +103,14 @@ export function createHandlers(ctx: CoreContext): Handlers {
       const folderId = data?.folderId === null ? null : Number.isInteger(data?.folderId) ? data.folderId : null
       const offset = Math.max(0, Math.floor(Number(data?.offset) || 0))
       const limit = Math.min(500, Math.max(1, Math.floor(Number(data?.limit) || 100)))
+      if (isArchiveId(folderId)) return ctx.archives.listMessages(folderId!, offset, limit)
       return ctx.store.listMessages(folderId, offset, limit)
     },
 
     'messages.get': async (data) => {
       const id = Number(data?.id)
+      const opts = { showRemote: !!data?.showRemote, alwaysForSender: !!data?.alwaysForSender }
+      if (isArchiveId(id)) return ctx.archives.view(id, opts)
       let row = ctx.store.message(id)
       if (!row) throw err('NOT_FOUND', 'Správa neexistuje')
       if (!row.blob_sha256) {
@@ -106,36 +118,8 @@ export function createHandlers(ctx: CoreContext): Handlers {
         row = ctx.store.message(id)
         if (!row?.blob_sha256) throw err('BODY_UNAVAILABLE', 'Obsah správy ešte nie je stiahnutý a server nie je dostupný')
       }
-      const sender = row.from_addr.toLowerCase()
-      if (data?.alwaysForSender && sender) {
-        ctx.db.prepare('INSERT OR IGNORE INTO remote_content_allow(sender) VALUES (?)').run(sender)
-      }
-      const senderAllowed = !!sender && !!ctx.db.prepare('SELECT 1 FROM remote_content_allow WHERE sender = ?').get(sender)
       const raw = ctx.blobs.read(row.blob_sha256)
-      let r = await renderMessage(raw, null)
-      let remoteShown = false
-      if ((data?.showRemote || senderAllowed) && r.remoteUrls.length) {
-        const map = await (ctx.fetchRemote ?? fetchRemoteImages)(r.remoteUrls)
-        r = await renderMessage(raw, map)
-        remoteShown = true
-      }
-      const view: MessageView = {
-        id: row.id,
-        accountId: row.account_id,
-        subject: r.subject || row.subject,
-        from: r.from,
-        to: r.to,
-        cc: r.cc,
-        replyTo: r.replyTo,
-        date: r.date ?? row.internal_date,
-        html: r.html,
-        text: r.text,
-        attachments: r.attachments,
-        remoteBlocked: r.remoteBlocked,
-        remoteShown,
-        senderAllowed
-      }
-      return view
+      return buildView(ctx, raw, { id: row.id, accountId: row.account_id, subject: row.subject, date: row.internal_date, sender: row.from_addr }, opts)
     },
 
     'messages.setFlags': (data) => {
@@ -150,6 +134,8 @@ export function createHandlers(ctx: CoreContext): Handlers {
     },
 
     'sync.status': () => ctx.sync.statuses(),
+
+    'sync.reconnect': () => ctx.sync.reconnectAll(),
 
     'compose.prepare': (data) => {
       const mode = isComposeMode(data?.mode) ? data.mode : 'new'
@@ -179,6 +165,26 @@ export function createHandlers(ctx: CoreContext): Handlers {
 
     'export.state': () => ctx.exports.state(),
 
+    'import.peek': (data) => ctx.imports.peek(typeof data?.path === 'string' ? data.path : ''),
+    'import.start': (data) => ctx.imports.start(data),
+    'import.resume': async (data) => {
+      if (!Number.isInteger(data?.jobId)) throw err('INVALID', 'Neplatná požiadavka')
+      return ctx.imports.resume(data.jobId)
+    },
+    'import.cancel': (data) => {
+      if (Number.isInteger(data?.jobId)) ctx.imports.cancel(data.jobId)
+    },
+    'import.discard': async (data) => {
+      if (Number.isInteger(data?.jobId)) ctx.imports.discard(data.jobId)
+    },
+    'import.state': () => ctx.imports.state(),
+
+    'archives.list': () => ctx.archives.list(),
+    'archives.open': (data) => ctx.archives.open(typeof data?.path === 'string' ? data.path : ''),
+    'archives.close': async (data) => {
+      if (Number.isInteger(data?.archiveId)) await ctx.archives.close(data.archiveId)
+    },
+
     'messages.move': (data) => {
       const special = data?.special === 'trash' || data?.special === 'archive' || data?.special === 'junk' || data?.special === 'inbox' ? data.special : undefined
       const folderId = Number.isInteger(data?.folderId) ? data.folderId : undefined
@@ -199,12 +205,17 @@ export function createHandlers(ctx: CoreContext): Handlers {
       if (!fts) return { total: 0, items: [], notDownloaded: 0 }
       const offset = Math.max(0, Math.floor(Number(data?.offset) || 0))
       const limit = Math.min(500, Math.max(1, Math.floor(Number(data?.limit) || 100)))
-      return ctx.store.searchMessages(fts, searchScope(data), offset, limit)
+      const scope = searchScope(data)
+      if (isArchiveId(scope.folderId) || scope.archiveId !== null) return ctx.archives.search(fts, scope, offset, limit)
+      return ctx.store.searchMessages(fts, scope, offset, limit)
     },
 
     'messages.searchIds': (data) => {
       const fts = buildFtsQuery(str(data?.query, 500))
-      return fts ? ctx.store.searchIds(fts, searchScope(data)) : []
+      if (!fts) return []
+      const scope = searchScope(data)
+      if (isArchiveId(scope.folderId) || scope.archiveId !== null) return ctx.archives.searchIds(fts, scope)
+      return ctx.store.searchIds(fts, scope)
     },
 
     'accounts.get': async (data) => getAccount(ctx.db, Number(data?.id)),
@@ -237,7 +248,10 @@ export function createHandlers(ctx: CoreContext): Handlers {
 
     'messages.undo': (data) => ctx.sync.undo(ids(data?.undo)),
 
-    'messages.listIds': (data) => ctx.store.listIds(Number.isInteger(data?.folderId) ? (data!.folderId as number) : null),
+    'messages.listIds': (data) => {
+      const folderId = Number.isInteger(data?.folderId) ? (data!.folderId as number) : null
+      return isArchiveId(folderId) ? ctx.archives.listIds(folderId!) : ctx.store.listIds(folderId)
+    },
 
     'folders.create': async (data) => {
       const parentId = Number.isInteger(data?.parentId) ? (data!.parentId as number) : null

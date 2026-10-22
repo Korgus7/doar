@@ -6,7 +6,7 @@
  *  SMTP  – smtp-server (Node.js): 127.0.0.1:3587 (STARTTLS), :3465 (TLS); doručuje do Dovecotu cez LMTP
  *
  * Kontá (heslo pre všetky: doar-test-heslo):
- *  alice, bob, carol, dana, emil @doar.test; plna@doar.test (kvóta 20 kB)
+ *  alice, bob, carol, … @doar.test; plna@doar.test (kvóta 20 kB), mala@doar.test (kvóta 12 kB)
  *
  * Simulácia porúch pri odosielaní (adresát v obálke):
  *  zlyhanie@doar.test        → server odmietne adresáta (550)
@@ -50,7 +50,14 @@ const USERS = [
   { name: 'urban' },
   { name: 'vlado' },
   { name: 'zuzana' },
-  { name: 'plna', quota: '20K' }
+  { name: 'xaver' },
+  { name: 'yvona' },
+  { name: 'adam' },
+  { name: 'beata' },
+  { name: 'cyril' },
+  { name: 'dusan' },
+  { name: 'plna', quota: '20K' },
+  { name: 'mala', quota: '12K' }
 ]
 
 function findDovecot() {

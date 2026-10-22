@@ -5,7 +5,8 @@ import type { SyncManager } from './sync/manager'
 import { readFileSync, statSync } from 'node:fs'
 import { basename } from 'node:path'
 import type { Address, ComposeMode, ComposePrefill, ComposeSendInput, CoreEvents, EventChannel } from '../shared/ipc'
-import { MAX_ATTACHMENTS_BYTES } from '../shared/ipc'
+import { MAX_ATTACHMENTS_BYTES, isArchiveId } from '../shared/ipc'
+import type { ArchiveManager } from './archive/archive'
 import { composeMessage, forwardSubject, parseAddressList, replySource, replySubject } from './mail/compose'
 import { extractAttachments } from './mail/parse'
 import { htmlToText, outgoingHtml } from './mail/outgoing-html'
@@ -23,6 +24,8 @@ export interface Ctx {
   sync: SyncManager
   /** Súbory povolené používateľom (prílohy z disku). */
   files?: FileGrants
+  /** Lokálne archívy (odpoveď alebo preposlanie správy z archívu). */
+  archives?: ArchiveManager
   emit<E extends EventChannel>(ch: E, data: CoreEvents[E]): void
 }
 
@@ -38,6 +41,15 @@ export function account(db: Db, id: number): AccountInfo | null {
 }
 
 export async function originalRaw(ctx: Ctx, messageId: number): Promise<{ raw: Buffer; accountId: number; internalDate: string | null }> {
+  if (isArchiveId(messageId)) {
+    // Správa z archívu: odpovedá sa z konta, z ktorého záloha pochádza (ak je v Doare), inak z prvého konta.
+    if (!ctx.archives) throw err('NOT_FOUND', 'Správa neexistuje')
+    const meta = ctx.archives.meta(messageId)
+    const acc = (meta.source ? (ctx.db.prepare('SELECT id FROM accounts WHERE lower(email) = lower(?)').get(meta.source) as { id: number } | undefined) : undefined) ??
+      (ctx.db.prepare('SELECT id FROM accounts ORDER BY sort_order, id LIMIT 1').get() as { id: number } | undefined)
+    if (!acc) throw err('NO_ACCOUNT', 'Najprv pridajte konto')
+    return { raw: await ctx.archives.raw(messageId), accountId: acc.id, internalDate: meta.date }
+  }
   let row = ctx.store.message(messageId)
   if (!row) throw err('NOT_FOUND', 'Správa neexistuje')
   if (!row.blob_sha256) {
@@ -154,6 +166,7 @@ export async function sendCompose(ctx: Ctx, input: ComposeSendInput): Promise<{ 
     saveCopy: acc.save_sent_copy === 1
   })
   ctx.emit('outbox.changed', null)
+  ctx.sync.get(acc.id)?.refreshStatus()
   void ctx.sync.get(acc.id)?.processOutboxNow().catch(() => {})
   // Odoslaný koncept už nie je koncept – zmaže sa lokálne aj na serveri.
   if (Number.isInteger(input.draftId)) discardDraft(ctx, input.draftId as number)
@@ -210,7 +223,9 @@ export async function resolveAttachments(ctx: Ctx, list: unknown): Promise<{ fil
 export function resolveOutbox(ctx: Ctx, id: number, action: 'resend' | 'discard'): void {
   const row = ctx.store.outboxRow(id)
   if (!row) throw err('NOT_FOUND', 'Položka neexistuje')
-  if (row.state !== 'error' && row.state !== 'uncertain') throw err('INVALID_STATE', 'Správa sa práve odosiela alebo už bola odoslaná')
+  // Čakajúcu na pripojenie (nič neodišlo) možno tiež zrušiť.
+  const waiting = row.state === 'queued' && row.error === 'OFFLINE'
+  if (row.state !== 'error' && row.state !== 'uncertain' && !waiting) throw err('INVALID_STATE', 'Správa sa práve odosiela alebo už bola odoslaná')
   if (action === 'discard') ctx.store.deleteOutbox(id)
   else {
     ctx.store.setOutbox(id, { state: 'queued', error: null })

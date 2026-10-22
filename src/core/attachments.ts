@@ -6,7 +6,8 @@ import type { MailStore } from './store/mailstore'
 import type { SyncManager } from './sync/manager'
 import { extractAttachments, type AttachmentContent } from './mail/parse'
 import { FileGrants, openDir, safeFilename, uniqueName, writeFileAtomic } from './files'
-import { isDangerousFile } from '../shared/ipc'
+import { isArchiveId, isDangerousFile } from '../shared/ipc'
+import type { ArchiveManager } from './archive/archive'
 
 function err(code: string, message: string): Error {
   return Object.assign(new Error(message), { code })
@@ -18,10 +19,15 @@ export interface AttachmentCtx {
   sync: SyncManager
   files: FileGrants
   dataDir: string
+  archives?: ArchiveManager
 }
 
 /** Originál správy (stiahne ho, ak ešte nie je v počítači). */
-export async function messageRaw(ctx: Pick<AttachmentCtx, 'blobs' | 'store' | 'sync'>, messageId: number): Promise<Buffer> {
+export async function messageRaw(ctx: Pick<AttachmentCtx, 'blobs' | 'store' | 'sync' | 'archives'>, messageId: number): Promise<Buffer> {
+  if (isArchiveId(messageId)) {
+    if (!ctx.archives) throw err('NOT_FOUND', 'Správa neexistuje')
+    return ctx.archives.raw(messageId)
+  }
   let row = ctx.store.message(messageId)
   if (!row) throw err('NOT_FOUND', 'Správa neexistuje')
   if (!row.blob_sha256) {
@@ -32,7 +38,7 @@ export async function messageRaw(ctx: Pick<AttachmentCtx, 'blobs' | 'store' | 's
   return ctx.blobs.read(row.blob_sha256)
 }
 
-export async function attachmentOf(ctx: Pick<AttachmentCtx, 'blobs' | 'store' | 'sync'>, messageId: number, index: number): Promise<AttachmentContent> {
+export async function attachmentOf(ctx: Pick<AttachmentCtx, 'blobs' | 'store' | 'sync' | 'archives'>, messageId: number, index: number): Promise<AttachmentContent> {
   const list = await extractAttachments(await messageRaw(ctx, messageId))
   const a = Number.isInteger(index) ? list[index] : undefined
   if (!a) throw err('NOT_FOUND', 'Príloha neexistuje')

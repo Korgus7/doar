@@ -64,6 +64,15 @@ export function flagsFromSet(set: Set<string> | undefined): Flags {
 
 const SPECIAL_ORDER: Record<string, number> = { inbox: 0, drafts: 1, sent: 2, archive: 3, junk: 4, trash: 5 }
 
+/**
+ * Správy viditeľné v priečinku (null = spoločná doručená pošta): tie, ktoré v ňom sú a nie sú skryté,
+ * plus tie, ktoré sa do neho práve presúvajú (moving_to).
+ */
+function visibleIn(folderId: number | null): { where: string; args: number[] } {
+  if (folderId === null) return { where: `((f.special_use = 'inbox' AND m.hidden = 0) OR m.moving_to IN (SELECT id FROM folders WHERE special_use = 'inbox'))`, args: [] }
+  return { where: '((m.folder_id = ? AND m.hidden = 0) OR m.moving_to = ?)', args: [folderId, folderId] }
+}
+
 export class MailStore {
   constructor(private readonly db: Db) {}
 
@@ -114,8 +123,8 @@ export class MailStore {
       .prepare(
         `SELECT f.id, f.account_id AS accountId, f.path, f.name, f.parent_path AS parentPath, f.special_use AS specialUse, f.selectable,
                 f.total_count AS total, f.synced_bodies_count AS syncedBodies, f.delimiter,
-                (SELECT COUNT(*) FROM messages m WHERE m.folder_id = f.id AND m.seen = 0 AND m.hidden = 0) AS unread,
-                (SELECT COUNT(*) FROM messages m WHERE m.folder_id = f.id AND m.hidden = 0) AS localCount
+                (SELECT COUNT(*) FROM messages m WHERE ((m.folder_id = f.id AND m.hidden = 0) OR m.moving_to = f.id) AND m.seen = 0) AS unread,
+                (SELECT COUNT(*) FROM messages m WHERE (m.folder_id = f.id AND m.hidden = 0) OR m.moving_to = f.id) AS localCount
          FROM folders f ${accountId === undefined ? '' : 'WHERE f.account_id = ?'}`
       )
       .all(...(accountId === undefined ? [] : [accountId])) as unknown as (Omit<FolderItem, 'selectable' | 'depth'> & { selectable: number; delimiter: string | null })[]
@@ -269,6 +278,15 @@ export class MailStore {
       .all(accountId, limit) as unknown as { id: number; folderId: number; uid: number; size: number }[]
   }
 
+  /** Čakajúce zmeny na server (fronta operácií + neodoslané správy). */
+  countPendingChanges(accountId: number): number {
+    const ops = (this.db
+      .prepare(`SELECT COUNT(*) AS c FROM operations WHERE account_id = ? AND state IN ('pending','running','failed') AND attempts < 3`)
+      .get(accountId) as { c: number }).c
+    const out = (this.db.prepare(`SELECT COUNT(*) AS c FROM outbox WHERE account_id = ? AND state IN ('queued','sending')`).get(accountId) as { c: number }).c
+    return ops + out
+  }
+
   countNeedingBodies(accountId: number): number {
     return (this.db.prepare('SELECT COUNT(*) AS c FROM messages WHERE account_id = ? AND blob_sha256 IS NULL').get(accountId) as { c: number }).c
   }
@@ -305,8 +323,8 @@ export class MailStore {
 
   /** Zoznam správ priečinka alebo spoločnej doručenej pošty (folderId = null), od najnovších. */
   listMessages(folderId: number | null, offset: number, limit: number): { total: number; items: MessageListItem[] } {
-    const where = `${folderId === null ? `f.special_use = 'inbox'` : 'm.folder_id = ?'} AND m.hidden = 0`
-    return this.queryList(where, folderId === null ? [] : [folderId], offset, limit)
+    const v = visibleIn(folderId)
+    return this.queryList(v.where, v.args, offset, limit)
   }
 
   /**
@@ -336,10 +354,11 @@ export class MailStore {
   }
 
   private scopeWhere(scope: { folderId?: number | null; accountId?: number | null }): { where: string; args: (string | number)[] } {
-    const parts = ['m.hidden = 0']
+    // Viditeľné = nie skryté, alebo práve presúvané (zobrazuje sa v cieľovom priečinku).
+    const parts = ['(m.hidden = 0 OR m.moving_to IS NOT NULL)']
     const args: (string | number)[] = []
     if (scope.folderId != null) {
-      parts.push('m.folder_id = ?')
+      parts.push('COALESCE(m.moving_to, m.folder_id) = ?')
       args.push(scope.folderId)
     } else if (scope.accountId != null) {
       parts.push('m.account_id = ?')
@@ -357,9 +376,9 @@ export class MailStore {
     const total = (this.db.prepare(`SELECT COUNT(*) AS c FROM messages m JOIN folders f ON f.id = m.folder_id WHERE ${where}`).get(...args) as { c: number }).c
     const items = this.db
       .prepare(
-        `SELECT m.id, m.account_id AS accountId, m.folder_id AS folderId, m.subject, m.from_name AS fromName, m.from_addr AS fromAddr,
+        `SELECT m.id, m.account_id AS accountId, COALESCE(m.moving_to, m.folder_id) AS folderId, m.subject, m.from_name AS fromName, m.from_addr AS fromAddr,
                 m.to_json AS toJson, COALESCE(m.internal_date, m.date_header) AS date, m.seen, m.flagged, m.answered,
-                m.has_attachments AS hasAttachments, m.snippet, m.local_state AS localState, m.blob_sha256 IS NOT NULL AS downloaded,
+                m.has_attachments AS hasAttachments, m.snippet, CASE WHEN m.moving_to IS NOT NULL THEN 'pending' ELSE m.local_state END AS localState, m.blob_sha256 IS NOT NULL AS downloaded,
                 a.color AS accountColor, a.name AS accountName
          FROM messages m JOIN folders f ON f.id = m.folder_id JOIN accounts a ON a.id = m.account_id
          WHERE ${where} ORDER BY COALESCE(m.internal_date, m.date_header) DESC, m.id DESC LIMIT ? OFFSET ?`
@@ -671,9 +690,23 @@ export class MailStore {
     return !!this.db.prepare(`SELECT 1 FROM drafts, json_each(drafts.attachments_json) j WHERE json_extract(j.value, '$.sha') = ? LIMIT 1`).get(sha)
   }
 
+  /** Skryť / znovu ukázať správy. Znovu ukázaná správa je späť na svojom mieste (zruší sa aj zobrazenie v cieli presunu). */
   setHidden(ids: number[], hidden: boolean): void {
-    const st = this.db.prepare('UPDATE messages SET hidden = ? WHERE id = ?')
-    for (const id of ids) st.run(hidden ? 1 : 0, id)
+    const st = this.db.prepare(hidden ? 'UPDATE messages SET hidden = 1 WHERE id = ?' : 'UPDATE messages SET hidden = 0, moving_to = NULL WHERE id = ?')
+    for (const id of ids) st.run(id)
+  }
+
+  /** Správy čakajúce na presun sa v zozname ukážu hneď v cieľovom priečinku. */
+  setMoving(ids: number[], folderId: number): void {
+    const st = this.db.prepare('UPDATE messages SET moving_to = ? WHERE id = ?')
+    for (const id of ids) st.run(folderId, id)
+  }
+
+  /** Presuny, ktoré sa na serveri ešte nezačali (dajú sa zrušiť). */
+  pendingMoves(accountId: number): { id: number; payload: unknown; notBefore: string | null }[] {
+    return (this.db
+      .prepare(`SELECT id, payload_json, not_before FROM operations WHERE account_id = ? AND kind = 'move' AND state = 'pending' AND attempts = 0 ORDER BY id`)
+      .all(accountId) as { id: number; payload_json: string; not_before: string | null }[]).map((r) => ({ id: r.id, payload: JSON.parse(r.payload_json), notBefore: r.not_before }))
   }
 
   deleteMessages(ids: number[]): void {
@@ -693,7 +726,7 @@ export class MailStore {
    * (originál sa netreba sťahovať znova); inak sa lokálny záznam zmaže a cieľový priečinok ho načíta pri synchronizácii.
    */
   completeMove(messageIds: number[], oldUids: number[], targetFolderId: number, uidMap: Map<number, number> | undefined): void {
-    const move = this.db.prepare(`UPDATE messages SET folder_id = ?, uid = ?, hidden = 0, local_state = 'synced' WHERE id = ?`)
+    const move = this.db.prepare(`UPDATE messages SET folder_id = ?, uid = ?, hidden = 0, moving_to = NULL, local_state = 'synced' WHERE id = ?`)
     const del = this.db.prepare('DELETE FROM messages WHERE id = ?')
     for (const [i, id] of messageIds.entries()) {
       const newUid = uidMap?.get(oldUids[i]!)
@@ -712,10 +745,10 @@ export class MailStore {
 
   /** Viditeľné ID správ v priečinku (alebo spoločnej doručenej pošte) – pre „Vybrať všetko“. */
   listIds(folderId: number | null): number[] {
-    const where = `${folderId === null ? `f.special_use = 'inbox'` : 'm.folder_id = ?'} AND m.hidden = 0`
+    const v = visibleIn(folderId)
     return (this.db
-      .prepare(`SELECT m.id FROM messages m JOIN folders f ON f.id = m.folder_id WHERE ${where} ORDER BY COALESCE(m.internal_date, m.date_header) DESC, m.id DESC`)
-      .all(...(folderId === null ? [] : [folderId])) as { id: number }[]).map((r) => r.id)
+      .prepare(`SELECT m.id FROM messages m JOIN folders f ON f.id = m.folder_id WHERE ${v.where} ORDER BY COALESCE(m.internal_date, m.date_header) DESC, m.id DESC`)
+      .all(...v.args) as { id: number }[]).map((r) => r.id)
   }
 
   specialFolder(accountId: number, use: SpecialUse): FolderRow | null {
@@ -760,6 +793,8 @@ export interface MessageRow {
   flagged: number
   answered: number
   local_state: string
+  /** Cieľ presunu, ktorý ešte čaká na server (správa sa už zobrazuje tam). */
+  moving_to: number | null
   folder_path: string
   account_email: string
 }

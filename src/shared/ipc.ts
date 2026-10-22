@@ -87,6 +87,7 @@ export interface DiscoveryResult {
 
 /** Kódy chýb pri overovaní spojenia – rozhranie ich prekladá do zrozumiteľných viet. */
 export type ConnectionErrorCode =
+  | 'NO_NETWORK'
   | 'AUTH_FAILED'
   | 'HOST_NOT_FOUND'
   | 'CONNECTION_REFUSED'
@@ -200,8 +201,13 @@ export interface SyncStatus {
   code?: string
   /** Priebeh sťahovania originálov. */
   pendingBodies: number
+  /** Zmeny (príznaky, presuny, koncepty) a správy, ktoré čakajú na server – napr. bez pripojenia. */
+  pendingChanges: number
   lastSync: string | null
 }
+
+/** Chyby spojenia, pri ktorých ide o nedostupnosť siete/servera (nie o zlé nastavenie) – opakuje sa samo. */
+export const OFFLINE_CODES: readonly string[] = ['NO_NETWORK', 'HOST_NOT_FOUND', 'CONNECTION_REFUSED', 'TIMEOUT', 'PROTOCOL']
 
 export type OutboxState = 'draft' | 'queued' | 'sending' | 'sent' | 'error' | 'uncertain'
 
@@ -370,6 +376,131 @@ export function incompletePath(path: string): string {
   return path.replace(/(\.mbox)?$/i, (ext) => `-NEUPLNA${ext || '.mbox'}`)
 }
 
+// ---------- obnova zo zálohy (import mbox do konta) ----------
+
+/** restore = pôvodné priečinky podľa metadát Doar; single = všetko do jedného priečinka. */
+export type ImportMode = 'restore' | 'single'
+
+/** Cieľový priečinok (pri „single“ pre všetko, pri „restore“ pre správy bez metadát Doar). */
+export type ImportTarget = { folderId: number } | { newName: string }
+
+export interface ImportPeek {
+  path: string
+  name: string
+  sizeBytes: number
+  /** Záloha vytvorená Doarom (blok metadát X-Doar-). */
+  doar: boolean
+  /** Konto, z ktorého záloha pochádza (X-Doar-Source). */
+  source: string | null
+}
+
+export type ImportPhase = 'scan' | 'folders' | 'check' | 'upload'
+
+export interface ImportProgress {
+  jobId: number
+  accountId: number
+  phase: ImportPhase
+  fileName: string
+  bytesRead: number
+  fileSize: number
+  messagesTotal: number
+  foldersDone: number
+  foldersTotal: number
+  /** Koľko správ treba nahrať (po kontrole duplicít). */
+  toUpload: number
+  uploaded: number
+  duplicates: number
+  failed: number
+}
+
+export interface ImportFolderSummary {
+  /** Cesta na serveri (segmenty oddelené „ / “). */
+  path: string
+  specialUse: SpecialUse | null
+  total: number
+  uploaded: number
+  /** Už v priečinku boli (opakovaný import). */
+  duplicate: number
+  failed: number
+  /** Ešte nenahrané (prerušenie, plná schránka). */
+  pending: number
+}
+
+/** complete = všetko nahrané alebo už na serveri; partial = niektoré správy server odmietol; stopped/cancelled = dá sa pokračovať. */
+export type ImportResult = 'complete' | 'partial' | 'stopped' | 'cancelled' | 'failed'
+
+export interface ImportSummary {
+  jobId: number
+  accountId: number
+  email: string
+  fileName: string
+  mode: ImportMode
+  result: ImportResult
+  /** OVERQUOTA, NO_NETWORK, AUTH_FAILED, FILE_CHANGED, NOT_MBOX, … */
+  errorCode: string | null
+  startedAt: string
+  finishedAt: string
+  folders: ImportFolderSummary[]
+  totals: { total: number; uploaded: number; duplicate: number; failed: number; pending: number }
+  /** Správy, ktorých blok Doar nesedí s obsahom (súbor upravil iný program). */
+  changedOutside: number
+  /** Správy bez metadát Doar (cudzí mbox). */
+  foreign: number
+  /** Správy, ktorým server neuložil vlastné štítky (kľúčové slová). */
+  keywordsDropped: number
+  /** Prázdne alebo nečitateľné záznamy v súbore. */
+  skipped: number
+  /** Dôvody odmietnutia jednotlivých správ: kód → počet. */
+  failures: { code: string; count: number }[]
+  /** Dá sa pokračovať (zrušené, prerušené, plná schránka…). */
+  resumable: boolean
+}
+
+export interface ImportJobInfo {
+  jobId: number
+  accountId: number
+  email: string
+  fileName: string
+  startedAt: string
+  errorCode: string | null
+  totals: ImportSummary['totals'] | null
+}
+
+export interface ImportState {
+  running: ImportProgress | null
+  last: ImportSummary | null
+  /** Prerušené obnovy, v ktorých sa dá pokračovať. */
+  resumable: ImportJobInfo[]
+}
+
+// ---------- lokálny archív (súbor mbox len na čítanie) ----------
+
+export type ArchiveState = 'indexing' | 'ready' | 'missing' | 'failed'
+
+export interface ArchiveSummary {
+  id: number
+  name: string
+  path: string
+  state: ArchiveState
+  messageCount: number
+  sizeBytes: number
+  /** Záloha z Doaru (priečinky podľa metadát). */
+  doar: boolean
+  source: string | null
+  /** Pri state = failed: NOT_MBOX, … */
+  error: string | null
+  /** Priebeh načítania (state = indexing). */
+  progress: { bytesRead: number; fileSize: number; messages: number } | null
+}
+
+/**
+ * Správy a priečinky archívu majú v rozhraní záporné ID (−id v databáze archívu), aby sa nemiešali
+ * so správami kont. Rovnaké požiadavky (messages.list, messages.get, prílohy…) tak fungujú pre oboje.
+ */
+export function isArchiveId(id: number | null | undefined): boolean {
+  return typeof id === 'number' && id < 0
+}
+
 /** Požiadavky (invoke): kanál → [vstup, výstup]. */
 export interface CoreRequests {
   'app.info': [void, AppInfo]
@@ -423,12 +554,32 @@ export interface CoreRequests {
   'settings.set': [Partial<AppSettings>, AppSettings]
   /** Návrhy adries pri písaní (komu ste písali, od koho ste dostali poštu). */
   'addresses.suggest': [{ query: string; limit?: number }, Address[]]
+  /** Systém hlási pripojenie k sieti / prebudenie – skúsiť sa pripojiť hneď. */
+  'sync.reconnect': [void, void]
+  /** Náhľad súboru zvoleného cez chooseImportFile (záloha Doar alebo cudzí mbox). */
+  'import.peek': [{ path: string }, ImportPeek]
+  'import.start': [{ accountId: number; path: string; mode: ImportMode; target: ImportTarget }, { jobId: number }]
+  /** Pokračovanie prerušenej obnovy (súbor sa nesmel medzitým zmeniť). */
+  'import.resume': [{ jobId: number }, { jobId: number }]
+  'import.cancel': [{ jobId: number }, void]
+  /** Zabudnúť prerušenú obnovu (na serveri sa nič nemaže). */
+  'import.discard': [{ jobId: number }, void]
+  'import.state': [void, ImportState]
+  /** Otvorené archívy a ich priečinky (priečinky so zápornými ID). */
+  'archives.list': [void, { archives: ArchiveSummary[]; folders: FolderItem[] }]
+  /** Otvorí súbor zvolený cez chooseImportFile ako archív len na čítanie. */
+  'archives.open': [{ path: string }, { archiveId: number }]
+  /** Zatvorí archív (zmaže len jeho zoznam v Doare, súbor zostane). */
+  'archives.close': [{ archiveId: number }, void]
 }
 
 export interface SearchInput {
   query: string
+  /** Záporné ID = priečinok archívu. */
   folderId?: number | null
   accountId?: number | null
+  /** Hľadať v celom archíve (ID archívu, kladné). */
+  archiveId?: number | null
 }
 
 /** Udalosti core → rozhranie. */
@@ -440,6 +591,11 @@ export interface CoreEvents {
   'outbox.changed': null
   'export.progress': ExportProgress
   'export.finished': ExportSummary
+  'import.progress': ImportProgress
+  'import.finished': ImportSummary
+  'import.changed': null
+  'archives.changed': null
+  'archives.progress': { archiveId: number; bytesRead: number; fileSize: number; messages: number }
 }
 
 export type RequestChannel = keyof CoreRequests
@@ -485,7 +641,17 @@ export const REQUEST_CHANNELS = [
   'accounts.remove',
   'settings.get',
   'settings.set',
-  'addresses.suggest'
+  'addresses.suggest',
+  'sync.reconnect',
+  'import.peek',
+  'import.start',
+  'import.resume',
+  'import.cancel',
+  'import.discard',
+  'import.state',
+  'archives.list',
+  'archives.open',
+  'archives.close'
 ] as const satisfies readonly RequestChannel[]
 
 export function isRequestChannel(ch: unknown): ch is RequestChannel {
@@ -521,6 +687,8 @@ export interface DoarApi {
   onCloseRequest(fn: () => void): () => void
   /** Natívny dialóg „Uložiť ako“ pre zálohu. Vráti zvolenú cestu (povolenú pre export), alebo null. */
   chooseExportFile(defaultName: string): Promise<string | null>
+  /** Dialóg „Otvoriť“ pre súbor zálohy na obnovu. Vráti cestu (povolenú na čítanie), alebo null. */
+  chooseImportFile(): Promise<string | null>
   /** Ukáže súbor zálohy v Prieskumníkovi (len súbor zvolený cez chooseExportFile). */
   showInFolder(path: string): void
   /** Dialóg „Priložiť súbory“ – vybrané súbory smie jadro čítať. */
@@ -560,4 +728,6 @@ export type MainToCore =
   | { kind: 'export.allow'; path: string }
   /** Súbor/priečinok zvolený používateľom v natívnom dialógu (alebo pretiahnutý) – jadro s ním smie pracovať. */
   | { kind: 'files.allow'; path: string; mode: 'read' | 'write' | 'dir' }
+  /** Počítač sa prebudil / odomkol – skúsiť sa pripojiť hneď. */
+  | { kind: 'reconnect' }
   | { kind: 'secret.result'; id: number; ok: boolean; value?: string | null; error?: string }

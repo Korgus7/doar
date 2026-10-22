@@ -33,7 +33,13 @@
   <section class="outbox" aria-label={t('outbox.label')} aria-live="polite">
     {#each visible as i (i.id)}
       <div class="item {i.state}" role={i.state === 'uncertain' || i.state === 'error' ? 'alert' : undefined}>
-        {#if i.state === 'queued' || i.state === 'sending'}
+        {#if i.state === 'queued' && i.error === 'OFFLINE'}
+          <span class="icon" aria-hidden="true">⏸</span>
+          <span class="text">{t('outbox.waitingNetwork', { subject: subj(i) })}</span>
+          <span class="actions">
+            <button class="btn small" onclick={() => confirm(t('outbox.cancelConfirm', { subject: subj(i) })) && resolve(i.id, 'discard')}>{t('outbox.dontSend')}</button>
+          </span>
+        {:else if i.state === 'queued' || i.state === 'sending'}
           <span class="spin" aria-hidden="true">⟳</span>
           <span class="text">{t('outbox.sending', { subject: subj(i) })}</span>
         {:else if i.state === 'uncertain'}

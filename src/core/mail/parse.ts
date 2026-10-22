@@ -86,6 +86,31 @@ export async function indexInfo(raw: Buffer): Promise<IndexInfo> {
   }
 }
 
+/** Údaje pre lokálny archív (zoznam + vyhľadávanie) – jedno spracovanie správy. */
+export interface ArchiveInfo extends IndexInfo {
+  subject: string
+  from: Address[]
+  to: Address[]
+  cc: Address[]
+  date: string | null
+}
+
+export async function archiveInfo(raw: Buffer): Promise<ArchiveInfo> {
+  const p = await parse(raw)
+  const text = plainText(p).replace(/\s+/g, ' ').trim()
+  const d = p.date instanceof Date && !Number.isNaN(p.date.getTime()) ? p.date.toISOString() : null
+  return {
+    subject: p.subject ?? '',
+    from: addresses(p.from),
+    to: addresses(p.to),
+    cc: addresses(p.cc),
+    date: d,
+    snippet: text.slice(0, 200),
+    hasAttachments: realAttachments(p).length > 0,
+    bodyText: text
+  }
+}
+
 export interface Rendered {
   subject: string
   from: Address[]

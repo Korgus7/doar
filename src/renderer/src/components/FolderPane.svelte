@@ -3,6 +3,9 @@
   import { t } from '../i18n/index.svelte'
   import { mail, selectFolder } from '../lib/mail.svelte'
   import { backup } from '../lib/backup.svelte'
+  import { restore } from '../lib/restore.svelte'
+  import { openArchive, closeArchive, archivePercent } from '../lib/archive.svelte'
+  import type { MessageKey } from '../i18n/index.svelte'
   import { ui, moveTo, openMenu, folderLabel } from '../lib/actions.svelte'
   import { openSettings } from '../lib/settings.svelte'
 
@@ -107,6 +110,42 @@
     </section>
   {/each}
 
+  {#each mail.archives as a (a.id)}
+    <section class="account archive" aria-label={`${t('archive.label')}: ${a.name}`}>
+      <h2>
+        <span class="arch-icon" aria-hidden="true">🗃</span>
+        <span class="acc-name" title={a.path}>{a.name}</span>
+        <button class="new close" title={t('archive.close')} aria-label={`${t('archive.close')} – ${a.name}`} onclick={() => closeArchive(a)}>×</button>
+      </h2>
+      {#if a.state === 'indexing'}
+        <p class="arch-state">{t('archive.indexing', { pct: archivePercent(a), n: a.progress?.messages ?? 0 })}</p>
+      {:else if a.state === 'missing'}
+        <p class="arch-state warn">⚠ {t('archive.missing')}</p>
+      {:else if a.state === 'failed'}
+        <p class="arch-state warn">⚠ {t(`errors.${a.error ?? 'UNKNOWN'}` as MessageKey)}</p>
+      {/if}
+      <ul class="tree">
+        {#each mail.archiveFolders.filter((f) => f.accountId === -a.id) as f (f.id)}
+          <li>
+            <button
+              class="item"
+              class:active={mail.folderId === f.id}
+              class:unread={f.unread > 0}
+              aria-current={mail.folderId === f.id ? 'page' : undefined}
+              title={`${label(f)} – ${t('archive.count', { n: f.total })}`}
+              onclick={() => selectFolder(f.id)}
+            >
+              <span class="name">{label(f)}</span>
+              {#if f.unread && f.specialUse !== 'sent' && f.specialUse !== 'drafts' && f.specialUse !== 'trash'}
+                <span class="badge">{f.unread}</span>
+              {/if}
+            </button>
+          </li>
+        {/each}
+      </ul>
+    </section>
+  {/each}
+
   <button class="add" onclick={onAddAccount}>+ {t('menu.addAccount').replace('…', '')}</button>
   <button
     class="add"
@@ -115,6 +154,8 @@
       backup.open = true
     }}>⤓ {t('menu.backup').replace('…', '')}</button
   >
+  <button class="add" onclick={() => (restore.open = true)}>⤒ {t('menu.restore').replace('…', '')}</button>
+  <button class="add" onclick={() => void openArchive()}>🗃 {t('menu.openArchive').replace('…', '')}</button>
 </nav>
 
 <style>
@@ -235,6 +276,20 @@
     color: var(--text-muted);
     cursor: pointer;
     font-size: 0.85rem;
+  }
+  .arch-icon {
+    font-size: 0.85rem;
+  }
+  .new.close {
+    opacity: 1;
+  }
+  .arch-state {
+    margin: 0.1rem 0.75rem 0.3rem;
+    font-size: 0.78rem;
+    color: var(--text-muted);
+  }
+  .arch-state.warn {
+    color: var(--warning);
   }
   .add:hover {
     color: var(--accent);

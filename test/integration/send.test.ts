@@ -12,6 +12,8 @@ import { SyncManager } from '../../src/core/sync/manager'
 import { createHandlers, type Handlers } from '../../src/core/handlers'
 import { FileGrants } from '../../src/core/files'
 import { ExportManager } from '../../src/core/export/manager'
+import { ImportManager } from '../../src/core/import/manager'
+import { ArchiveManager } from '../../src/core/archive/archive'
 
 const srv = inject('testserver')
 const FROM = 'filip@doar.test'
@@ -67,6 +69,8 @@ function newManager(): SyncManager {
     files: new FileGrants(),
     db, blobs, store, sync: m, secrets,
     exports: new ExportManager({ db, store, blobs, emit, newClient: (id) => m.newImapClient(id) }), sessionSecrets: new MemorySecrets(), emit,
+    imports: new ImportManager({ db, store, blobs, emit, files: new FileGrants(), newClient: (id) => sync.newImapClient(id) }),
+    archives: new ArchiveManager({ db, files: new FileGrants(), emit }),
     dataDir: '', appVersion: 'test', sqlite: 'x',
     net: { fetchText: async () => null, resolveSrv: async () => [], resolveMx: async () => [], probe: async () => ({ ok: false }) }
   })

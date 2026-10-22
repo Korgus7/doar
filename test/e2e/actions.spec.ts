@@ -79,6 +79,13 @@ test('akcie: Kôš a Vrátiť späť, presun do nového priečinka, ťahanie, v�
   await row('Prvá').click()
   await win.keyboard.press('Delete')
   await expect(row('Prvá')).toHaveCount(0)
+  // V Koši je hneď (so značkou „čaká na server“), nečaká sa na uplynutie času na „Vrátiť späť“.
+  await folders.getByRole('button', { name: /^Kôš/ }).click()
+  await expect(row('Prvá')).toBeVisible({ timeout: 2000 })
+  await expect(row('Prvá').getByTitle('Zmena čaká na uloženie na server')).toBeVisible()
+  await folders.getByRole('button', { name: /^Doručená pošta/ }).click()
+  await expect(row('Prvá')).toHaveCount(0)
+  await row('Druhá').click()
   // Po presune je vybraná ďalšia správa.
   await expect(list.getByRole('option', { selected: true })).toHaveCount(1)
   await expect.poll(() => onServer('Trash'), { timeout: 30_000 }).toContain('Prvá')

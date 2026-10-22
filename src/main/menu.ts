@@ -30,6 +30,8 @@ export function buildMenu(locale: UiLocale, getWindow: () => BrowserWindow | nul
       submenu: [
         { label: t('menu.addAccount'), click: () => send('add-account') },
         { label: t('menu.backup'), click: () => send('backup') },
+        { label: t('menu.restore'), click: () => send('restore') },
+        { label: t('menu.openArchive'), click: () => send('open-archive') },
         { type: 'separator' },
         { label: t('menu.settings'), accelerator: 'CmdOrCtrl+,', click: () => send('settings') },
         { type: 'separator' },
@@ -55,6 +57,15 @@ export function buildMenu(locale: UiLocale, getWindow: () => BrowserWindow | nul
         { role: 'zoomOut', label: t('menu.zoomOut') },
         { role: 'resetZoom', label: t('menu.zoomReset') },
         { type: 'separator' },
+        {
+          // Dvojjazyčný názov – nájde ho aj ten, kto jazyku rozhrania nerozumie.
+          label: 'Jazyk / Language',
+          submenu: [
+            { label: 'Slovenčina', type: 'radio', checked: locale === 'sk', click: () => send('locale:sk') },
+            { label: 'English', type: 'radio', checked: locale === 'en', click: () => send('locale:en') }
+          ]
+        },
+        { type: 'separator' },
         { role: 'togglefullscreen', label: t('menu.fullscreen') },
         ...(isDev ? ([{ type: 'separator' }, { role: 'reload' }, { role: 'toggleDevTools' }] as MenuItemConstructorOptions[]) : [])
       ]
@@ -69,7 +80,7 @@ export function buildMenu(locale: UiLocale, getWindow: () => BrowserWindow | nul
             const opts = {
               type: 'info' as const,
               title: t('menu.about'),
-              message: `Doar ${app.getVersion()}`,
+              message: `${t('app.name')} ${app.getVersion()}`,
               detail: t('about.detail'),
               buttons: ['OK']
             }

@@ -1,7 +1,8 @@
 <script lang="ts">
   import { onMount } from 'svelte'
   import { t } from '../i18n/index.svelte'
-  import { mail } from '../lib/mail.svelte'
+  import { mail, findFolder } from '../lib/mail.svelte'
+  import { isArchiveId } from '../../../shared/ipc'
   import FolderPane from './FolderPane.svelte'
   import MessageList from './MessageList.svelte'
   import Reader from './Reader.svelte'
@@ -72,7 +73,7 @@
   let query = $state('')
   let searchEl: HTMLInputElement | undefined = $state()
   let searchTimer: ReturnType<typeof setTimeout> | null = null
-  const currentFolder = $derived(mail.folderId === null ? null : mail.folders.find((f) => f.id === mail.folderId))
+  const currentFolder = $derived(findFolder(mail.folderId) ?? null)
 
   // Prepnutie priečinka hľadanie zruší – vyprázdniť aj pole.
   $effect(() => {
@@ -166,7 +167,7 @@
           value={mail.search.scope}
           onchange={(e) => void runSearch(query, (e.currentTarget as HTMLSelectElement).value as 'all' | 'folder')}
         >
-          <option value="all">{t('search.scopeAll')}</option>
+          <option value="all">{isArchiveId(mail.folderId) ? t('search.scopeArchive') : t('search.scopeAll')}</option>
           <option value="folder" disabled={!currentFolder}>{t('search.scopeFolder', { folder: currentFolder ? folderLabel(currentFolder) : '' })}</option>
         </select>
       {/if}

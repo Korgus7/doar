@@ -7,6 +7,9 @@ import m003 from './migrations/003_sync'
 import m004 from './migrations/004_outbox'
 import m005 from './migrations/005_actions'
 import m006 from './migrations/006_drafts'
+import m007 from './migrations/007_import'
+import m008 from './migrations/008_archives'
+import m009 from './migrations/009_moving'
 
 /** Zoznam migrácií v poradí. Pridávaj len na koniec. */
 export const MIGRATIONS: readonly { version: number; name: string; sql: string }[] = [
@@ -15,7 +18,10 @@ export const MIGRATIONS: readonly { version: number; name: string; sql: string }
   { version: 3, name: 'sync', sql: m003 },
   { version: 4, name: 'outbox', sql: m004 },
   { version: 5, name: 'actions', sql: m005 },
-  { version: 6, name: 'drafts', sql: m006 }
+  { version: 6, name: 'drafts', sql: m006 },
+  { version: 7, name: 'import', sql: m007 },
+  { version: 8, name: 'archives', sql: m008 },
+  { version: 9, name: 'moving', sql: m009 }
 ]
 
 export type Db = DatabaseSync

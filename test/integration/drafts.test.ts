@@ -13,6 +13,8 @@ import { SyncManager } from '../../src/core/sync/manager'
 import { createHandlers, type Handlers } from '../../src/core/handlers'
 import { FileGrants } from '../../src/core/files'
 import { ExportManager } from '../../src/core/export/manager'
+import { ImportManager } from '../../src/core/import/manager'
+import { ArchiveManager } from '../../src/core/archive/archive'
 import type { DraftSaveInput } from '../../src/shared/ipc'
 
 const srv = inject('testserver')
@@ -90,6 +92,8 @@ beforeAll(async () => {
   h = createHandlers({
     files, db, blobs, store, sync, secrets,
     exports: new ExportManager({ db, store, blobs, emit, newClient: (id) => sync.newImapClient(id) }), sessionSecrets: new MemorySecrets(), emit,
+    imports: new ImportManager({ db, store, blobs, emit, files: new FileGrants(), newClient: (id) => sync.newImapClient(id) }),
+    archives: new ArchiveManager({ db, files: new FileGrants(), emit }),
     dataDir: dir, appVersion: 'test', sqlite: 'x',
     net: { fetchText: async () => null, resolveSrv: async () => [], resolveMx: async () => [], probe: async () => ({ ok: false }) }
   })

@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte'
   import type { AppInfo } from '../../shared/ipc'
-  import { t, i18n, type MessageKey } from './i18n/index.svelte'
+  import { t, i18n, setLocale, type Locale, type MessageKey } from './i18n/index.svelte'
   import { mail, loadAccounts, loadFolders, refreshList, selectFolder, affectsCurrent } from './lib/mail.svelte'
   import { timeOnly } from './lib/format'
   import Welcome from './components/Welcome.svelte'
@@ -10,6 +10,9 @@
   import StatusBar from './components/StatusBar.svelte'
   import BackupDialog from './components/BackupDialog.svelte'
   import { backup, initBackupEvents } from './lib/backup.svelte'
+  import ImportDialog from './components/ImportDialog.svelte'
+  import { restore, initRestoreEvents } from './lib/restore.svelte'
+  import { initArchiveEvents, openArchive, archivePercent } from './lib/archive.svelte'
   import SettingsDialog from './components/SettingsDialog.svelte'
   import { openSettings } from './lib/settings.svelte'
   import { setSelection } from './lib/mail.svelte'
@@ -64,6 +67,9 @@
       window.doar.onMenuAction((action) => {
         if (action === 'add-account') wizardOpen = true
         else if (action === 'backup' && mail.accounts.length) backup.open = true
+        else if (action === 'restore' && mail.accounts.length) restore.open = true
+        else if (action === 'open-archive') void openArchive()
+        else if (action === 'locale:sk' || action === 'locale:en') setLocale(action.slice(7) as Locale)
         else if (action === 'settings') openSettings({ tab: mail.accounts.length ? 'accounts' : 'general' })
         else if (action.startsWith('open-message:')) {
           // Kliknutie na oznámenie o novej pošte: doručená pošta a tá správa.
@@ -72,11 +78,17 @@
         }
       }),
       initBackupEvents(),
+      initRestoreEvents(),
+      initArchiveEvents(),
       window.doar.on('accounts.changed', () => void loadAccounts().then(() => scheduleRefresh([], true))),
       window.doar.on('folders.changed', () => scheduleRefresh()),
       window.doar.on('messages.changed', (d) => scheduleRefresh(d.folderIds)),
       window.doar.on('sync.status', (s) => (mail.statuses[s.accountId] = s))
     ]
+    // Pripojenie k sieti → hneď skúsiť synchronizovať a odoslať, čo čaká.
+    const online = (): void => void window.doar.invoke('sync.reconnect').catch(() => {})
+    window.addEventListener('online', online)
+    offs.push(() => window.removeEventListener('online', online))
     return () => offs.forEach((off) => off())
   })
 
@@ -84,7 +96,7 @@
   $effect(() => {
     const n = mail.folders.filter((f) => f.specialUse === 'inbox').reduce((s, f) => s + f.unread, 0)
     window.doar.setUnreadCount(n)
-    document.title = n ? `Doar (${n})` : 'Doar'
+    document.title = n ? `${t('app.name')} (${n})` : t('app.name')
   })
 
   function errorText(code: string | undefined): string {
@@ -103,12 +115,24 @@
       const total = bp.phase === 'write' ? bp.messagesTotal : bp.missing
       return { text: t('backup.status', { email, done, total }), tone: 'busy' }
     }
+    const rp = restore.progress
+    if (rp) {
+      const email = mail.accounts.find((a) => a.id === rp.accountId)?.email ?? ''
+      if (rp.phase !== 'upload') return { text: t('restore.statusPrepare', { email }), tone: 'busy' }
+      return { text: t('restore.status', { email, done: rp.uploaded, total: rp.toUpload }), tone: 'busy' }
+    }
+    const loading = mail.archives.find((a) => a.state === 'indexing')
+    if (loading) return { text: t('archive.status', { name: loading.name, pct: archivePercent(loading) }), tone: 'busy' }
     const list = Object.values(mail.statuses)
     const email = (id: number): string => mail.accounts.find((a) => a.id === id)?.email ?? ''
     const bad = list.find((s) => s.state === 'error')
     if (bad) return { text: t('status.failed', { account: email(bad.accountId), error: errorText(bad.code) }), tone: 'error' }
+    const waiting = list.reduce((n, s) => n + (s.pendingChanges ?? 0), 0)
     const off = list.find((s) => s.state === 'offline')
-    if (off) return { text: t('status.offline', { account: email(off.accountId) }), tone: 'warn' }
+    if (off) {
+      const base = t('status.offline', { account: email(off.accountId) })
+      return { text: waiting ? `${base} · ${t('status.waiting', { n: waiting })}` : base, tone: 'warn' }
+    }
     const busy = list.find((s) => s.state === 'syncing')
     if (busy) return { text: t('status.syncing', { account: email(busy.accountId) }), tone: 'busy' }
     const pending = list.reduce((n, s) => n + s.pendingBodies, 0)
@@ -137,9 +161,10 @@
       <Welcome onAddAccount={() => (wizardOpen = true)} />
     {/if}
   </main>
-  <StatusBar text={status.text} tone={status.tone} onclick={backup.progress ? () => (backup.open = true) : undefined} />
+  <StatusBar text={status.text} tone={status.tone} onclick={backup.progress ? () => (backup.open = true) : restore.progress ? () => (restore.open = true) : undefined} />
 </div>
 <BackupDialog />
+<ImportDialog />
 <SettingsDialog />
 
 <style>

@@ -12,6 +12,8 @@ import { realNet } from './providers/net'
 import { MailStore } from './store/mailstore'
 import { SyncManager } from './sync/manager'
 import { ExportManager } from './export/manager'
+import { ImportManager } from './import/manager'
+import { ArchiveManager } from './archive/archive'
 import { FileGrants, cleanOpenDir } from './files'
 import { collectBlobs } from './account-admin'
 import { getSettings } from './settings'
@@ -35,6 +37,9 @@ if (!parentPort) throw new Error('Core musí bežať ako Electron utilityProcess
 const log = logger('core')
 let handlers: Handlers | null = null
 let exports: ExportManager | null = null
+let imports: ImportManager | null = null
+let archives: ArchiveManager | null = null
+let syncManager: SyncManager | null = null
 const files = new FileGrants()
 const ports = new Set<MessagePortLike>()
 const secrets = new MainSecrets((msg: CoreToMain) => parentPort.postMessage(msg))
@@ -106,9 +111,22 @@ function init(dataDir: string, appVersion: string): void {
     }
   })
   exports = new ExportManager({ db, store, blobs, emit, newClient: (id) => sync.newImapClient(id) })
+  imports = new ImportManager({
+    db,
+    store,
+    blobs,
+    emit,
+    files,
+    newClient: (id) => sync.newImapClient(id),
+    afterImport: (id) => void sync.get(id)?.requestSync().catch(() => {})
+  })
   cleanOpenDir(dataDir)
+  archives = new ArchiveManager({ db, files, emit })
+  void archives.init().catch((e) => log.warn('kontrola archívov zlyhala', { error: e }))
   handlers = createHandlers({
     exports,
+    imports,
+    archives,
     files,
     db,
     blobs,
@@ -124,6 +142,7 @@ function init(dataDir: string, appVersion: string): void {
   })
   log.info('jadro pripravené', { node: process.versions.node, sqlite: sqliteVersion(db) })
   parentPort!.postMessage({ kind: 'ready' } satisfies CoreToMain)
+  syncManager = sync
   sync.startAll()
   // Upratanie úložiska originálov chvíľu po štarte (nič neblokuje).
   setTimeout(() => collectBlobs({ store, blobs }), 60_000).unref?.()
@@ -143,6 +162,8 @@ parentPort.on('message', (e) => {
     if (p) attachPort(p)
   } else if (msg.kind === 'export.allow') {
     exports?.allow(msg.path)
+  } else if (msg.kind === 'reconnect') {
+    syncManager?.reconnectAll()
   } else if (msg.kind === 'files.allow') {
     if (msg.mode === 'read' || msg.mode === 'write' || msg.mode === 'dir') files.allow(msg.path, msg.mode)
   } else if (msg.kind === 'secret.result') {
