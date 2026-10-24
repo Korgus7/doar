@@ -1,0 +1,226 @@
+<!doctype html>
+<html lang="sk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Doar Mail – jednoduchý e-mailový program pre Windows</title>
+<meta name="description" content="Doar Mail je bezplatný e-mailový program pre Windows v duchu Outlook Expressu: viac kont, záloha pošty, práca bez internetu a voliteľná AI. Bez reklám a bez sledovania.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 256 256'%3E%3Crect x='8' y='8' width='240' height='240' rx='56' fill='%232f6ff0'/%3E%3Crect x='36' y='68' width='184' height='128' rx='18' fill='%23fff'/%3E%3Cpath d='M46 82 L128 144 L210 82' fill='none' stroke='%232457dd' stroke-width='13' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+<style>
+  :root {
+    --bg: #f6f8fc;
+    --surface: #ffffff;
+    --text: #1b1f24;
+    --muted: #5b6573;
+    --border: #e1e6ef;
+    --accent: #2457dd;
+    --accent-2: #4f8fff;
+    --accent-soft: #e8efff;
+    --shadow: 0 18px 50px rgb(16 42 110 / 14%);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #12151b;
+      --surface: #1a1f27;
+      --text: #e8ecf2;
+      --muted: #9aa5b4;
+      --border: #2a313c;
+      --accent: #6b9bff;
+      --accent-2: #8fb3ff;
+      --accent-soft: #1d2a45;
+      --shadow: 0 18px 50px rgb(0 0 0 / 45%);
+    }
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 17px/1.6 "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, Roboto, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--accent); }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 0 20px; }
+
+  header.top { padding: 18px 0; }
+  header.top .wrap { display: flex; align-items: center; gap: 12px; }
+  .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 1.15rem; color: var(--text); text-decoration: none; }
+  .brand svg { width: 34px; height: 34px; }
+  nav { margin-left: auto; display: flex; gap: 20px; font-size: .95rem; }
+  nav a { color: var(--muted); text-decoration: none; }
+  nav a:hover { color: var(--text); }
+
+  .hero { padding: 40px 0 30px; text-align: center; }
+  .hero h1 {
+    margin: 0 auto 14px;
+    max-width: 760px;
+    font-size: clamp(2rem, 5vw, 3.1rem);
+    line-height: 1.12;
+    letter-spacing: -.02em;
+  }
+  .hero p.lead { margin: 0 auto 28px; max-width: 620px; color: var(--muted); font-size: 1.15rem; }
+  .cta { display: inline-flex; flex-direction: column; align-items: center; gap: 8px; }
+  .btn {
+    display: inline-flex; align-items: center; gap: 10px;
+    padding: 14px 28px;
+    border-radius: 12px;
+    background: linear-gradient(180deg, #4f8fff, #2457dd);
+    color: #fff; font-weight: 650; font-size: 1.08rem; text-decoration: none;
+    box-shadow: 0 8px 24px rgb(36 87 221 / 35%);
+    transition: transform .15s ease, box-shadow .15s ease;
+  }
+  .btn:hover { transform: translateY(-1px); box-shadow: 0 12px 28px rgb(36 87 221 / 42%); }
+  .btn svg { width: 20px; height: 20px; }
+  .cta small { color: var(--muted); font-size: .88rem; }
+
+  .shot { margin: 46px auto 0; max-width: 1000px; }
+  .window {
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    overflow: hidden;
+    background: var(--surface);
+    box-shadow: var(--shadow);
+  }
+  .window .bar { display: flex; align-items: center; gap: 8px; padding: 9px 14px; border-bottom: 1px solid var(--border); font-size: .82rem; color: var(--muted); }
+  .window .bar svg { width: 16px; height: 16px; }
+  .window img { display: block; width: 100%; height: auto; }
+
+  section { padding: 64px 0 10px; }
+  h2 { font-size: 1.75rem; letter-spacing: -.01em; margin: 0 0 8px; text-align: center; }
+  h2.spaced { margin-bottom: 26px; }
+  .sub { text-align: center; color: var(--muted); margin: 0 auto 34px; max-width: 620px; }
+
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(290px, 1fr)); gap: 16px; }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 20px 22px; }
+  .card .ico { width: 40px; height: 40px; border-radius: 10px; display: grid; place-items: center; background: var(--accent-soft); font-size: 1.25rem; margin-bottom: 10px; }
+  .card h3 { margin: 0 0 6px; font-size: 1.06rem; }
+  .card p { margin: 0; color: var(--muted); font-size: .96rem; }
+
+  ol.steps { list-style: none; counter-reset: s; padding: 0; margin: 0 auto; max-width: 760px; display: grid; gap: 12px; }
+  ol.steps li { counter-increment: s; display: flex; gap: 16px; align-items: flex-start; background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 16px 20px; }
+  ol.steps li::before { content: counter(s); flex: none; width: 32px; height: 32px; border-radius: 50%; display: grid; place-items: center; background: var(--accent); color: #fff; font-weight: 700; }
+  ol.steps strong { display: block; }
+  ol.steps span { color: var(--muted); font-size: .95rem; }
+
+  .faq { max-width: 760px; margin: 0 auto; }
+  details { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px 18px; margin-bottom: 10px; }
+  summary { cursor: pointer; font-weight: 600; }
+  details p { margin: 10px 0 0; color: var(--muted); }
+
+  footer { margin-top: 70px; padding: 28px 0 40px; border-top: 1px solid var(--border); color: var(--muted); font-size: .9rem; }
+  footer .wrap { display: flex; flex-wrap: wrap; gap: 10px 24px; justify-content: space-between; }
+
+  @media (max-width: 640px) {
+    nav { display: none; }
+    .hero { padding-top: 20px; }
+    section { padding-top: 48px; }
+  }
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="wrap">
+    <a class="brand" href="#">
+      <svg viewBox="0 0 256 256" aria-hidden="true"><defs><linearGradient id="g1" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#4f8fff"/><stop offset="1" stop-color="#1c4fd6"/></linearGradient></defs><rect x="8" y="8" width="240" height="240" rx="56" fill="url(#g1)"/><rect x="36" y="68" width="184" height="128" rx="18" fill="#fff"/><path d="M52 188 L108 136 M204 188 L148 136" fill="none" stroke="#bccbf0" stroke-width="8" stroke-linecap="round"/><path d="M46 82 L128 144 L210 82" fill="none" stroke="#2457dd" stroke-width="13" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      Doar Mail
+    </a>
+    <nav>
+      <a href="#funkcie">Funkcie</a>
+      <a href="#instalacia">Inštalácia</a>
+      <a href="#otazky">Otázky</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <div class="hero wrap">
+    <h1>Jednoduchý e-mailový program pre Windows</h1>
+    <p class="lead">V duchu starého Outlook Expressu: rýchly, prehľadný a zadarmo. Bez reklám, bez sledovania – vaša pošta zostáva u vás.</p>
+    <div class="cta">
+      <a class="btn" id="download" href="https://github.com/Korgus7/doar/releases/latest">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11"/><path d="m7 10 5 5 5-5"/><path d="M5 20h14"/></svg>
+        Stiahnuť pre Windows
+      </a>
+      <small id="dl-meta">Windows 10 a 11 (64-bit) · zadarmo · otvorený kód (MIT)</small>
+    </div>
+
+    <div class="shot">
+      <div class="window">
+        <div class="bar">
+          <svg viewBox="0 0 256 256" aria-hidden="true"><rect x="8" y="8" width="240" height="240" rx="56" fill="#2f6ff0"/><rect x="36" y="68" width="184" height="128" rx="18" fill="#fff"/><path d="M46 82 L128 144 L210 82" fill="none" stroke="#2457dd" stroke-width="13" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          Doar Mail
+        </div>
+        <img src="screenshot.webp" width="1280" height="760" alt="Okno programu Doar Mail: priečinky, zoznam správ a otvorená správa so zhrnutím od AI">
+      </div>
+    </div>
+  </div>
+
+  <section id="funkcie">
+    <div class="wrap">
+      <h2>Všetko podstatné, nič navyše</h2>
+      <p class="sub">Pre schránky s prístupom cez IMAP a SMTP – napríklad Azet, Zoznam, Gmail, Outlook.com alebo firemnú poštu.</p>
+      <div class="grid">
+        <div class="card"><div class="ico">📬</div><h3>Viac kont naraz</h3><p>Všetky schránky na jednom mieste a spoločná doručená pošta. Kontá rozlíšite farbou.</p></div>
+        <div class="card"><div class="ico">💾</div><h3>Záloha a obnova</h3><p>Celé konto zálohujete do jedného súboru a kedykoľvek ho obnovíte – aj do inej schránky, bez duplicít.</p></div>
+        <div class="card"><div class="ico">✈️</div><h3>Aj bez internetu</h3><p>Stiahnutú poštu čítate a hľadáte aj offline. Napísané správy sa odošlú, keď sa pripojíte.</p></div>
+        <div class="card"><div class="ico">🛡️</div><h3>Bezpečné čítanie</h3><p>Sledovacie obrázky a skripty v e-mailoch sú zablokované. Odosielatelia nezistia, kedy ste správu otvorili (pokiaľ obrázky sami nepovolíte).</p></div>
+        <div class="card"><div class="ico">✨</div><h3>Voliteľná AI</h3><p>Zhrnutie e-mailu, návrh odpovede, oprava a preklad textu. Len ak ju zapnete a len po kliknutí – s vlastným kľúčom alebo modelom priamo na vašom počítači.</p></div>
+        <div class="card"><div class="ico">🔄</div><h3>Sám sa aktualizuje</h3><p>Novú verziu ponúkne sám a nainštaluje ju až s vaším súhlasom. Po slovensky aj po anglicky.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="instalacia">
+    <div class="wrap">
+      <h2>Inštalácia za minútu</h2>
+      <p class="sub">Žiadny inštalátor, žiadne zbytočnosti.</p>
+      <ol class="steps">
+        <li><div><strong>Stiahnite súbor .zip</strong><span>Tlačidlo hore stiahne najnovšiu verziu.</span></div></li>
+        <li><div><strong>Rozbaľte ho do svojho priečinka</strong><span>Napríklad do Dokumentov (pravé tlačidlo → Extrahovať všetko). Nie do „Program Files“ – odtiaľ by sa program nevedel sám aktualizovať.</span></div></li>
+        <li><div><strong>Spustite Doar Mail.exe</strong><span>Odkazy v ponuke Štart a na ploche si vytvorí sám. Potom stačí zadať e-mail a heslo – nastavenia servera väčšinou nájde sám.</span></div></li>
+      </ol>
+    </div>
+  </section>
+
+  <section id="otazky">
+    <div class="wrap">
+      <h2 class="spaced">Časté otázky</h2>
+      <div class="faq">
+        <details><summary>Je Doar Mail naozaj zadarmo?</summary><p>Áno. Je to otvorený softvér s licenciou MIT – bez reklám, predplatného a bez zbierania údajov o používaní.</p></details>
+        <details><summary>Kde je moja pošta a heslá?</summary><p>Na vašom počítači a na vašom poštovom serveri. Heslá sú uložené v zabezpečenom úložisku Windows. Doar Mail sa spája len s vašimi poštovými servermi a s GitHubom (kontrola novej verzie, dá sa vypnúť).</p></details>
+        <details><summary>Musím používať AI?</summary><p>Nie. AI je predvolene vypnutá a bez nej program funguje úplne rovnako. Ak ju zapnete, obsah sa odošle zvolenému poskytovateľovi (Anthropic, OpenRouter alebo lokálny model) len po kliknutí a vždy vidíte, čo a kam. Prílohy sa neodosielajú nikdy.</p></details>
+        <details><summary>Windows zobrazil upozornenie – je to v poriadku?</summary><p>Doar Mail zatiaľ nie je digitálne podpísaný, preto môže Windows pri prvom spustení zobraziť „Windows ochránil váš počítač“. Kliknite na <em>Ďalšie informácie</em> → <em>Spustiť aj tak</em>.</p></details>
+        <details><summary>Dá sa preniesť pošta zo starého programu?</summary><p>Ak je pošta na serveri (IMAP), stačí pridať konto. Zálohy vo formáte mbox (napr. z Thunderbirdu) viete obnoviť do schránky alebo otvoriť ako archív len na čítanie.</p></details>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <span>© Doar Mail · licencia MIT · bez telemetrie</span>
+    <span><a href="https://github.com/Korgus7/doar">Zdrojový kód na GitHube</a> · <a href="https://github.com/Korgus7/doar/releases">Všetky verzie</a></span>
+  </div>
+</footer>
+
+<script>
+  // Odkaz na najnovšie vydanie z GitHubu (ak sa nepodarí, tlačidlo vedie na stránku vydaní).
+  (function () {
+    fetch('https://api.github.com/repos/Korgus7/doar/releases/latest', { headers: { Accept: 'application/vnd.github+json' } })
+      .then(function (r) { return r.ok ? r.json() : null })
+      .then(function (rel) {
+        if (!rel || !rel.assets) return
+        var zip = rel.assets.filter(function (a) { return /-win-x64\.zip$/.test(a.name) })[0]
+        if (!zip) return
+        document.getElementById('download').href = zip.browser_download_url
+        var mb = Math.round(zip.size / 1048576)
+        var ver = String(rel.tag_name || '').replace(/^v/, '')
+        document.getElementById('dl-meta').textContent = 'Verzia ' + ver + ' · ' + mb + ' MB · Windows 10 a 11 (64-bit) · zadarmo'
+      })
+      .catch(function () {})
+  })()
+</script>
+</body>
+</html>

@@ -25,7 +25,7 @@ npm run dev
 
 Balík pre Windows: `npm run dist` → `dist\Doar-Mail-<verzia>-win-x64.zip` (rozbaliť a spustiť `Doar Mail.exe`; odkazy v ponuke Štart a na ploche si vytvorí sám).
 
-Vydanie novej verzie: zvýšiť `version` v `package.json` → `npm run dist` → na GitHube *Releases → Draft a new release* (značka `v<verzia>`) a priložiť `dist\Doar-Mail-<verzia>-win-x64.zip` aj `dist\doar-mail-update.json`. Nainštalované Doar Mail novú verziu ponúknu samy.
+Vydanie novej verzie: zvýšiť `version` v `package.json` → `npm run dist` → na GitHube *Releases → Draft a new release* (značka `v<verzia>`) a priložiť `dist\Doar-Mail-<verzia>-win-x64.zip` aj `dist\doar-mail-update.json`. Nainštalované Doar Mail novú verziu ponúknu samy (repozitár musí byť verejný). Stránka na stiahnutie: `site/` (stačí nahrať na web, najnovšie vydanie si nájde sama).
 
 Testy: `npm test` (unit), `npm run test:e2e` (rozhranie). Integračné testy proti testovaciemu IMAP/SMTP serveru vyžadujú Linux alebo WSL s balíkmi `dovecot-imapd dovecot-lmtpd`: `npm run test:integration`.
 

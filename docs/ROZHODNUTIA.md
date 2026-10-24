@@ -211,7 +211,7 @@ Záznam dohodnutých rozhodnutí. Nové rozhodnutia pridávaj na koniec s dátum
 - **Sieť:** okná majú internet zablokovaný (sledovacie obrázky), preto aktualizácie idú cez vlastnú reláciu `session.fromPartition('doar-update')` – inak `net::ERR_BLOCKED_BY_CLIENT` (zistené na Windows, test `update.spec` s náhradným GitHub API).
 - **asar:** Electron v main procese považuje `*.asar` za archív aj pri zápise/mazaní („Invalid package …\app.asar“). Rozbaľovanie a upratovanie preto bežia s `process.noAsar = true`.
 - Výsledky kontroly a chyby aktualizácií sa zapisujú do `%APPDATA%\Doar\logs\doar.log` (`[update]`).
-- **Overené na Windows (2026-10-22):** 0.3.0 → 0.3.1-test z testovacieho zdroja: stiahnutie, rozbalenie vedľa, reštart, odkazy v ponuke Štart aj na ploche presmerované na novú verziu. Neoverené: skutočné vydanie na GitHube, upratanie po druhej aktualizácii.
+- **Overené na Windows (2026-10-22):** 0.3.0 → 0.3.1-test z testovacieho zdroja: stiahnutie, rozbalenie vedľa, reštart, odkazy v ponuke Štart aj na ploche presmerované na novú verziu. **Naostro (2026-10-24):** vydanie v0.4.0 na GitHube – 0.3.1-test ho našla, stiahla, nainštalovala vedľa a reštartovala sa do 0.4.0; upratanie zmazalo najstaršiu verziu (zostali 0.4.0 a 0.3.1-test). Podmienka: repozitár musí byť **verejný** (Doar Mail sa GitHubu pýta bez prihlásenia; zo súkromného dostane 404 a hlási „máte najnovšiu verziu“).
 - **Testovací zdroj:** premenná prostredia `DOAR_UPDATE_FEED` = priečinok s `doar-mail-update.json` a zipom (napr. `D:\_Doar\dist`); `DOAR_UPDATE_API` = náhradná adresa GitHub API (len testy).
 - Kód: `src/main/update-core.ts` (bez Electronu, unit testy), `src/main/updater.ts`, `scripts/release-manifest.mjs`, rozhranie `UpdateBanner.svelte`.
 
