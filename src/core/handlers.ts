@@ -19,6 +19,8 @@ import { prepareOpen, saveAllAttachments, saveAttachment } from './attachments'
 import { discardDraft, flushDraft, saveDraft } from './drafts'
 import { buildFtsQuery } from './search'
 import type { FileGrants } from './files'
+import { AiService } from './ai/service'
+import type { FetchFn } from './ai/providers'
 import { isArchiveId, isComposeMode } from '../shared/ipc'
 
 export interface CoreContext {
@@ -40,6 +42,8 @@ export interface CoreContext {
   emit<E extends EventChannel>(ch: E, data: CoreEvents[E]): void
   /** Stiahnutie vzdialených obrázkov (v testoch sa dá nahradiť). */
   fetchRemote?: (urls: string[]) => Promise<Map<string, string>>
+  /** Sieť pre AI (v testoch falošný server). */
+  aiFetch?: FetchFn
 }
 
 export type Handlers = {
@@ -72,7 +76,15 @@ function searchScope(data: { folderId?: unknown; accountId?: unknown; archiveId?
 }
 
 export function createHandlers(ctx: CoreContext): Handlers {
-  return {
+  const ai = new AiService({
+    db: ctx.db,
+    secrets: ctx.secrets,
+    sessionSecrets: ctx.sessionSecrets,
+    emit: (ch, data) => ctx.emit(ch, data),
+    fetch: ctx.aiFetch,
+    getMessage: (id) => Promise.resolve(handlers['messages.get']({ id }))
+  })
+  const handlers: Handlers = {
     'app.info': async () => ({
       version: ctx.appVersion,
       coreNode: process.versions.node,
@@ -256,6 +268,13 @@ export function createHandlers(ctx: CoreContext): Handlers {
     'folders.create': async (data) => {
       const parentId = Number.isInteger(data?.parentId) ? (data!.parentId as number) : null
       return { folderId: await ctx.sync.createFolder(Number(data?.accountId), parentId, str(data?.name, 300)) }
-    }
+    },
+
+    'ai.config.get': () => ai.getConfig(),
+    'ai.config.set': (data) => ai.setConfig(data ?? {}),
+    'ai.models': (data) => ai.models(data),
+    'ai.run': (data) => ai.run(data),
+    'ai.cancel': (data) => ai.cancel(data?.requestId)
   }
+  return handlers
 }

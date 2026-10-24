@@ -502,6 +502,61 @@ export function isArchiveId(id: number | null | undefined): boolean {
 }
 
 /** Požiadavky (invoke): kanál → [vstup, výstup]. */
+/** AI (voliteľné): poskytovateľ, model, kľúč v bezpečnom úložisku. */
+export type AiProvider = 'anthropic' | 'openrouter' | 'local'
+export type AiTask = 'summary' | 'reply' | 'rewrite'
+export type AiRewriteStyle = 'fix' | 'formal' | 'friendly' | 'shorter' | 'translate' | 'custom'
+
+export interface AiConfig {
+  enabled: boolean
+  provider: AiProvider
+  /** Model zvoleného poskytovateľa (pre každého poskytovateľa sa pamätá zvlášť). */
+  model: string
+  /** Adresa lokálneho servera (OpenAI-kompatibilné API). */
+  baseUrl: string
+  /** Pred zhrnutím sa opýtať (čo a kam sa odošle). */
+  confirm: boolean
+  /** Je uložený kľúč pre zvoleného poskytovateľa? */
+  hasKey: boolean
+  /** Kde je kľúč: bezpečné úložisko systému, alebo len do zatvorenia aplikácie. */
+  keyStorage: 'secure' | 'session' | null
+}
+
+export interface AiConfigPatch {
+  enabled?: boolean
+  provider?: AiProvider
+  model?: string
+  baseUrl?: string
+  confirm?: boolean
+  /** Nový kľúč pre zvoleného poskytovateľa; null = zmazať. */
+  key?: string | null
+}
+
+export interface AiRunInput {
+  /** Identifikátor od rozhrania – priebežný text prichádza v udalosti ai.chunk. */
+  requestId: string
+  task: AiTask
+  /** Zhrnutie a návrh odpovede: správa (aj z archívu). Prílohy sa neodosielajú. */
+  messageId?: number
+  /** Úprava: text na úpravu; odpoveď: už napísaný začiatok odpovede. */
+  text?: string
+  style?: AiRewriteStyle
+  /** Preklad: kód jazyka (sk, en, de…). */
+  targetLang?: string
+  /** Vlastný pokyn používateľa. */
+  instruction?: string
+  /** Jazyk rozhrania (jazyk zhrnutia). */
+  lang: UiLocale
+}
+
+export interface AiRunResult {
+  text: string
+  /** Vstup bol pridlhý a odstrihol sa. */
+  truncated: boolean
+  provider: AiProvider
+  model: string
+}
+
 export interface CoreRequests {
   'app.info': [void, AppInfo]
   'accounts.list': [void, AccountSummary[]]
@@ -571,6 +626,13 @@ export interface CoreRequests {
   'archives.open': [{ path: string }, { archiveId: number }]
   /** Zatvorí archív (zmaže len jeho zoznam v Doare, súbor zostane). */
   'archives.close': [{ archiveId: number }, void]
+  'ai.config.get': [void, AiConfig]
+  'ai.config.set': [AiConfigPatch, AiConfig]
+  /** Načíta zoznam modelov (zároveň overí spojenie). Bez kľúča v požiadavke použije uložený. */
+  'ai.models': [{ provider: AiProvider; baseUrl?: string; key?: string }, { models: string[] }]
+  /** Odošle obsah AI – len na pokyn používateľa. Výsledok je len návrh, nič sa samo neodošle. */
+  'ai.run': [AiRunInput, AiRunResult]
+  'ai.cancel': [{ requestId: string }, void]
 }
 
 export interface SearchInput {
@@ -596,6 +658,8 @@ export interface CoreEvents {
   'import.changed': null
   'archives.changed': null
   'archives.progress': { archiveId: number; bytesRead: number; fileSize: number; messages: number }
+  /** Priebežný text odpovede AI. */
+  'ai.chunk': { requestId: string; text: string }
 }
 
 export type RequestChannel = keyof CoreRequests
@@ -651,7 +715,12 @@ export const REQUEST_CHANNELS = [
   'import.state',
   'archives.list',
   'archives.open',
-  'archives.close'
+  'archives.close',
+  'ai.config.get',
+  'ai.config.set',
+  'ai.models',
+  'ai.run',
+  'ai.cancel'
 ] as const satisfies readonly RequestChannel[]
 
 export function isRequestChannel(ch: unknown): ch is RequestChannel {

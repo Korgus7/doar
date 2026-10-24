@@ -33,7 +33,7 @@ Verzia návrhu: 1 (2026-10-21). Mení sa len s odôvodnením v `ROZHODNUTIA.md`.
 | `export` | export mboxrd (záloha) |
 | `import` | čítanie mbox prúdom, obnova do konta (IMAP APPEND, duplicity, pokračovanie) |
 | `archive` | lokálny archív – súbor mbox len na čítanie (zoznam, fulltext, čítanie zo súboru); v rozhraní záporné ID |
-| `ai` | volania AI poskytovateľov (0.4) |
+| `ai` | voliteľná AI (0.4c): `providers.ts` (Anthropic, OpenAI-kompatibilné – OpenRouter, lokálny server; streamovanie SSE), `prompts.ts` (zadania, obsah pošty ako nedôveryhodné dáta), `service.ts` (nastavenia, kľúč, spúšťanie úloh) |
 | `jobs` | dlhé úlohy s priebehom a zrušením (sync, export, import) |
 
 Závislosti len smerom dole: `sync` → `mail`, `store`; `export` → `store`, `mail`. `store` nezávisí od nikoho.
@@ -172,6 +172,7 @@ remote_content_allow(sender PK, created_at)
 - Všetky sieťové požiadavky z rozhrania okrem povolených vzdialených obrázkov blokuje `session.webRequest` v main procese.
 - **HTML správa:** core ju sanitizuje (sanitize-html: bez skriptov, formulárov, `on*` atribútov, `<base>`, `<meta refresh>`). Zobrazuje sa v `<iframe sandbox>` bez `allow-scripts`, so `srcdoc` a CSP `default-src 'none'; style-src 'unsafe-inline'; img-src data: cid:` (+ `https:` iba po povolení odosielateľa). Obrázky `cid:` sa nahradia `data:` URI.
 - Prílohy sa ukladajú cez dialóg, nikdy sa nespúšťajú automaticky. Jadro pracuje len so súbormi, ktoré povolil main proces po výbere používateľom (`src/core/files.ts`, `FileGrants`). Spustiteľné súbory sa neotvárajú ani na pokyn (`isDangerousFile` v `src/shared/ipc.ts`).
+- **AI (0.4c):** volá ju len jadro (Node `fetch`), nikdy rozhranie. Obsah sa odošle len pri `ai.run` (kliknutie používateľa); prílohy nikdy. AI nemá nástroje – vracia len text, ktorý rozhranie ukáže ako návrh. Kľúč je v bezpečnom úložisku (`secrets`, kľúč `ai:<poskytovateľ>:key`), bez neho len v pamäti do zatvorenia. Lokálny server cez `http` len na tento počítač / domácu sieť (`checkBaseUrl`).
 - Logy: len technické údaje (ID konta, priečinok, počet, kód chyby). Logger má filter, ktorý odstráni polia `password`, `token`, `apiKey`, `body`, `subject`.
 
 ## 8. Rozhranie
@@ -185,6 +186,7 @@ remote_content_allow(sender PK, created_at)
 - Písanie: `ComposeApp.svelte` + `RichEditor.svelte` (TipTap) + `AddressInput.svelte`; prevody text ↔ HTML v `lib/compose-html.ts`, v jadre `mail/outgoing-html.ts` (prečistenie a textová podoba na odoslanie). Tlač: `lib/print.ts` → main (`print-html`, skryté okno bez JS).
 - Vyhľadávanie: `src/core/search.ts` (text → dotaz FTS5), `MailStore.searchMessages`; v rozhraní `mail.search` – zoznam správ vtedy ukazuje výsledky.
 - Hodnoty zo stavu Svelte (`$state`) sú proxy – pred odoslaním cez MessagePort sa musia skopírovať na obyčajné polia/objekty.
+- AI: `lib/ai.svelte.ts` (nastavenia, `runAi` – priebežný text cez udalosť `ai.chunk`), `AiSettings.svelte` (Nastavenia → AI), `AiSummary.svelte` (zhrnutie v čítačke), `AiPanel.svelte` (okno správy; text vyberá a vracia `RichEditor.aiSource/aiApply` alebo textové pole – vlastný text bez podpisu a citácie, alebo označený text).
 - Návrh obrazoviek: `docs/OBRAZOVKY.md`.
 
 ## 9. Štruktúra repozitára
@@ -206,7 +208,7 @@ doar/
       import/    mbox-reader.ts, import-account.ts, manager.ts
       archive/   archive.ts
       jobs/      job-runner.ts
-      ai/        (0.4)
+      ai/        providers.ts, prompts.ts, service.ts
     renderer/    index.html, src/ (App.svelte, ComposeApp.svelte, components/, lib/, i18n/, styles/)
   test/
     unit/        mboxrd, metadáta, parsovanie, migrácie

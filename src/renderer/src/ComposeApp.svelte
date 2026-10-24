@@ -7,6 +7,8 @@
   import { hasFormatting, htmlIsEmpty, htmlToText, quoteHtml, signatureHtml, textToHtml, escapeHtml } from './lib/compose-html'
   import RichEditor from './components/RichEditor.svelte'
   import AddressInput from './components/AddressInput.svelte'
+  import AiPanel from './components/AiPanel.svelte'
+  import { ai, aiReady, loadAiConfig, type AiSource } from './lib/ai.svelte'
 
   interface Attached {
     key: string
@@ -45,6 +47,48 @@
   let saving: Promise<void> | null = null
   let saveTimer: ReturnType<typeof setTimeout> | null = null
   let closing = false
+  /** Panel AI (návrh odpovede, úpravy textu) – len ak je AI zapnutá v nastaveniach. */
+  let aiOpen = $state(false)
+
+  /** Koniec vlastného textu v čistom texte: pred podpisom „-- “, citáciou (aj s hlavičkou) alebo preposlanou správou. */
+  function ownEndText(s: string): number {
+    const lines = s.split('\n')
+    let pos = 0
+    for (let i = 0; i < lines.length; i++) {
+      const l = lines[i]!
+      if (/^-- ?$/.test(l) || /^-{5,}/.test(l)) return pos
+      if (/^>/.test(l)) {
+        const prev = lines[i - 1]
+        return i > 0 && prev && prev.trim() ? pos - prev.length - 1 : pos
+      }
+      pos += l.length + 1
+    }
+    return s.length
+  }
+
+  /** Čo sa odošle AI: označený text, inak vlastný text správy (bez podpisu a citácie). */
+  function aiSource(): AiSource | null {
+    if (format === 'html') return editorRef?.aiSource() ?? null
+    if (!bodyEl) return null
+    const a = bodyEl.selectionStart
+    const b = bodyEl.selectionEnd
+    if (a !== b) return { text: body.slice(a, b), from: a, to: b, selection: true }
+    const to = ownEndText(body)
+    return { text: body.slice(0, to), from: 0, to, selection: false }
+  }
+
+  /** Vloží výsledok AI (Ctrl+Z vráti späť). Ak sa text medzitým zmenil, nič nevloží. */
+  function aiApply(src: AiSource, text: string): boolean {
+    if (format === 'html') return editorRef?.aiApply(src, text) ?? false
+    if (!bodyEl || body.slice(src.from, src.to) !== src.text) return false
+    const ins = !src.selection && src.to < body.length ? `${text.replace(/\s+$/, '')}\n\n` : text
+    bodyEl.focus()
+    bodyEl.setSelectionRange(src.from, src.to)
+    // insertText zachová históriu úprav (Ctrl+Z).
+    if (!document.execCommand('insertText', false, ins)) body = body.slice(0, src.from) + ins + body.slice(src.to)
+    return true
+  }
+
   /** Práve vložený podpis (aby sa dal vymeniť pri zmene odosielateľa). */
   let sigBlock = ''
   const signatureBlock = (id: number | null): string => {
@@ -172,6 +216,7 @@
     void (async () => {
       try {
         accounts = await window.doar.invoke('accounts.list')
+        void loadAiConfig()
         const settings = await window.doar.invoke('settings.get').catch(() => null)
         const pre = await window.doar.invoke('compose.prepare', { mode, messageId })
         accountId = pre.accountId
@@ -403,6 +448,9 @@
     <button class="btn" class:on={format === 'html'} aria-pressed={format === 'html'} onclick={toggleFormat} disabled={sending || !ready} title={t('compose.formatTitle')}>
       {format === 'html' ? t('compose.formatOn') : t('compose.formatOff')}
     </button>
+    {#if aiReady(ai.config)}
+      <button class="btn" class:on={aiOpen} aria-pressed={aiOpen} onclick={() => (aiOpen = !aiOpen)} disabled={sending || !ready} title={t('ai.compose.buttonTitle')}>✨ {t('ai.compose.button')}</button>
+    {/if}
     <button class="btn" onclick={discard} disabled={sending || !ready} title={t('compose.discardTitle')}>🗑 {t('compose.discardBtn')}</button>
     <span class="status" class:warn={saveFailed} role="status">
       {#if saveFailed}{t('compose.draftFailed')}{:else if savedAt && savedOffline}{t('compose.draftSavedLocal', { time: timeOnly(savedAt) })}{:else if savedAt}{t('compose.draftSaved', { time: timeOnly(savedAt) })}{:else}{t('compose.plainOnly')}{/if}
@@ -460,6 +508,10 @@
         {#if totalSize > MAX_ATTACHMENTS_BYTES}· {t('errors.ATTACHMENTS_TOO_LARGE')}{:else if totalSize > WARN_ATTACHMENTS_BYTES}· {t('compose.attachmentsBig')}{/if}
       </p>
     </section>
+  {/if}
+
+  {#if aiOpen && ready && aiReady(ai.config)}
+    <AiPanel replyTo={replyToMessage} getSource={aiSource} apply={aiApply} disabled={sending} onclose={() => (aiOpen = false)} />
   {/if}
 
   {#if format === 'html' && ready}

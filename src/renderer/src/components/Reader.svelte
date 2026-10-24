@@ -7,6 +7,8 @@
   import { isArchiveId, isDangerousFile } from '../../../shared/ipc'
   import { isDraft } from '../lib/actions.svelte'
   import { printDocument } from '../lib/print'
+  import AiSummary from './AiSummary.svelte'
+  import { ai, aiReady, aiUi } from '../lib/ai.svelte'
   import { remove, archive, allInArchive, allInTrash, openMoveDialog, singleAccount, toggleSpam, allInJunk } from '../lib/actions.svelte'
 
   let view = $state<MessageView | null>(null)
@@ -142,6 +144,9 @@ img{max-width:100%;height:auto}table{max-width:100%}.doar-plain{white-space:pre-
               <button class="btn small" title="Ctrl+R" onclick={() => window.doar.openCompose('reply', view!.id)}>↩ {t('toolbar.reply')}</button>
               <button class="btn small" title="Ctrl+Shift+R" onclick={() => window.doar.openCompose('replyAll', view!.id)}>↩↩ {t('toolbar.replyAll')}</button>
               <button class="btn small" title="Ctrl+F" onclick={() => window.doar.openCompose('forward', view!.id)}>↪ {t('toolbar.forward')}</button>
+              {#if aiReady(ai.config)}
+                <button class="btn small" class:on={aiUi.summaryFor === view.id} title={t('ai.summary.buttonTitle')} onclick={() => (aiUi.summaryFor = aiUi.summaryFor === view!.id ? null : view!.id)}>✨ {t('ai.summary.button')}</button>
+              {/if}
             {/if}
             {#if isArchiveId(view.id)}
               <span class="readonly" title={t('archive.readOnlyHint')}>🗃 {t('archive.readOnly')}</span>
@@ -181,6 +186,9 @@ img{max-width:100%;height:auto}table{max-width:100%}.doar-plain{white-space:pre-
             {/if}
           </span>
         </div>
+      {/if}
+      {#if aiUi.summaryFor === view.id && aiReady(ai.config)}
+        {#key view.id}<AiSummary messageId={view.id} />{/key}
       {/if}
     </header>
     <iframe bind:this={frame} title={view.subject} sandbox="allow-same-origin" {srcdoc} onload={onFrameLoad}></iframe>

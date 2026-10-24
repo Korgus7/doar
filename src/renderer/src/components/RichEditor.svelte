@@ -3,6 +3,8 @@
   import { Editor } from '@tiptap/core'
   import StarterKit from '@tiptap/starter-kit'
   import { t } from '../i18n/index.svelte'
+  import { textToHtml } from '../lib/compose-html'
+  import type { Node as PmNode } from '@tiptap/pm/model'
 
   /**
    * Editor formátovaného textu (TipTap). Vie len to, čo sa bezpečne odošle e-mailom:
@@ -58,6 +60,49 @@
 
   export function setHTML(next: string): void {
     editor?.commands.setContent(next, { emitUpdate: true })
+  }
+
+  const leafText = (leaf: PmNode): string => (leaf.type.name === 'hardBreak' ? '\n' : '')
+  const between = (from: number, to: number): string => editor!.state.doc.textBetween(from, to, '\n\n', leafText)
+
+  /** Koniec vlastného textu: pred podpisom („--“), citáciou (aj s hlavičkou) alebo preposlanou správou. */
+  function ownEnd(): number {
+    const doc = editor!.state.doc
+    let end = doc.content.size
+    let prev: { node: PmNode; offset: number } | null = null
+    let found = false
+    doc.forEach((node, offset) => {
+      if (found) return
+      const first = node.firstChild
+      const signature = node.type.name === 'paragraph' && !!first?.isText && /^--\s?$/.test(first.text ?? '') && (node.childCount === 1 || node.child(1).type.name === 'hardBreak')
+      const forward = node.type.name === 'paragraph' && /^-{5,}/.test(node.textContent)
+      if (signature || forward) {
+        end = offset
+        found = true
+      } else if (node.type.name === 'blockquote') {
+        end = prev && prev.node.type.name === 'paragraph' && prev.node.textContent.trim() ? prev.offset : offset
+        found = true
+      }
+      prev = { node, offset }
+    })
+    return end
+  }
+
+  /** Text pre AI: označený text, inak vlastný text správy (bez podpisu a citácie). */
+  export function aiSource(): { text: string; from: number; to: number; selection: boolean } | null {
+    if (!editor) return null
+    const sel = editor.state.selection
+    if (!sel.empty) return { text: between(sel.from, sel.to), from: sel.from, to: sel.to, selection: true }
+    const to = ownEnd()
+    return { text: between(0, to), from: 0, to, selection: false }
+  }
+
+  /** Vloží výsledok AI namiesto pôvodného textu (Ctrl+Z vráti späť). Ak sa text medzitým zmenil, vráti false. */
+  export function aiApply(src: { text: string; from: number; to: number; selection: boolean }, result: string): boolean {
+    if (!editor) return false
+    if (src.to > editor.state.doc.content.size || between(src.from, src.to) !== src.text) return false
+    const content = src.selection && !result.includes('\n') ? { type: 'text', text: result } : textToHtml(result)
+    return editor.chain().focus().insertContentAt({ from: src.from, to: src.to }, content).run()
   }
 
   const active = (name: string, attrs?: Record<string, unknown>): boolean => {

@@ -14,6 +14,7 @@
   import { restore, initRestoreEvents } from './lib/restore.svelte'
   import { initArchiveEvents, openArchive, archivePercent } from './lib/archive.svelte'
   import { initUpdateEvents, checkUpdates } from './lib/update.svelte'
+  import { loadAiConfig } from './lib/ai.svelte'
   import SettingsDialog from './components/SettingsDialog.svelte'
   import { openSettings } from './lib/settings.svelte'
   import { setSelection } from './lib/mail.svelte'
@@ -88,6 +89,7 @@
       window.doar.on('messages.changed', (d) => scheduleRefresh(d.folderIds)),
       window.doar.on('sync.status', (s) => (mail.statuses[s.accountId] = s))
     ]
+    void loadAiConfig()
     // Pripojenie k sieti → hneď skúsiť synchronizovať a odoslať, čo čaká.
     const online = (): void => void window.doar.invoke('sync.reconnect').catch(() => {})
     window.addEventListener('online', online)

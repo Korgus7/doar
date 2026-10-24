@@ -8,6 +8,7 @@
   import { mail, loadAccounts, selectFolder } from '../lib/mail.svelte'
   import { errorText, showToast } from '../lib/actions.svelte'
   import { settingsUi } from '../lib/settings.svelte'
+  import AiSettings from './AiSettings.svelte'
 
   let dialogEl: HTMLDivElement | undefined = $state()
   let details = $state<AccountDetails | null>(null)
@@ -133,7 +134,8 @@
   function tabKey(e: KeyboardEvent): void {
     if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return
     e.preventDefault()
-    settingsUi.tab = settingsUi.tab === 'accounts' ? 'general' : 'accounts'
+    const tabs = ['accounts', 'general', 'ai'] as const
+    settingsUi.tab = tabs[(tabs.indexOf(settingsUi.tab) + (e.key === 'ArrowRight' ? 1 : tabs.length - 1)) % tabs.length]!
     void tick().then(() => dialogEl?.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]')?.focus())
   }
 </script>
@@ -146,6 +148,7 @@
         <div class="tabs" role="tablist">
           <button role="tab" aria-selected={settingsUi.tab === 'accounts'} tabindex={settingsUi.tab === 'accounts' ? 0 : -1} onclick={() => (settingsUi.tab = 'accounts')} onkeydown={tabKey}>{t('settings.tabAccounts')}</button>
           <button role="tab" aria-selected={settingsUi.tab === 'general'} tabindex={settingsUi.tab === 'general' ? 0 : -1} onclick={() => (settingsUi.tab = 'general')} onkeydown={tabKey}>{t('settings.tabGeneral')}</button>
+          <button role="tab" aria-selected={settingsUi.tab === 'ai'} tabindex={settingsUi.tab === 'ai' ? 0 : -1} onclick={() => (settingsUi.tab = 'ai')} onkeydown={tabKey}>{t('settings.tabAi')}</button>
         </div>
         <button class="x" aria-label={t('settings.close')} title={t('settings.close')} onclick={close}>×</button>
       </header>
@@ -253,6 +256,10 @@
               </div>
             </div>
           {/if}
+        </div>
+      {:else if settingsUi.tab === 'ai'}
+        <div class="general" role="tabpanel">
+          <AiSettings />
         </div>
       {:else}
         <div class="general" role="tabpanel">

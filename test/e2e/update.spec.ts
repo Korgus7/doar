@@ -5,6 +5,10 @@ import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { addAccountViaWizard, launchApp, testServer } from './helpers'
+import { readFileSync as readPkg } from 'node:fs'
+
+/** Verzia aplikácie (z package.json – testy netreba meniť pri každom vydaní). */
+const VERSION = (JSON.parse(readPkg('package.json', 'utf8')) as { version: string }).version
 
 const srv = testServer()
 test.skip(!srv, 'testovací poštový server (Dovecot) nie je k dispozícii')
@@ -38,7 +42,7 @@ test('aktualizácie: ručná kontrola, ponuka novej verzie, „Čo je nové“, 
   await win.getByRole('button', { name: 'Nastavenia' }).first().click()
   const dlg = win.getByRole('dialog')
   await dlg.getByRole('tab', { name: /Všeobecné/ }).click()
-  await expect(dlg.getByText('Verzia 0.3.0', { exact: false })).toBeVisible()
+  await expect(dlg.getByText(`Verzia ${VERSION}`, { exact: false })).toBeVisible()
   const auto = dlg.getByRole('checkbox', { name: /Automaticky kontrolovať nové verzie/ })
   await expect(auto).toBeChecked()
   await auto.uncheck()

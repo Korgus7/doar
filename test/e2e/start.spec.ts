@@ -2,13 +2,17 @@ import { test, expect } from '@playwright/test'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { launchApp } from './helpers'
+import { readFileSync as readPkg } from 'node:fs'
+
+/** Verzia aplikácie (z package.json – testy netreba meniť pri každom vydaní). */
+const VERSION = (JSON.parse(readPkg('package.json', 'utf8')) as { version: string }).version
 
 test('aplikácia sa spustí, rozhranie sa spojí s jadrom a vytvorí databázu', async () => {
   const { app, dataDir } = await launchApp()
   const win = await app.firstWindow()
   await expect(win.getByRole('heading', { name: /Vitajte v Doar Mail|Welcome to Doar Mail/ })).toBeVisible()
   // Stavový riadok ukáže verziu SQLite až po odpovedi jadra.
-  await expect(win.getByRole('status')).toContainText('Doar Mail 0.3.0 · SQLite', { timeout: 15_000 })
+  await expect(win.getByRole('status')).toContainText(`Doar Mail ${VERSION} · SQLite`, { timeout: 15_000 })
   expect(existsSync(join(dataDir, 'doar.db'))).toBe(true)
 
   // Bezpečnosť: rozhranie nemá Node.js ani require.

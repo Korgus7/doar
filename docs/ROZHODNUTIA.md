@@ -215,6 +215,25 @@ Záznam dohodnutých rozhodnutí. Nové rozhodnutia pridávaj na koniec s dátum
 - **Testovací zdroj:** premenná prostredia `DOAR_UPDATE_FEED` = priečinok s `doar-mail-update.json` a zipom (napr. `D:\_Doar\dist`); `DOAR_UPDATE_API` = náhradná adresa GitHub API (len testy).
 - Kód: `src/main/update-core.ts` (bez Electronu, unit testy), `src/main/updater.ts`, `scripts/release-manifest.mjs`, rozhranie `UpdateBanner.svelte`.
 
+## 2026-10-24 – AI (0.4c)
+
+- **Voliteľná, predvolene vypnutá** (Nastavenia → AI). Bez nej sa nič nemení – žiadne tlačidlá AI.
+- **Poskytovatelia:** Anthropic (Messages API, predvolený model `claude-haiku-5-5` – lacný a na poštu stačí; dá sa zmeniť), OpenRouter (OpenAI-kompatibilné API), lokálny server (Ollama, LM Studio… cez OpenAI-kompatibilné `/v1`). Anthropic a OpenRouter majú pevnú adresu; lokálny server: `https` kamkoľvek, `http` len localhost, 127.x, 10.x, 172.16–31.x, 192.168.x, `*.local` – inak by obsah pošty išiel nešifrovane cez internet.
+- **Kľúč:** pre každého poskytovateľa zvlášť v bezpečnom úložisku systému (rovnako ako heslá); bez neho len do zatvorenia aplikácie. Nikdy v databáze, nastaveniach ani logu. Model sa pamätá pre každého poskytovateľa zvlášť.
+- **Funkcie (podľa zadania):** zhrnutie správy (čítačka, tlačidlo „Zhrnúť“, aj v archíve), návrh odpovede (okno správy, voliteľný pokyn, nadväzuje na už napísaný začiatok), úpravy textu (opraviť chyby, formálnejšie, priateľskejšie, skrátiť, preložiť do 10 jazykov, vlastný pokyn).
+- **Čo a kam sa odošle, je vždy vidieť:** zhrnutie sa predvolene pýta („Odošle sa text tejto správy (bez príloh) do: Anthropic · model“, dá sa vypnúť); panel v okne správy stále ukazuje rozsah (označený text / vlastný text bez podpisu a citácie, pri odpovedi aj pôvodná správa) a cieľ. Prílohy ani ich názvy sa neodosielajú.
+- **Nič samo:** AI nemá nástroje; výsledok je len text. Do správy sa vloží až po kliknutí „Vložiť / Nahradiť“ (Ctrl+Z vráti späť); ak sa text medzitým zmenil, nevloží sa nič. Odoslanie je vždy na používateľovi.
+- **Ochrana pred pokynmi v e-mailoch:** obsah je v značkách `<email>`, `<draft>`, `<text>`; rovnaké značky v obsahu sa zneškodnia. Systémové zadanie zakazuje riadiť sa pokynmi z týchto dát. Zhrnutie je v jazyku rozhrania, odpoveď v jazyku správy.
+- Dlhý text sa odstrihne (40 000 znakov) a rozhranie na to upozorní. Priebežný text (streamovanie) ide do rozhrania udalosťou `ai.chunk`; úloha sa dá zastaviť. Časové limity: odpoveď servera do 60 s, medzi časťami 90 s.
+- Log: len úloha, poskytovateľ, model, trvanie, dĺžka výstupu a kód chyby – nikdy obsah (overuje e2e test).
+- **Overené:** unit testy (SSE, oba formáty API, chyby, zrušenie, časové limity, adresy, zadania, kľúč), e2e s falošným lokálnym serverom (nastavenia, zhrnutie s potvrdením, návrh odpovede, oprava, preklad označeného textu, formátovaný aj čistý text, Ctrl+Z, log bez obsahu). Na Windows (2026-10-24) používateľ overil skutočný OpenRouter. **Neoverené:** skutočné API Anthropic, Ollama/LM Studio.
+
+## 2026-10-24 – uzavretie 0.4
+
+- Verzia 0.4.0: balík pre Windows (0.4a), aktualizácie z GitHub Releases (0.4b), voliteľná AI (0.4c). Prvé vydanie na GitHube (`v0.4.0`) so zipom a `doar-mail-update.json`.
+- Testy e2e berú verziu z `package.json` (netreba ich meniť pri každom vydaní).
+- Zostáva: podpis kódu (menej varovaní Windows), overenie Gmailu a serverov bez UIDPLUS, skutočné API Anthropic a Ollama.
+
 ## Licencie závislostí (overené 2026-10-21 cez `npm view`)
 
 Všetky sú kompatibilné s MIT.
