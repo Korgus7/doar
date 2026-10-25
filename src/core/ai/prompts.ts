@@ -66,7 +66,9 @@ const LANG_NAMES: Record<string, string> = {
   uk: 'Ukrainian',
   fr: 'French',
   es: 'Spanish',
-  it: 'Italian'
+  ru: 'Russian',
+  it: 'Italian',
+  he: 'Hebrew'
 }
 export const TRANSLATE_LANGS = Object.keys(LANG_NAMES)
 
@@ -87,7 +89,7 @@ const STYLE_TASK: Record<Exclude<AiRewriteStyle, 'translate' | 'custom'>, string
 }
 
 export function buildPrompt(input: AiRunInput, email: EmailForAi | null): BuiltPrompt {
-  const uiLang = langName(input.lang === 'en' ? 'en' : 'sk')
+  const uiLang = langName(input.lang, 'Slovak')
   if (input.task === 'summary') {
     if (!email) throw new Error('chýba správa')
     const e = emailBlock(email)

@@ -73,7 +73,7 @@ test('písanie: nová správa, odpoveď s citáciou, nejasný výsledok, zatvore
   await expect(c2.getByLabel('Predmet')).toHaveValue('Re: Obed v piatok?')
   // Formátovaná odpoveď: prázdny odsek na písanie, hlavička citácie, citácia ako blockquote.
   const editor = c2.getByRole('textbox', { name: 'Text správy' })
-  expect(await editor.innerHTML()).toMatch(/^<p><br[^>]*><\/p><p>Dňa \S.+ Gita &lt;gita@doar\.test&gt; napísal\(a\):<\/p><blockquote><p>Ideme na obed v piatok o 12:00\?<\/p><\/blockquote>(<p><br[^>]*><\/p>)?$/)
+  expect(await editor.innerHTML()).toMatch(/^<p dir="auto"><br[^>]*><\/p><p dir="auto">Dňa \S.+ Gita &lt;gita@doar\.test&gt; napísal\(a\):<\/p><blockquote><p dir="auto">Ideme na obed v piatok o 12:00\?<\/p><\/blockquote>(<p dir="auto"><br[^>]*><\/p>)?$/)
   await expect(editor).toBeFocused() // kurzor je hneď pripravený na začiatku
   await c2.keyboard.type('Áno, ')
   await c2.keyboard.press('Control+b')

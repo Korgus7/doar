@@ -418,7 +418,8 @@
     grid-template-columns: auto 1fr;
     gap: 0.35rem 0.6rem;
     align-items: center;
-    margin: 0.4rem 0 0 1.5rem;
+    margin: 0.4rem 0 0;
+    margin-inline-start: 1.5rem;
   }
   select,
   .text {
@@ -430,7 +431,8 @@
     min-width: 0;
   }
   .hint {
-    margin: 0.4rem 0 0 1.5rem;
+    margin: 0.4rem 0 0;
+    margin-inline-start: 1.5rem;
     font-size: 0.85rem;
     color: var(--text-muted);
   }
@@ -528,7 +530,7 @@
   th,
   td {
     padding: 0.35rem 0.6rem;
-    text-align: left;
+    text-align: start;
     border-bottom: 1px solid var(--border);
   }
   th {
@@ -538,7 +540,7 @@
     font-weight: 600;
   }
   .n {
-    text-align: right;
+    text-align: end;
     font-variant-numeric: tabular-nums;
   }
   tr.problem td {
@@ -547,7 +549,7 @@
   }
   .alert.error {
     padding: 0.5rem 0.75rem;
-    border-left: 3px solid var(--danger);
+    border-inline-start: 3px solid var(--danger);
     background: color-mix(in srgb, var(--danger) 12%, transparent);
   }
   .actions {

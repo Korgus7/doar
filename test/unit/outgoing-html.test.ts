@@ -51,3 +51,18 @@ describe('formátovaná správa → text a bezpečné HTML', () => {
     expect(outgoingHtml('<blockquote><p>x</p></blockquote>')).toMatch(/<blockquote style="margin:0 0 0 0\.8ex;border-left:2px solid #c9d1dc/)
   })
 })
+
+describe('smer textu (hebrejčina)', () => {
+  it('dir z editora zostane v odoslanom HTML, neplatná hodnota sa zahodí', async () => {
+    const { outgoingHtml, sanitizeComposeHtml } = await import('../../src/core/mail/outgoing-html')
+    const html = '<p dir="auto">שלום</p><p dir="rtl">טקסט</p><p dir="evil">x</p><ul dir="auto"><li dir="auto">פריט</li></ul><blockquote dir="auto"><p dir="auto">ציטוט</p></blockquote>'
+    const clean = sanitizeComposeHtml(html)
+    expect(clean).toContain('<p dir="auto">שלום</p>')
+    expect(clean).toContain('<p dir="rtl">טקסט</p>')
+    expect(clean).toContain('<p>x</p>')
+    expect(clean).toContain('<li dir="auto">פריט</li>')
+    const out = outgoingHtml(html)
+    expect(out).toMatch(/<p dir="auto" style="[^"]*">שלום<\/p>/)
+    expect(out).toMatch(/<blockquote dir="auto" style="[^"]*">/)
+  })
+})

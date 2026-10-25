@@ -20,6 +20,8 @@ import { discardDraft, flushDraft, saveDraft } from './drafts'
 import { buildFtsQuery } from './search'
 import type { FileGrants } from './files'
 import { AiService } from './ai/service'
+import { OAuthService } from './oauth/oauth'
+import { oauthProviderOf } from './accounts'
 import type { FetchFn } from './ai/providers'
 import { isArchiveId, isComposeMode } from '../shared/ipc'
 
@@ -44,6 +46,8 @@ export interface CoreContext {
   fetchRemote?: (urls: string[]) => Promise<Map<string, string>>
   /** Sieť pre AI (v testoch falošný server). */
   aiFetch?: FetchFn
+  /** Prihlásenie cez Microsoft/Google – rovnaký objekt používa synchronizácia. */
+  oauth?: OAuthService
 }
 
 export type Handlers = {
@@ -76,6 +80,8 @@ function searchScope(data: { folderId?: unknown; accountId?: unknown; archiveId?
 }
 
 export function createHandlers(ctx: CoreContext): Handlers {
+  const oauth = ctx.oauth ?? new OAuthService({ secrets: ctx.secrets, sessionSecrets: ctx.sessionSecrets })
+  ctx.oauth = oauth
   const ai = new AiService({
     db: ctx.db,
     secrets: ctx.secrets,
@@ -95,15 +101,24 @@ export function createHandlers(ctx: CoreContext): Handlers {
 
     'accounts.list': () => listAccounts(ctx.db),
 
-    'accounts.discover': (data) => discover(str(data?.email, 320), str(data?.displayName, 200), ctx.net),
+    'accounts.discover': async (data) => {
+      const r = await discover(str(data?.email, 320), str(data?.displayName, 200), ctx.net)
+      // Prihlásenie cez poskytovateľa len vtedy, keď ho táto zostava má nastavené (registrácia aplikácie).
+      const available = r.oauth ? oauth.available()[r.oauth] : false
+      return { ...r, oauth: available ? r.oauth : null, unsupportedAuth: available ? null : r.unsupportedAuth }
+    },
 
     'accounts.test': async (data) => {
       const settings = validateSettings(data?.settings)
+      if (data?.oauth?.flowId) {
+        const signedIn = oauth.flowEmail(data.oauth.flowId)
+        return testConnection(signedIn ? { ...settings, email: signedIn, username: signedIn } : settings, oauth.flowCredential(data.oauth.flowId))
+      }
       return testConnection(settings, str(data?.password, 4096))
     },
 
     'accounts.add': async (data) => {
-      const acc = await addAccount(ctx.db, ctx.secrets, ctx.sessionSecrets, data)
+      const acc = await addAccount(ctx.db, ctx.secrets, ctx.sessionSecrets, data, oauth)
       ctx.emit('accounts.changed', null)
       ctx.sync.start(acc.id)
       return acc
@@ -274,7 +289,31 @@ export function createHandlers(ctx: CoreContext): Handlers {
     'ai.config.set': (data) => ai.setConfig(data ?? {}),
     'ai.models': (data) => ai.models(data),
     'ai.run': (data) => ai.run(data),
-    'ai.cancel': (data) => ai.cancel(data?.requestId)
+    'ai.cancel': (data) => ai.cancel(data?.requestId),
+
+    'oauth.available': () => oauth.available(),
+    'oauth.start': (data) => {
+      if (data?.provider !== 'microsoft' && data?.provider !== 'google') throw err('OAUTH_NOT_CONFIGURED', 'Neznámy poskytovateľ')
+      const text = data.text && typeof data.text === 'object' ? { title: str(data.text.title, 200), done: str(data.text.done, 500), failed: str(data.text.failed, 500) } : undefined
+      return oauth.start({ provider: data.provider, loginHint: str(data.loginHint, 320) || undefined, lang: str(data.lang, 10), text })
+    },
+    'oauth.finish': (data) => oauth.finish(str(data?.flowId, 100)),
+    'oauth.cancel': (data) => oauth.cancel(str(data?.flowId, 100)),
+    'accounts.reauth': async (data) => {
+      const id = Number(data?.id)
+      const acc = getAccount(ctx.db, id)
+      if (acc.authType !== 'oauth2') throw err('OAUTH_REQUIRED', 'Konto sa neprihlasuje cez poskytovateľa')
+      const flowId = str(data?.flowId, 100)
+      const provider = oauth.flowProvider(flowId)
+      if (!provider || provider !== oauthProviderOf((ctx.db.prepare('SELECT provider_key FROM accounts WHERE id = ?').get(id) as { provider_key: string | null }).provider_key)) {
+        throw err('OAUTH_WRONG_ACCOUNT', 'Prihlásenie u iného poskytovateľa')
+      }
+      const signedIn = oauth.flowEmail(flowId)
+      if (signedIn && signedIn !== acc.email.toLowerCase()) throw err('OAUTH_WRONG_ACCOUNT', `Prihlásený je iný účet: ${signedIn}`)
+      await oauth.saveForAccount(flowId, id, acc.passwordStorage)
+      await ctx.sync.restart(id)
+      ctx.emit('accounts.changed', null)
+    }
   }
   return handlers
 }

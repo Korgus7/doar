@@ -23,7 +23,7 @@
   } = $props()
 
   type Action = 'reply' | AiRewriteStyle
-  const LANGS = ['en', 'sk', 'cs', 'de', 'hu', 'pl', 'uk', 'fr', 'es', 'it']
+  const LANGS = ['en', 'sk', 'cs', 'de', 'hu', 'pl', 'uk', 'fr', 'es', 'it', 'ru', 'he']
 
   let instruction = $state('')
   let targetLang = $state(i18n.locale === 'en' ? 'sk' : 'en')
@@ -215,7 +215,7 @@
     min-width: 12rem;
   }
   .x {
-    margin-left: auto;
+    margin-inline-start: auto;
     border: 0;
     background: none;
     font-size: 1.2rem;

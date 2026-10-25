@@ -4,7 +4,7 @@ import type { BlobStore } from '../store/blobs'
 import { MailStore, type FolderInfo, type FolderRow, type HeaderInput } from '../store/mailstore'
 import type { CoreEvents, EventChannel, SpecialUse, SyncStatus } from '../../shared/ipc'
 import { OFFLINE_CODES } from '../../shared/ipc'
-import { createImapClient } from '../mail/imap'
+import { createImapClient, type Credential } from '../mail/imap'
 import { indexInfo } from '../mail/parse'
 import { classifyError } from '../mail/connection-test'
 import { sendRaw, type SendOutcome } from '../mail/smtp'
@@ -40,18 +40,22 @@ export interface AccountRow {
   save_sent_copy: number
   display_name: string
   password_storage: 'os' | 'session'
+  auth_type: 'password' | 'oauth2'
 }
 
 export interface SyncDeps {
   db: Db
   store: MailStore
   blobs: BlobStore
-  getPassword(account: AccountRow): Promise<string | null>
+  /** Heslo, alebo prístupový token (prihlásenie cez účet poskytovateľa). */
+  getPassword(account: AccountRow): Promise<Credential | null>
   emit<E extends EventChannel>(ch: E, data: CoreEvents[E]): void
   /** Pre testy: vlastný klient namiesto skutočného pripojenia. */
-  clientFactory?: (account: AccountRow, password: string, idle: boolean) => ImapFlow
+  clientFactory?: (account: AccountRow, password: Credential, idle: boolean) => ImapFlow
   /** Pre testy: vlastné odoslanie SMTP. */
   smtpSend?: typeof sendRaw
+  /** Server odmietol prístupový token (prihlásenie cez poskytovateľa) – zabudnúť ho. */
+  onAuthRejected?: (account: AccountRow) => void
   /** Nové neprečítané správy v doručenej pošte (nie pri prvej synchronizácii). */
   onNewMail?: (n: { accountId: number; folderId: number; messageIds: number[] }) => void
 }
@@ -262,7 +266,11 @@ export class AccountSync {
 
   private handleError(e: unknown): void {
     if (this.stopped) return // ukončenie aplikácie / odstránenie konta – nie je to chyba
-    const code = (e as { code?: string }).code === 'PASSWORD_REQUIRED' ? 'PASSWORD_REQUIRED' : classifyError(e).code
+    const own = (e as { code?: string }).code
+    const code = own === 'PASSWORD_REQUIRED' || own === 'NO_NETWORK' || own?.startsWith('OAUTH_') ? own : classifyError(e).code
+    const oauth = this.account.auth_type === 'oauth2'
+    // Server odmietol prístupový token → nabudúce si vypýtať nový (prihlásenie samo nemuselo vypršať).
+    if (oauth && code === 'AUTH_FAILED') this.deps.onAuthRejected?.(this.account)
     const offline = OFFLINE_CODES.includes(code ?? '')
     ;(this.backoff === 0 && offline ? log.info : log.warn)('synchronizácia prerušená', { account: this.account.id, code, error: e })
     if (!this.client?.usable || code === 'AUTH_FAILED') {
@@ -275,7 +283,7 @@ export class AccountSync {
     }
     this.setStatus({ state: offline ? 'offline' : 'error', code })
     // Zlé heslo nemá zmysel skúšať dookola – počká sa na používateľa.
-    if (code === 'AUTH_FAILED' || code === 'PASSWORD_REQUIRED' || code?.startsWith('CERT_') || this.stopped) return
+    if ((code === 'AUTH_FAILED' && !oauth) || code === 'PASSWORD_REQUIRED' || code === 'OAUTH_EXPIRED' || code === 'OAUTH_NOT_CONFIGURED' || code?.startsWith('CERT_') || this.stopped) return
     // Ďalší pokus je už naplánovaný (napr. viac zmien bez pripojenia) – nepridávať ďalšie.
     if (this.retryTimer) return
     // Prvý pokus hneď (server mohol len zavrieť spojenie), potom 15 s, 30 s, … najviac 5 min.
@@ -289,7 +297,7 @@ export class AccountSync {
     this.timers.add(t)
   }
 
-  private async password(): Promise<string> {
+  private async password(): Promise<Credential> {
     const p = await this.deps.getPassword(this.account)
     if (!p) throw Object.assign(new Error('Chýba heslo'), { code: 'PASSWORD_REQUIRED' })
     return p

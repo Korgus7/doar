@@ -92,7 +92,7 @@
               class:drop={dropTarget === f.id}
               aria-current={mail.folderId === f.id ? 'page' : undefined}
               disabled={!f.selectable}
-              style:padding-left={`${0.75 + f.depth * 0.9}rem`}
+              style:padding-inline-start={`${0.75 + f.depth * 0.9}rem`}
               onclick={() => selectFolder(f.id)}
               oncontextmenu={(e) => folderMenu(e, f)}
               ondragover={(e) => onDragOver(e, f)}
@@ -231,7 +231,7 @@
     border: 0;
     border-radius: var(--radius-sm);
     background: transparent;
-    text-align: left;
+    text-align: start;
     cursor: pointer;
   }
   .item:hover:not(:disabled) {

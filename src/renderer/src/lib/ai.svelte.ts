@@ -60,7 +60,7 @@ export function runAi(
     soFar += c.text
     onText(soFar)
   })
-  const result = window.doar.invoke('ai.run', { ...input, requestId, lang: i18n.locale === 'en' ? 'en' : 'sk' }).finally(off)
+  const result = window.doar.invoke('ai.run', { ...input, requestId, lang: i18n.locale }).finally(off)
   return { result, cancel: () => void window.doar.invoke('ai.cancel', { requestId }).catch(() => {}) }
 }
 

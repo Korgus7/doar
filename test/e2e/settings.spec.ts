@@ -63,7 +63,7 @@ test('nastavenia: názov, farba, podpis v novej správe, server, upozornenia, od
   const [c] = await Promise.all([app.waitForEvent('window'), win.getByRole('button', { name: /Nová správa/ }).click()])
   await c.waitForLoadState('domcontentloaded')
   // Prázdny prvý odsek (kurzor), potom podpis „--“ a jeho riadky.
-  expect(await c.getByRole('textbox', { name: 'Text správy' }).innerHTML()).toMatch(/^<p><br class="ProseMirror-trailingBreak"><\/p><p>--<br>S pozdravom<br>Tomáš Kováč<\/p>$/)
+  expect(await c.getByRole('textbox', { name: 'Text správy' }).innerHTML()).toMatch(/^<p dir="auto"><br class="ProseMirror-trailingBreak"><\/p><p dir="auto">--<br>S pozdravom<br>Tomáš Kováč<\/p>$/)
   await Promise.all([c.waitForEvent('close'), app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().find((w) => w.getTitle() === 'Nová správa')?.close())])
 
   // Odstránenie konta → uvítanie; pošta na serveri zostane.

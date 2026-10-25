@@ -11,7 +11,7 @@ import { loadWindowState, trackWindowState } from './window-state'
 import { ensureShortcuts } from './shortcuts'
 import { Updater } from './updater'
 import type { CoreToMain, MainToCore, UiLocale } from '../shared/ipc'
-import { incompletePath, isComposeMode, isDangerousFile, OPEN_ATTACHMENTS_DIR, type ComposeMode, type PickedFile } from '../shared/ipc'
+import { incompletePath, isComposeMode, isDangerousFile, isUiLocale, OPEN_ATTACHMENTS_DIR, type ComposeMode, type PickedFile } from '../shared/ipc'
 
 const here = fileURLToPath(new URL('.', import.meta.url))
 const DEV_URL = process.env['ELECTRON_RENDERER_URL']
@@ -355,7 +355,7 @@ if (!gotLock) {
     })
     ipcMain.on('ui-locale', (e, locale: unknown) => {
       if (!mainWindow || e.sender !== mainWindow.webContents) return
-      if (locale === 'sk' || locale === 'en') {
+      if (isUiLocale(locale)) {
         uiLocale = locale
         buildMenu(locale, () => mainWindow, DEV_URL !== undefined)
       }

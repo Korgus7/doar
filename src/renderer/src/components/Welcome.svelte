@@ -1,9 +1,9 @@
 <script lang="ts">
   import { t, i18n, setLocale, AVAILABLE_LOCALES, type Locale } from '../i18n/index.svelte'
+  import { LOCALE_NAMES } from '../../../shared/ipc'
 
   let { onAddAccount }: { onAddAccount: () => void } = $props()
 
-  const LOCALE_NAMES: Record<Locale, string> = { sk: 'Slovenčina', en: 'English' }
 
   function onLocaleChange(e: Event): void {
     setLocale((e.currentTarget as HTMLSelectElement).value as Locale)

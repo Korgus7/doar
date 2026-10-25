@@ -85,7 +85,7 @@
     margin-top: 0.6rem;
     padding: 0.55rem 0.8rem;
     border: 1px solid var(--border);
-    border-left: 3px solid var(--accent);
+    border-inline-start: 3px solid var(--accent);
     border-radius: var(--radius-sm);
     background: var(--accent-soft);
     font-size: 0.9rem;
@@ -110,7 +110,7 @@
     color: var(--text-muted);
   }
   .x {
-    margin-left: auto;
+    margin-inline-start: auto;
     border: 0;
     background: none;
     font-size: 1.15rem;

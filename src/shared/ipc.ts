@@ -21,6 +21,9 @@ export interface AccountDetails extends AccountSummary {
   smtp: ServerSettings
   saveSentCopy: boolean
   passwordStorage: 'os' | 'session'
+  /** Prihlásenie heslom, alebo cez účet poskytovateľa. */
+  authType: 'password' | 'oauth2'
+  oauthProvider: OAuthProvider | null
   /** Správy tohto konta, ktoré ešte čakajú na odoslanie (pri odstránení konta by sa stratili). */
   pendingOutbox: number
 }
@@ -75,6 +78,9 @@ export interface AccountSettings {
 
 export type DiscoverySource = 'known' | 'srv' | 'autoconfig' | 'ispdb' | 'mx' | 'guess' | 'none'
 
+/** Prihlásenie cez účet poskytovateľa (OAuth) namiesto hesla. */
+export type OAuthProvider = 'microsoft' | 'google'
+
 export interface DiscoveryResult {
   /** Navrhnuté nastavenia; pri `source = 'none'` len predvyplnený návrh na ručnú úpravu. */
   settings: AccountSettings
@@ -83,6 +89,8 @@ export interface DiscoveryResult {
   unsupportedAuth: 'oauth2' | null
   /** Poskytovateľ vyžaduje heslo aplikácie (napr. Gmail). */
   needsAppPassword: boolean
+  /** Dá sa prihlásiť cez účet poskytovateľa (OAuth) – ak je v tejto zostave nastavený. */
+  oauth: OAuthProvider | null
 }
 
 /** Kódy chýb pri overovaní spojenia – rozhranie ich prekladá do zrozumiteľných viet. */
@@ -116,7 +124,10 @@ export interface ConnectionTestResult {
 
 export interface AddAccountInput {
   settings: AccountSettings
+  /** Heslo; pri prihlásení cez účet poskytovateľa prázdne a namiesto neho `oauth`. */
   password: string
+  /** Dokončené prihlásenie cez poskytovateľa (oauth.start → oauth.finish). */
+  oauth?: { flowId: string }
   /** false = heslo len do zatvorenia aplikácie (keď nie je bezpečné úložisko). */
   rememberPassword: boolean
 }
@@ -561,7 +572,7 @@ export interface CoreRequests {
   'app.info': [void, AppInfo]
   'accounts.list': [void, AccountSummary[]]
   'accounts.discover': [{ email: string; displayName: string }, DiscoveryResult]
-  'accounts.test': [{ settings: AccountSettings; password: string }, ConnectionTestResult]
+  'accounts.test': [{ settings: AccountSettings; password: string; oauth?: { flowId: string } }, ConnectionTestResult]
   'accounts.add': [AddAccountInput, AccountSummary]
   'folders.list': [void, FolderItem[]]
   'messages.list': [{ folderId: number | null; offset: number; limit: number }, { total: number; items: MessageListItem[] }]
@@ -626,6 +637,15 @@ export interface CoreRequests {
   'archives.open': [{ path: string }, { archiveId: number }]
   /** Zatvorí archív (zmaže len jeho zoznam v Doare, súbor zostane). */
   'archives.close': [{ archiveId: number }, void]
+  /** Prihlásenie cez Microsoft/Google: adresa pre prehliadač (otvorí ju rozhranie cez openExternal). */
+  'oauth.start': [{ provider: OAuthProvider; loginHint?: string; lang?: string; text?: { title: string; done: string; failed: string } }, { flowId: string; url: string }]
+  /** Počká na dokončenie prihlásenia v prehliadači (najviac 10 minút). */
+  'oauth.finish': [{ flowId: string }, { email: string | null; provider: OAuthProvider }]
+  'oauth.cancel': [{ flowId: string }, void]
+  /** Ktorí poskytovatelia sú v tejto zostave nastavení. */
+  'oauth.available': [void, Record<OAuthProvider, boolean>]
+  /** Nové prihlásenie existujúceho konta (vypršané alebo zrušené prihlásenie). */
+  'accounts.reauth': [{ id: number; flowId: string }, void]
   'ai.config.get': [void, AiConfig]
   'ai.config.set': [AiConfigPatch, AiConfig]
   /** Načíta zoznam modelov (zároveň overí spojenie). Bez kľúča v požiadavke použije uložený. */
@@ -716,6 +736,11 @@ export const REQUEST_CHANNELS = [
   'archives.list',
   'archives.open',
   'archives.close',
+  'oauth.start',
+  'oauth.finish',
+  'oauth.cancel',
+  'oauth.available',
+  'accounts.reauth',
   'ai.config.get',
   'ai.config.set',
   'ai.models',
@@ -734,7 +759,23 @@ export type PortMessage =
   | { kind: 'res'; id: number; ok: false; error: { code: string; message: string } }
   | { kind: 'evt'; ch: EventChannel; data: unknown }
 
-export type UiLocale = 'sk' | 'en'
+/** Jazyky rozhrania. Hebrejčina sa píše sprava doľava (RTL_LOCALES). */
+export const UI_LOCALES = ['sk', 'en', 'cs', 'de', 'hu', 'fr', 'es', 'ru', 'he'] as const
+export type UiLocale = (typeof UI_LOCALES)[number]
+/** Názvy jazykov v danom jazyku (v ponuke ich nájde aj ten, kto jazyku rozhrania nerozumie). */
+export const LOCALE_NAMES: Record<UiLocale, string> = { sk: 'Slovenčina', en: 'English', cs: 'Čeština', de: 'Deutsch', hu: 'Magyar', fr: 'Français', es: 'Español', ru: 'Русский', he: 'עברית' }
+export const RTL_LOCALES: readonly UiLocale[] = ['he']
+
+export function isUiLocale(v: unknown): v is UiLocale {
+  return typeof v === 'string' && (UI_LOCALES as readonly string[]).includes(v)
+}
+
+/** Jazyk systému (napr. „cs-CZ“, „iw“) → jazyk rozhrania; neznámy → angličtina. */
+export function pickUiLocale(requested: string | null | undefined): UiLocale {
+  let base = String(requested ?? '').toLowerCase().split(/[-_]/)[0] ?? ''
+  if (base === 'iw') base = 'he'
+  return isUiLocale(base) ? base : 'en'
+}
 
 /** Stav aktualizácií (spravuje main proces). */
 export interface UpdateState {

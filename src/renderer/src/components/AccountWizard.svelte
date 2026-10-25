@@ -9,6 +9,7 @@
     Security
   } from '../../../shared/ipc'
   import { t, type MessageKey } from '../i18n/index.svelte'
+  import { oauthCancel, oauthProviderName, oauthSignIn } from '../lib/oauth.svelte'
 
   let { onDone, onCancel }: { onDone: (acc: AccountSummary) => void; onCancel: () => void } = $props()
 
@@ -27,6 +28,9 @@
   let test = $state<ConnectionTestResult | null>(null)
   let error = $state<string | null>(null)
   let secureMissing = $state(false)
+  /** Prihlásenie cez Microsoft/Google: prebieha / dokončené (ID prihlásenia). */
+  let oauthWaiting = $state<string | null>(null)
+  let oauthFlow = $state<string | null>(null)
   let root: HTMLElement | undefined = $state()
 
   const emailValid = $derived(/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim()))
@@ -46,7 +50,7 @@
   async function submitIdentity(ev: SubmitEvent): Promise<void> {
     ev.preventDefault()
     showErrors = true
-    if (!emailValid || !password) return
+    if (!emailValid) return
     error = null
     step = 'discovering'
     try {
@@ -70,7 +74,8 @@
     if (!settings) return
     const acc = await window.doar.invoke('accounts.add', {
       settings: $state.snapshot(settings) as AccountSettings,
-      password,
+      password: oauthFlow ? '' : password,
+      ...(oauthFlow ? { oauth: { flowId: oauthFlow } } : {}),
       rememberPassword: remember
     })
     onDone(acc)
@@ -82,6 +87,7 @@
     error = null
     test = null
     secureMissing = false
+    oauthFlow = null
     try {
       test = await window.doar.invoke('accounts.test', { settings: $state.snapshot(settings) as AccountSettings, password })
       if (test.imap.ok && test.smtp.ok) await save(true)
@@ -92,6 +98,37 @@
     } finally {
       busy = false
     }
+  }
+
+  /** Prihlásenie v prehliadači → overenie spojenia tokenom → uloženie konta. */
+  async function signInWithProvider(): Promise<void> {
+    if (!settings || !discovery?.oauth || busy) return
+    busy = true
+    error = null
+    test = null
+    secureMissing = false
+    oauthFlow = null
+    try {
+      const r = await oauthSignIn(discovery.oauth, email.trim(), (id) => (oauthWaiting = id))
+      oauthWaiting = null
+      oauthFlow = r.flowId
+      if (r.email && r.email !== settings.email.toLowerCase()) {
+        settings.email = r.email
+        settings.username = r.email
+      }
+      test = await window.doar.invoke('accounts.test', { settings: $state.snapshot(settings) as AccountSettings, password: '', oauth: { flowId: r.flowId } })
+      if (test.imap.ok && test.smtp.ok) await save(true)
+    } catch (e) {
+      if ((e as { code?: string }).code === 'SECURE_STORAGE_UNAVAILABLE') secureMissing = true
+      else error = errText(e)
+    } finally {
+      oauthWaiting = null
+      busy = false
+    }
+  }
+
+  function cancelSignIn(): void {
+    oauthCancel(oauthWaiting)
   }
 
   async function saveSessionOnly(): Promise<void> {
@@ -168,8 +205,8 @@
         </label>
         <label class="field">
           <span>{t('wizard.password')}</span>
-          <input type="password" bind:value={password} autocomplete="current-password" required aria-invalid={showErrors && !password} disabled={step === 'discovering'} />
-          {#if showErrors && !password}<small class="err">{t('wizard.required')}</small>{/if}
+          <input type="password" bind:value={password} autocomplete="current-password" disabled={step === 'discovering'} />
+          <small>{t('wizard.passwordHint')}</small>
         </label>
 
         <p class="note">{t('wizard.discoveryNote')}</p>
@@ -185,7 +222,18 @@
     {:else if step === 'settings' && settings && discovery}
       <p class="lead" aria-live="polite">{sourceText}</p>
 
-      {#if discovery.unsupportedAuth}
+      {#if discovery.oauth}
+        <div class="oauth">
+          <p>{t(`oauth.intro.${discovery.oauth}` as MessageKey)}</p>
+          {#if oauthWaiting}
+            <p class="note" aria-live="polite">{t('oauth.waiting')}</p>
+            <button type="button" class="btn" onclick={cancelSignIn}>{t('oauth.cancel')}</button>
+          {:else}
+            <button type="button" class="btn btn-primary" onclick={signInWithProvider} disabled={busy}>{t('oauth.signIn', { provider: oauthProviderName(discovery.oauth) })}</button>
+          {/if}
+        </div>
+        {#if discovery.needsAppPassword}<p class="note">{t('oauth.orAppPassword')}</p>{/if}
+      {:else if discovery.unsupportedAuth}
         <p class="alert error" role="alert">{t('wizard.oauthUnsupported')}</p>
       {:else if discovery.needsAppPassword}
         <p class="alert info">{t('wizard.appPassword')}</p>
@@ -200,6 +248,12 @@
           <dt>{t('wizard.username')}</dt>
           <dd>{settings.username}</dd>
         </dl>
+        {#if discovery.oauth !== 'microsoft' && !discovery.unsupportedAuth}
+          <label class="field">
+            <span>{discovery.needsAppPassword ? t('wizard.appPasswordLabel') : t('wizard.password')}</span>
+            <input type="password" bind:value={password} autocomplete="current-password" />
+          </label>
+        {/if}
       {:else}
         {#each [['imap', 'wizard.incoming'], ['smtp', 'wizard.outgoing']] as const as [proto, title] (proto)}
           <fieldset>
@@ -229,10 +283,12 @@
             <input type="text" bind:value={settings.username} spellcheck="false" autocapitalize="off" />
             <small>{t('wizard.username.hint')}</small>
           </label>
-          <label class="field grow">
-            <span>{t('wizard.password')}</span>
-            <input type="password" bind:value={password} autocomplete="current-password" />
-          </label>
+          {#if discovery.oauth !== 'microsoft'}
+            <label class="field grow">
+              <span>{discovery.needsAppPassword ? t('wizard.appPasswordLabel') : t('wizard.password')}</span>
+              <input type="password" bind:value={password} autocomplete="current-password" />
+            </label>
+          {/if}
         </div>
         <label class="check">
           <input type="checkbox" bind:checked={settings.saveSentCopy} />
@@ -278,9 +334,9 @@
         <span class="spacer"></span>
         {#if secureMissing}
           <button type="button" class="btn btn-primary" onclick={saveSessionOnly} disabled={busy}>{t('wizard.rememberSession')}</button>
-        {:else}
-          <button type="button" class="btn btn-primary" onclick={verifyAndSave} disabled={busy || !!discovery.unsupportedAuth || !password}>
-            {busy ? t('wizard.verifying') : t('wizard.verifyAndSave')}
+        {:else if discovery.oauth !== 'microsoft'}
+          <button type="button" class={discovery.oauth ? 'btn' : 'btn btn-primary'} onclick={verifyAndSave} disabled={busy || !!discovery.unsupportedAuth || !password}>
+            {busy && !oauthWaiting && !oauthFlow ? t('wizard.verifying') : t('wizard.verifyAndSave')}
           </button>
         {/if}
       </div>
@@ -289,6 +345,20 @@
 </section>
 
 <style>
+  .oauth {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.5rem;
+    margin: 0.4rem 0 0.8rem;
+    padding: 0.8rem 1rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm, 8px);
+    background: var(--accent-soft);
+  }
+  .oauth p {
+    margin: 0;
+  }
   .wizard {
     display: grid;
     place-items: center;
@@ -409,11 +479,11 @@
   .alert.error {
     background: color-mix(in srgb, var(--danger) 12%, transparent);
     color: var(--text);
-    border-left: 3px solid var(--danger);
+    border-inline-start: 3px solid var(--danger);
   }
   .alert.info {
     background: var(--accent-soft);
-    border-left: 3px solid var(--accent);
+    border-inline-start: 3px solid var(--accent);
   }
   .results {
     list-style: none;
@@ -446,11 +516,11 @@
     gap: 0.4rem;
     flex-wrap: wrap;
     width: 100%;
-    padding-left: 1.3rem;
+    padding-inline-start: 1.3rem;
   }
   details {
     width: 100%;
-    padding-left: 1.3rem;
+    padding-inline-start: 1.3rem;
     font-size: 0.8rem;
     color: var(--text-muted);
   }

@@ -237,7 +237,7 @@
   .search {
     flex: 1;
     max-width: 34rem;
-    margin-left: auto;
+    margin-inline-start: auto;
     display: flex;
     align-items: center;
     gap: 0.4rem;
@@ -245,7 +245,7 @@
   }
   .glass {
     position: absolute;
-    left: 0.6rem;
+    inset-inline-start: 0.6rem;
     color: var(--text-muted);
     pointer-events: none;
     font-size: 1.05rem;
@@ -253,7 +253,8 @@
   .search input {
     flex: 1;
     min-width: 8rem;
-    padding: 0.38em 0.6em 0.38em 1.9rem;
+    padding-block: 0.38em;
+    padding-inline: 1.9rem 0.6em;
     border: 1px solid var(--border);
     border-radius: var(--radius-sm);
     background: var(--bg);

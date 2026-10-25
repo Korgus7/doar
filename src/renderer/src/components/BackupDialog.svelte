@@ -357,7 +357,7 @@
   th,
   td {
     padding: 0.35rem 0.6rem;
-    text-align: left;
+    text-align: start;
     border-bottom: 1px solid var(--border);
   }
   th {
@@ -367,7 +367,7 @@
     font-weight: 600;
   }
   .n {
-    text-align: right;
+    text-align: end;
     font-variant-numeric: tabular-nums;
   }
   tr.problem td {
@@ -380,7 +380,7 @@
   }
   .alert.error {
     padding: 0.5rem 0.75rem;
-    border-left: 3px solid var(--danger);
+    border-inline-start: 3px solid var(--danger);
     background: color-mix(in srgb, var(--danger) 12%, transparent);
   }
   .actions {

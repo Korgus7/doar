@@ -487,7 +487,7 @@
     {/if}
     <label class="row">
       <span>{t('compose.subject')}</span>
-      <input bind:value={subject} type="text" disabled={sending} />
+      <input bind:value={subject} type="text" dir="auto" disabled={sending} />
     </label>
   </form>
 
@@ -517,7 +517,7 @@
   {#if format === 'html' && ready}
     <RichEditor bind:this={editorRef} {html} label={t('compose.body')} disabled={sending} onchange={(h) => (html = h)} />
   {:else if format === 'plain'}
-    <textarea bind:this={bodyEl} bind:value={body} aria-label={t('compose.body')} spellcheck="true" disabled={sending}></textarea>
+    <textarea bind:this={bodyEl} bind:value={body} aria-label={t('compose.body')} spellcheck="true" dir="auto" disabled={sending}></textarea>
   {/if}
 
   {#if error}<p class="error" role="alert">{error}</p>{/if}
@@ -551,7 +551,7 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    margin-left: auto;
+    margin-inline-start: auto;
     font-size: 0.8rem;
     color: var(--text-muted);
   }
@@ -593,6 +593,8 @@
     font-size: 0.85rem;
   }
   textarea {
+    /* Každý riadok podľa svojho písma (hebrejčina sprava, slovenčina zľava). */
+    unicode-bidi: plaintext;
     flex: 1;
     min-height: 0;
     width: 100%;
@@ -622,7 +624,8 @@
     align-items: center;
     gap: 0.35rem;
     max-width: 20rem;
-    padding: 0.2rem 0.3rem 0.2rem 0.6rem;
+    padding-block: 0.2rem;
+    padding-inline: 0.6rem 0.3rem;
     border: 1px solid var(--border);
     border-radius: var(--radius-sm);
     background: var(--surface-2);

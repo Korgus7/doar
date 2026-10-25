@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, onDestroy, tick } from 'svelte'
-  import { Editor } from '@tiptap/core'
+  import { Editor, Extension } from '@tiptap/core'
   import StarterKit from '@tiptap/starter-kit'
   import { t } from '../i18n/index.svelte'
   import { textToHtml } from '../lib/compose-html'
@@ -16,6 +16,28 @@
     onchange,
     label
   }: { html: string; disabled?: boolean; onchange: (html: string) => void; label: string } = $props()
+
+  /**
+   * Smer textu podľa obsahu každého odseku a nadpisu (hebrejčina sprava doľava, slovenčina zľava).
+   * Len textové bloky – citácia a zoznamy majú smer rozhrania. dir="auto" ide aj do odoslanej správy.
+   */
+  const AutoDir = Extension.create({
+    name: 'doarAutoDir',
+    addGlobalAttributes() {
+      return [
+        {
+          types: ['paragraph', 'heading'],
+          attributes: {
+            dir: {
+              default: 'auto',
+              parseHTML: (el) => (['ltr', 'rtl', 'auto'].includes(el.getAttribute('dir') ?? '') ? el.getAttribute('dir') : 'auto'),
+              renderHTML: (attrs) => ({ dir: (attrs['dir'] as string | null) || 'auto' })
+            }
+          }
+        }
+      ]
+    }
+  })
 
   let el: HTMLDivElement | undefined = $state()
   let editor: Editor | null = $state(null)
@@ -34,10 +56,12 @@
           codeBlock: false,
           code: false,
           link: { openOnClick: false, autolink: true, protocols: ['mailto'], HTMLAttributes: { rel: null, target: null } }
-        })
+        }),
+        AutoDir
       ],
       content: html,
       editable: !disabled,
+
       editorProps: { attributes: { 'aria-label': label, 'aria-multiline': 'true', role: 'textbox', spellcheck: 'true', class: 'doar-editor' } },
       onUpdate: ({ editor: e }) => onchange(e.getHTML()),
       onTransaction: () => tickCount++
@@ -279,9 +303,10 @@
     margin: 0 0 0.6em;
   }
   .area :global(.doar-editor blockquote) {
-    margin: 0 0 0.6em 0.3em;
-    padding-left: 0.9em;
-    border-left: 3px solid var(--border);
+    margin: 0 0 0.6em;
+    margin-inline-start: 0.3em;
+    padding-inline-start: 0.9em;
+    border-inline-start: 3px solid var(--border);
     color: var(--text-muted);
   }
   .area :global(.doar-editor a) {
@@ -290,7 +315,7 @@
   .area :global(.doar-editor ul),
   .area :global(.doar-editor ol) {
     margin: 0 0 0.6em;
-    padding-left: 1.6em;
+    padding-inline-start: 1.6em;
   }
   .area :global(.doar-editor li p) {
     margin: 0;

@@ -101,7 +101,7 @@
     border: 0;
     border-radius: var(--radius-sm);
     background: none;
-    text-align: left;
+    text-align: start;
     cursor: pointer;
     color: var(--text);
   }

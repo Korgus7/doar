@@ -231,11 +231,7 @@
               <div class="line1">
                 <span class="mark" title={m.seen ? undefined : t('list.unread')}>{m.seen ? '' : '•'}</span>
                 <span class="from">
-                  {#if showRecipients}
-                    {m.to.join(', ') || t('list.unknownSender')}
-                  {:else}
-                    {m.fromName || m.fromAddr || t('list.unknownSender')}
-                  {/if}
+                  <bdi>{#if showRecipients}{m.to.join(', ') || t('list.unknownSender')}{:else}{m.fromName || m.fromAddr || t('list.unknownSender')}{/if}</bdi>
                 </span>
                 {#if m.localState === 'pending'}<span class="state" title={t('list.pending')}>⏳</span>{/if}
                 {#if !m.downloaded}<span class="state cloud" title={t('list.notDownloaded')} aria-label={t('list.notDownloaded')}>☁</span>{/if}
@@ -243,7 +239,7 @@
                 <span class="date">{listDate(m.date)}</span>
               </div>
               <div class="line2">
-                <span class="subject">{m.subject || t('list.noSubject')}</span>
+                <span class="subject"><bdi>{m.subject || t('list.noSubject')}</bdi></span>
                 {#if m.hasAttachments}<span class="clip" title={t('list.attachment')}>📎</span>{/if}
                 {#if isArchiveId(m.id)}
                   {#if m.flagged}<span class="star on" aria-label={t('reader.flagged')}>★</span>{/if}
@@ -259,7 +255,7 @@
                 {/if}
               </div>
               <div class="line3">
-                {#if searching}{@const f = folderById(m.folderId)}<span class="accname">{f ? folderLabel(f) : ''}{unified ? ` (${m.accountName})` : ''} · </span>{:else if unified}<span class="accname">{m.accountName} · </span>{/if}{m.snippet}
+                {#if searching}{@const f = folderById(m.folderId)}<span class="accname">{f ? folderLabel(f) : ''}{unified ? ` (${m.accountName})` : ''} · </span>{:else if unified}<span class="accname">{m.accountName} · </span>{/if}<bdi>{m.snippet}</bdi>
               </div>
             </div>
           {:else}
@@ -327,7 +323,8 @@
   .row {
     position: relative;
     height: 100%;
-    padding: 0.45rem 0.8rem 0.4rem 1rem;
+    padding-block: 0.45rem 0.4rem;
+    padding-inline: 1rem 0.8rem;
     border-bottom: 1px solid var(--border);
     cursor: default;
     display: flex;
@@ -365,7 +362,7 @@
   }
   .acc {
     position: absolute;
-    left: 0;
+    inset-inline-start: 0;
     top: 0;
     bottom: 0;
     width: 4px;
@@ -381,7 +378,7 @@
     flex: 0 0 0.5rem;
     color: var(--accent);
     font-weight: 700;
-    margin-left: -0.6rem;
+    margin-inline-start: -0.6rem;
   }
   .from,
   .subject {

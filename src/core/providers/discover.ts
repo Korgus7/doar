@@ -31,7 +31,8 @@ function fromKnown(p: KnownProvider, email: string, displayName: string): Discov
     settings: { ...base(email, displayName), imap: { ...p.imap }, smtp: { ...p.smtp }, saveSentCopy: p.saveSentCopy, providerKey: p.key },
     source: 'known',
     unsupportedAuth: p.unsupportedAuth,
-    needsAppPassword: p.needsAppPassword
+    needsAppPassword: p.needsAppPassword,
+    oauth: p.oauth
   }
 }
 
@@ -47,7 +48,7 @@ function fromAutoconfig(a: AutoconfigResult, email: string, displayName: string,
     },
     source,
     unsupportedAuth: a.imap.oauthOnly ? 'oauth2' : null,
-    needsAppPassword: false
+    needsAppPassword: false, oauth: null
   }
 }
 
@@ -136,7 +137,7 @@ export async function discover(email: string, displayName: string, n: DiscoveryN
     settings: { ...base(email, displayName), imap: { host: `imap.${d}`, port: 993, security: 'tls' }, smtp: { host: `smtp.${d}`, port: 465, security: 'tls' } },
     source: 'none',
     unsupportedAuth: null,
-    needsAppPassword: false
+    needsAppPassword: false, oauth: null
   })
   if (!domain) throw Object.assign(new Error('Neplatná e-mailová adresa'), { code: 'INVALID_EMAIL' })
 
@@ -163,7 +164,7 @@ export async function discover(email: string, displayName: string, n: DiscoveryN
       settings: { ...base(email, displayName), imap: srvResult.imap, smtp: srvResult.smtp ?? { host: srvResult.imap.host, port: 465, security: 'tls' } },
       source: 'srv',
       unsupportedAuth: null,
-      needsAppPassword: false
+      needsAppPassword: false, oauth: null
     }
   }
 
@@ -199,7 +200,7 @@ export async function discover(email: string, displayName: string, n: DiscoveryN
       settings: { ...base(email, displayName), imap: g.imap, smtp: g.smtp ?? { host: g.imap.host, port: 465, security: 'tls' } },
       source: 'guess',
       unsupportedAuth: null,
-      needsAppPassword: false
+      needsAppPassword: false, oauth: null
     }
   }
   return fallback(domain)

@@ -1,14 +1,20 @@
 import { app, dialog, Menu, type BrowserWindow, type MenuItemConstructorOptions } from 'electron'
 import sk from '../renderer/src/i18n/sk.json'
 import en from '../renderer/src/i18n/en.json'
-import type { UiLocale } from '../shared/ipc'
+import cs from '../renderer/src/i18n/cs.json'
+import de from '../renderer/src/i18n/de.json'
+import hu from '../renderer/src/i18n/hu.json'
+import fr from '../renderer/src/i18n/fr.json'
+import es from '../renderer/src/i18n/es.json'
+import ru from '../renderer/src/i18n/ru.json'
+import he from '../renderer/src/i18n/he.json'
+import { LOCALE_NAMES, UI_LOCALES, pickUiLocale, type UiLocale } from '../shared/ipc'
 
-const DICT = { sk, en } as const
+const DICT: Record<UiLocale, Record<Key, string>> = { sk, en, cs, de, hu, fr, es, ru, he }
 type Key = keyof typeof sk
 
 export function systemUiLocale(): UiLocale {
-  const base = app.getLocale().toLowerCase().split(/[-_]/)[0]
-  return base === 'sk' || base === 'cs' ? 'sk' : 'en'
+  return pickUiLocale(app.getLocale())
 }
 
 /** Preklad pre main proces (menu, oznámenia). */
@@ -60,10 +66,7 @@ export function buildMenu(locale: UiLocale, getWindow: () => BrowserWindow | nul
         {
           // Dvojjazyčný názov – nájde ho aj ten, kto jazyku rozhrania nerozumie.
           label: 'Jazyk / Language',
-          submenu: [
-            { label: 'Slovenčina', type: 'radio', checked: locale === 'sk', click: () => send('locale:sk') },
-            { label: 'English', type: 'radio', checked: locale === 'en', click: () => send('locale:en') }
-          ]
+          submenu: UI_LOCALES.map((l) => ({ label: LOCALE_NAMES[l], type: 'radio' as const, checked: locale === l, click: () => send(`locale:${l}`) }))
         },
         { type: 'separator' },
         { role: 'togglefullscreen', label: t('menu.fullscreen') },

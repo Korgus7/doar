@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte'
   import type { AppInfo } from '../../shared/ipc'
+  import { isUiLocale } from '../../shared/ipc'
   import { t, i18n, setLocale, type Locale, type MessageKey } from './i18n/index.svelte'
   import { mail, loadAccounts, loadFolders, refreshList, selectFolder, affectsCurrent } from './lib/mail.svelte'
   import { timeOnly } from './lib/format'
@@ -72,7 +73,7 @@
         else if (action === 'restore' && mail.accounts.length) restore.open = true
         else if (action === 'open-archive') void openArchive()
         else if (action === 'check-updates') checkUpdates()
-        else if (action === 'locale:sk' || action === 'locale:en') setLocale(action.slice(7) as Locale)
+        else if (action.startsWith('locale:') && isUiLocale(action.slice(7))) setLocale(action.slice(7) as Locale)
         else if (action === 'settings') openSettings({ tab: mail.accounts.length ? 'accounts' : 'general' })
         else if (action.startsWith('open-message:')) {
           // Kliknutie na oznámenie o novej pošte: doručená pošta a tá správa.

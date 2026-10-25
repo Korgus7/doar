@@ -3,12 +3,13 @@
   import { timeOnly } from '../lib/format'
   import { tick } from 'svelte'
   import type { AccountDetails, AppSettings, ConnectionTestResult, ServerSettings } from '../../../shared/ipc'
-  import { ACCOUNT_COLORS } from '../../../shared/ipc'
-  import { t, setLocale, localeChoice, type Locale, type MessageKey } from '../i18n/index.svelte'
+  import { ACCOUNT_COLORS, LOCALE_NAMES } from '../../../shared/ipc'
+  import { t, setLocale, localeChoice, AVAILABLE_LOCALES, type Locale, type MessageKey } from '../i18n/index.svelte'
   import { mail, loadAccounts, selectFolder } from '../lib/mail.svelte'
   import { errorText, showToast } from '../lib/actions.svelte'
   import { settingsUi } from '../lib/settings.svelte'
   import AiSettings from './AiSettings.svelte'
+  import { oauthProviderName, oauthSignIn } from '../lib/oauth.svelte'
 
   let dialogEl: HTMLDivElement | undefined = $state()
   let details = $state<AccountDetails | null>(null)
@@ -75,6 +76,22 @@
     if (r.ok) return t('wizard.ok')
     const key = `errors.${r.code ?? 'UNKNOWN'}` as MessageKey
     return t(key) !== key ? t(key) : t('errors.UNKNOWN')
+  }
+
+  /** Konto prihlásené cez Microsoft/Google: nové prihlásenie (vypršané alebo zrušené prihlásenie). */
+  async function reauth(): Promise<void> {
+    if (!details?.oauthProvider || busy) return
+    busy = true
+    serverResult = null
+    try {
+      const r = await oauthSignIn(details.oauthProvider, details.email)
+      await window.doar.invoke('accounts.reauth', { id: details.id, flowId: r.flowId })
+      serverResult = { ok: true, test: null, text: t('account.reauthDone') }
+    } catch (err) {
+      serverResult = { ok: false, test: null, text: errorText(err) }
+    } finally {
+      busy = false
+    }
   }
 
   async function saveServer(e: SubmitEvent): Promise<void> {
@@ -229,11 +246,18 @@
                       </label>
                     </fieldset>
                   {/each}
-                  <label class="field">
-                    <span>{t('account.newPassword')}</span>
-                    <input bind:value={server.password} type="password" autocomplete="new-password" />
-                    <small>{t('account.newPasswordHint')}</small>
-                  </label>
+                  {#if details.authType === 'oauth2'}
+                    <div class="field">
+                      <span>{t('account.oauthVia', { provider: oauthProviderName(details.oauthProvider) })}</span>
+                      <div><button class="btn" type="button" onclick={() => void reauth()} disabled={busy}>{t('account.reauth', { provider: oauthProviderName(details.oauthProvider) })}</button></div>
+                    </div>
+                  {:else}
+                    <label class="field">
+                      <span>{t('account.newPassword')}</span>
+                      <input bind:value={server.password} type="password" autocomplete="new-password" />
+                      <small>{t('account.newPasswordHint')}</small>
+                    </label>
+                  {/if}
                   <div class="row">
                     <button class="btn" type="submit" disabled={busy}>{busy ? t('account.verifying') : t('account.verifySave')}</button>
                   </div>
@@ -273,8 +297,7 @@
               }}
             >
               <option value="auto">{t('settings.language.auto')}</option>
-              <option value="sk">{t('general.languageSk')}</option>
-              <option value="en">{t('general.languageEn')}</option>
+              {#each AVAILABLE_LOCALES as l (l)}<option value={l}>{LOCALE_NAMES[l]}</option>{/each}
             </select>
           </label>
           {#if app}
@@ -374,7 +397,7 @@
     border-bottom-color: var(--accent);
   }
   .x {
-    margin-left: auto;
+    margin-inline-start: auto;
     align-self: flex-start;
     border: 0;
     background: none;
@@ -398,7 +421,7 @@
     list-style: none;
     margin: 0;
     padding: 0.6rem 0.4rem;
-    border-right: 1px solid var(--border);
+    border-inline-end: 1px solid var(--border);
     background: var(--surface-2);
     overflow: auto;
   }
@@ -411,7 +434,7 @@
     border: 0;
     border-radius: var(--radius-sm);
     background: none;
-    text-align: left;
+    text-align: start;
     cursor: pointer;
     color: var(--text);
   }
@@ -576,7 +599,7 @@
   }
   .result ul {
     margin: 0;
-    padding-left: 1.2rem;
+    padding-inline-start: 1.2rem;
   }
   .danger-zone {
     margin-top: 1.4rem;

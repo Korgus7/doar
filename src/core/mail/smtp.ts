@@ -2,6 +2,21 @@ import SMTPConnection from 'nodemailer/lib/smtp-connection'
 import net from 'node:net'
 import type { ServerSettings } from '../../shared/ipc'
 import { classifyError } from './connection-test'
+import type { Credential } from './imap'
+
+/** Prihlásenie na SMTP: heslo, alebo XOAUTH2 s prístupovým tokenom. */
+export function smtpLogin(user: string, cred: Credential): Parameters<SMTPConnection['login']>[0] {
+  if (typeof cred === 'string') return { user, pass: cred }
+  const token = cred.accessToken
+  return {
+    user,
+    method: 'XOAUTH2',
+    oauth2: {
+      getToken: (_retry: boolean, cb: (e: Error | null, t?: string) => void) => cb(null, token),
+      buildXOAuth2Token: (t: string) => Buffer.from(`user=${user}\x01auth=Bearer ${t}\x01\x01`).toString('base64')
+    }
+  } as unknown as Parameters<SMTPConnection['login']>[0]
+}
 
 /**
  * Odoslanie hotovej správy cez SMTP so sledovaním fázy.
@@ -19,7 +34,7 @@ export type SendOutcome =
 
 const TIMEOUT = 30_000
 
-export function sendRaw(s: ServerSettings, user: string, pass: string, envelope: { from: string; to: string[] }, raw: Buffer): Promise<SendOutcome> {
+export function sendRaw(s: ServerSettings, user: string, cred: Credential, envelope: { from: string; to: string[] }, raw: Buffer): Promise<SendOutcome> {
   return new Promise((resolve) => {
     let phase: 'connect' | 'login' | 'send' | 'done' = 'connect'
     let settled = false
@@ -63,7 +78,7 @@ export function sendRaw(s: ServerSettings, user: string, pass: string, envelope:
     conn.connect((err) => {
       if (err) return fail(err)
       phase = 'login'
-      conn.login({ user, pass }, (err2) => {
+      conn.login(smtpLogin(user, cred), (err2) => {
         if (err2) return fail(err2)
         phase = 'send'
         conn.send(envelope, raw, (err3, info) => {

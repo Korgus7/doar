@@ -2,6 +2,7 @@ import type { CoreContext } from './handlers'
 import { getAccount, saveServerSettings, storedPassword, validateSettings } from './accounts'
 import { passwordKey } from './secrets'
 import { testConnection } from './mail/connection-test'
+import type { Credential } from './mail/imap'
 import type { ConnectionTestResult, ServerSettings } from '../shared/ipc'
 import { logger } from './log'
 
@@ -31,10 +32,14 @@ export async function updateServer(
     saveSentCopy: acc.saveSentCopy,
     providerKey: null
   })
-  const newPassword = typeof input?.password === 'string' && input.password ? input.password.slice(0, 4096) : undefined
-  const password = newPassword ?? (await storedPassword(ctx.db, ctx.secrets, ctx.sessionSecrets, id))
-  if (!password) throw err('PASSWORD_REQUIRED', 'Zadajte heslo')
-  const result = await test(settings, password)
+  const newPassword = acc.authType === 'password' && typeof input?.password === 'string' && input.password ? input.password.slice(0, 4096) : undefined
+  let cred: Credential | null
+  if (acc.authType === 'oauth2') {
+    if (!ctx.oauth) throw err('OAUTH_NOT_CONFIGURED', 'Prihlásenie cez poskytovateľa nie je dostupné')
+    cred = { accessToken: await ctx.oauth.accessToken(id, acc.passwordStorage) }
+  } else cred = newPassword ?? (await storedPassword(ctx.db, ctx.secrets, ctx.sessionSecrets, id))
+  if (!cred) throw err('PASSWORD_REQUIRED', 'Zadajte heslo')
+  const result = await test(settings, cred)
   if (!result.imap.ok || !result.smtp.ok) return { saved: false, test: result }
   await saveServerSettings(ctx.db, ctx.secrets, ctx.sessionSecrets, id, settings, newPassword)
   await ctx.sync.restart(id)
@@ -52,6 +57,7 @@ export async function removeAccount(ctx: CoreContext, id: number): Promise<void>
   await ctx.sync.stop(id)
   await ctx.secrets.delete(passwordKey(id)).catch(() => {})
   await ctx.sessionSecrets.delete(passwordKey(id)).catch(() => {})
+  await ctx.oauth?.forget(id)
   ctx.db.prepare('DELETE FROM accounts WHERE id = ?').run(id) // priečinky, správy, fronta, koncepty: ON DELETE CASCADE
   ctx.db.prepare('DELETE FROM jobs WHERE account_id = ?').run(id)
   ctx.emit('accounts.changed', null)

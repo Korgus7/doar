@@ -28,7 +28,8 @@
     display: flex;
     align-items: center;
     gap: 0.9rem;
-    padding: 0.55rem 0.6rem 0.55rem 1rem;
+    padding-block: 0.55rem;
+    padding-inline: 1rem 0.6rem;
     border-radius: var(--radius);
     background: #2b3038;
     color: #f2f4f7;

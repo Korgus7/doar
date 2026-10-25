@@ -1,9 +1,15 @@
 import net from 'node:net'
 import type { Db } from './store/db'
-import type { AccountDetails, AccountPatch, AccountSettings, AccountSummary, AddAccountInput, ServerSettings } from '../shared/ipc'
+import type { AccountDetails, AccountPatch, AccountSettings, AccountSummary, AddAccountInput, OAuthProvider, ServerSettings } from '../shared/ipc'
 import { ACCOUNT_COLORS } from '../shared/ipc'
 import { passwordKey, type Secrets } from './secrets'
 import { emailDomain } from './providers/discover'
+import type { OAuthService } from './oauth/oauth'
+
+/** Poskytovateľ prihlásenia podľa známeho poskytovateľa konta. */
+export function oauthProviderOf(providerKey: string | null | undefined): OAuthProvider | null {
+  return providerKey === 'microsoft' ? 'microsoft' : providerKey === 'gmail' ? 'google' : null
+}
 
 /** Farby kont v poradí pridávania (dobre rozlíšiteľné v svetlej aj tmavej téme). */
 const COLORS = ACCOUNT_COLORS
@@ -50,7 +56,7 @@ export function accountSummary(db: Db, id: number): AccountSummary | null {
 export function getAccount(db: Db, id: number): AccountDetails {
   const r = db
     .prepare(
-      `SELECT ${SUMMARY_COLS}, username, imap_host, imap_port, imap_security, smtp_host, smtp_port, smtp_security, save_sent_copy, password_storage,
+      `SELECT ${SUMMARY_COLS}, username, imap_host, imap_port, imap_security, smtp_host, smtp_port, smtp_security, save_sent_copy, password_storage, auth_type, provider_key,
               (SELECT COUNT(*) FROM outbox o WHERE o.account_id = accounts.id AND o.state IN ('queued','sending','error','uncertain')) AS pending
        FROM accounts WHERE id = ?`
     )
@@ -65,6 +71,8 @@ export function getAccount(db: Db, id: number): AccountDetails {
         smtp_security: 'tls' | 'starttls'
         save_sent_copy: number
         password_storage: 'os' | 'session'
+        auth_type: 'password' | 'oauth2'
+        provider_key: string | null
         pending: number
       })
     | undefined
@@ -81,6 +89,8 @@ export function getAccount(db: Db, id: number): AccountDetails {
     smtp: { host: r.smtp_host, port: r.smtp_port, security: r.smtp_security },
     saveSentCopy: r.save_sent_copy === 1,
     passwordStorage: r.password_storage,
+    authType: r.auth_type,
+    oauthProvider: r.auth_type === 'oauth2' ? oauthProviderOf(r.provider_key) : null,
     pendingOutbox: r.pending
   }
 }
@@ -146,9 +156,21 @@ export async function storedPassword(db: Db, secrets: Secrets, sessionSecrets: S
  * Uloží nové konto. Heslo ide do šifrovaného úložiska systému, alebo – ak to používateľ zvolil –
  * len do pamäte do zatvorenia aplikácie. Nikdy nie do databázy.
  */
-export async function addAccount(db: Db, secrets: Secrets, sessionSecrets: Secrets, input: AddAccountInput): Promise<AccountSummary> {
+export async function addAccount(db: Db, secrets: Secrets, sessionSecrets: Secrets, input: AddAccountInput, oauth?: OAuthService): Promise<AccountSummary> {
   const settings = validateSettings(input?.settings)
-  if (typeof input.password !== 'string' || input.password.length === 0) throw err('PASSWORD_REQUIRED', 'Chýba heslo')
+  const flowId = typeof input?.oauth?.flowId === 'string' ? input.oauth.flowId : null
+  if (flowId) {
+    if (!oauth) throw err('OAUTH_NOT_CONFIGURED', 'Prihlásenie cez poskytovateľa nie je dostupné')
+    oauth.flowCredential(flowId) // OAUTH_REQUIRED, ak prihlásenie neprebehlo
+    // Prihlásený účet je ten správny – adresa z prihlásenia má prednosť pred napísanou.
+    const signedIn = oauth.flowEmail(flowId)
+    if (signedIn && signedIn !== settings.email.toLowerCase()) {
+      settings.email = signedIn
+      settings.username = signedIn
+    }
+    const provider = oauth.flowProvider(flowId)
+    if (provider) settings.providerKey = provider === 'google' ? 'gmail' : 'microsoft'
+  } else if (typeof input.password !== 'string' || input.password.length === 0) throw err('PASSWORD_REQUIRED', 'Chýba heslo')
   const remember = input.rememberPassword !== false
   if (remember && !(await secrets.available())) {
     throw err('SECURE_STORAGE_UNAVAILABLE', 'Bezpečné úložisko hesiel systému nie je dostupné')
@@ -167,7 +189,7 @@ export async function addAccount(db: Db, secrets: Secrets, sessionSecrets: Secre
     .prepare(
       `INSERT INTO accounts (email, display_name, name, imap_host, imap_port, imap_security, smtp_host, smtp_port, smtp_security,
         auth_type, username, provider_key, save_sent_copy, color, sort_order, password_storage)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'password', ?, ?, ?, ?, ?, ?)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        RETURNING ${SUMMARY_COLS}`
     )
     .get(
@@ -180,6 +202,7 @@ export async function addAccount(db: Db, secrets: Secrets, sessionSecrets: Secre
       settings.smtp.host,
       settings.smtp.port,
       settings.smtp.security,
+      flowId ? 'oauth2' : 'password',
       settings.username,
       settings.providerKey,
       settings.saveSentCopy ? 1 : 0,
@@ -189,7 +212,8 @@ export async function addAccount(db: Db, secrets: Secrets, sessionSecrets: Secre
     ) as unknown as AccountSummary
 
   try {
-    await (remember ? secrets : sessionSecrets).set(passwordKey(row.id), input.password)
+    if (flowId) await oauth!.saveForAccount(flowId, row.id, remember ? 'os' : 'session')
+    else await (remember ? secrets : sessionSecrets).set(passwordKey(row.id), input.password)
   } catch (e) {
     // Bez hesla by konto nefungovalo – radšej ho nevytvoríme vôbec.
     db.prepare('DELETE FROM accounts WHERE id = ?').run(row.id)

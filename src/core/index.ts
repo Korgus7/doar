@@ -17,6 +17,7 @@ import { ArchiveManager } from './archive/archive'
 import { FileGrants, cleanOpenDir } from './files'
 import { collectBlobs } from './account-admin'
 import { getSettings } from './settings'
+import { OAuthService } from './oauth/oauth'
 import type { CoreToMain, MainToCore, PortMessage } from '../shared/ipc'
 import { isRequestChannel } from '../shared/ipc'
 
@@ -86,7 +87,9 @@ function init(dataDir: string, appVersion: string): void {
   const blobs = new BlobStore(join(dataDir, 'blobs'))
   const store = new MailStore(db)
   const emit: Parameters<typeof createHandlers>[0]['emit'] = (ch, data) => broadcast({ kind: 'evt', ch, data })
+  const oauth = new OAuthService({ secrets, sessionSecrets })
   const sync = new SyncManager({
+    oauth,
     db,
     store,
     blobs,
@@ -138,6 +141,7 @@ function init(dataDir: string, appVersion: string): void {
     secrets,
     sessionSecrets,
     net: realNet,
+    oauth,
     emit
   })
   log.info('jadro pripravené', { node: process.versions.node, sqlite: sqliteVersion(db) })

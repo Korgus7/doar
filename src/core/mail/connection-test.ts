@@ -4,6 +4,7 @@ import net from 'node:net'
 import type { AccountSettings, ConnectionErrorCode, ConnectionTestResult, ProtocolTestResult, ServerSettings } from '../../shared/ipc'
 import { certNames, peekCertHosts } from '../providers/net'
 import { logger } from '../log'
+import { imapAuth, type Credential } from './imap'
 
 const log = logger('conn-test')
 const TIMEOUT = 15_000
@@ -67,13 +68,13 @@ async function withCertHosts(r: ProtocolTestResult, s: ServerSettings, protocol:
   return names.length ? { ...r, certHosts: names } : r
 }
 
-export async function testImap(s: ServerSettings, user: string, pass: string): Promise<ProtocolTestResult> {
+export async function testImap(s: ServerSettings, user: string, cred: Credential): Promise<ProtocolTestResult> {
   const client = new ImapFlow({
     host: s.host,
     port: s.port,
     secure: s.security === 'tls',
     doSTARTTLS: s.security === 'starttls' ? true : undefined,
-    auth: { user, pass },
+    auth: imapAuth(user, cred),
     tls: tlsOptions(s),
     logger: false,
     emitLogs: false,
@@ -98,13 +99,13 @@ export async function testImap(s: ServerSettings, user: string, pass: string): P
   }
 }
 
-export async function testSmtp(s: ServerSettings, user: string, pass: string): Promise<ProtocolTestResult> {
+export async function testSmtp(s: ServerSettings, user: string, cred: Credential): Promise<ProtocolTestResult> {
   const transport = nodemailer.createTransport({
     host: s.host,
     port: s.port,
     secure: s.security === 'tls',
     requireTLS: s.security === 'starttls',
-    auth: { user, pass },
+    auth: typeof cred === 'string' ? { user, pass: cred } : { type: 'OAuth2', user, accessToken: cred.accessToken },
     tls: tlsOptions(s),
     connectionTimeout: TIMEOUT,
     greetingTimeout: TIMEOUT,
@@ -123,7 +124,7 @@ export async function testSmtp(s: ServerSettings, user: string, pass: string): P
   }
 }
 
-export async function testConnection(settings: AccountSettings, password: string): Promise<ConnectionTestResult> {
+export async function testConnection(settings: AccountSettings, password: Credential): Promise<ConnectionTestResult> {
   const [imap, smtp] = await Promise.all([
     testImap(settings.imap, settings.username, password),
     testSmtp(settings.smtp, settings.username, password)

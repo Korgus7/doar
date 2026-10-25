@@ -7,6 +7,7 @@ import type { CoreEvents, EventChannel, SyncStatus } from '../../shared/ipc'
 import type { ImapFlow } from 'imapflow'
 import { AccountSync, type AccountRow, type MovePayload, type SyncDeps } from './account-sync'
 import { createImapClient } from '../mail/imap'
+import type { OAuthService } from '../oauth/oauth'
 
 /** Spravuje synchronizáciu všetkých kont. */
 export class SyncManager {
@@ -25,6 +26,8 @@ export class SyncManager {
     emit<E extends EventChannel>(ch: E, data: CoreEvents[E]): void
     clientFactory?: SyncDeps['clientFactory']
     smtpSend?: SyncDeps['smtpSend']
+    /** Prihlásenie cez účet poskytovateľa (prístupové tokeny). */
+    oauth?: OAuthService
     /** Čas na „Vrátiť späť“ pred vykonaním presunu na serveri (ms). */
     undoDelayMs?: number
     draftDelayMs?: number
@@ -40,14 +43,21 @@ export class SyncManager {
       clientFactory: opts.clientFactory,
       smtpSend: opts.smtpSend,
       onNewMail: opts.onNewMail,
-      getPassword: (acc) => (acc.password_storage === 'session' ? opts.sessionSecrets : opts.secrets).get(passwordKey(acc.id))
+      onAuthRejected: (acc) => opts.oauth?.invalidate(acc.id),
+      getPassword: async (acc) => {
+        if (acc.auth_type === 'oauth2') {
+          if (!opts.oauth) throw Object.assign(new Error('Prihlásenie cez poskytovateľa nie je dostupné'), { code: 'OAUTH_NOT_CONFIGURED' })
+          return { accessToken: await opts.oauth.accessToken(acc.id, acc.password_storage) }
+        }
+        return (acc.password_storage === 'session' ? opts.sessionSecrets : opts.secrets).get(passwordKey(acc.id))
+      }
     }
   }
 
   private accountRow(id: number): AccountRow | null {
     return (this.deps.db
       .prepare(
-        'SELECT id, email, username, imap_host, imap_port, imap_security, smtp_host, smtp_port, smtp_security, save_sent_copy, display_name, password_storage FROM accounts WHERE id = ?'
+        'SELECT id, email, username, imap_host, imap_port, imap_security, smtp_host, smtp_port, smtp_security, save_sent_copy, display_name, password_storage, auth_type FROM accounts WHERE id = ?'
       )
       .get(id) as unknown as AccountRow | undefined) ?? null
   }

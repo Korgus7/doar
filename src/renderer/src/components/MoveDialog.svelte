@@ -92,7 +92,7 @@
             aria-disabled={!usable}
             tabindex={usable ? 0 : -1}
             data-folder={f.id}
-            style:padding-left={`${0.6 + (filter.trim() ? 0 : f.depth) * 0.9}rem`}
+            style:padding-inline-start={`${0.6 + (filter.trim() ? 0 : f.depth) * 0.9}rem`}
             onclick={() => usable && (chosen = f.id)}
             ondblclick={() => usable && confirmMove(f.id)}
             onkeydown={(e) => {

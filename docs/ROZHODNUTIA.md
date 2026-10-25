@@ -232,7 +232,32 @@ Záznam dohodnutých rozhodnutí. Nové rozhodnutia pridávaj na koniec s dátum
 
 - Verzia 0.4.0: balík pre Windows (0.4a), aktualizácie z GitHub Releases (0.4b), voliteľná AI (0.4c). Prvé vydanie na GitHube (`v0.4.0`) so zipom a `doar-mail-update.json`.
 - Testy e2e berú verziu z `package.json` (netreba ich meniť pri každom vydaní).
-- Zostáva: podpis kódu (menej varovaní Windows), overenie Gmailu a serverov bez UIDPLUS, skutočné API Anthropic a Ollama.
+- Zostáva: podpis kódu (menej varovaní Windows), servery bez UIDPLUS, skutočné API Anthropic a Ollama. **Gmail s heslom aplikácie overil používateľ 2026-10-24** (konto sa pridalo). Prihlásenie cez Google (OAuth) nerobíme: plný prístup k IMAP je u Google „restricted scope“ – bez platenej ročnej bezpečnostnej previerky najviac 100 používateľov za celý život projektu a varovanie „neoverená aplikácia“. Microsoft (Outlook.com) OAuth takú prekážku nemá.
+
+## 2026-10-24 – jazyky a hebrejčina (0.5a)
+
+- Jazyky rozhrania: slovenčina, angličtina, **čeština, nemčina, maďarčina, hebrejčina**. Jazyk systému sa vyberie sám (čeština má vlastný preklad, už sa nemení na slovenčinu; `iw` = hebrejčina), inak angličtina. Ponuka Zobraziť → „Jazyk / Language“ a Nastavenia → Všeobecné ukazujú názvy jazykov v ich vlastnom jazyku.
+- Preklady pripravila AI – **pred vydaním ich má skontrolovať rodený hovoriaci** (najmä hebrejčinu). Unit test stráži rovnaké kľúče a parametre vo všetkých jazykoch.
+- **Hebrejčina = sprava doľava:** celé okno sa zrkadlí (priečinky vpravo). Štýly prevedené na logické vlastnosti; fyzické `left/right` ostali len tam, kde sú súmerné.
+- **Pošta v hebrejčine aj v slovenskom rozhraní:** každý odsek správy má smer podľa svojho písma (`unicode-bidi: plaintext`, ak odosielateľ neurčil `dir`) – hebrejský odsek vpravo, anglický vľavo. Predmety, mená a úryvky v zozname a v hlavičke sú izolované (`<bdi>`), aby sa nemiešali s dátumom a interpunkciou.
+- **Písanie:** odseky a nadpisy v editore majú `dir="auto"` (smer podľa obsahu, aj v odoslanej správe, aby ju príjemca videl správne); citácia a zoznamy majú smer rozhrania. Predmet, adresy a čistý text tiež podľa obsahu. Odchádzajúce HTML povolí len `dir` = `ltr`/`rtl`/`auto`.
+- AI: zhrnutie v jazyku rozhrania (aj hebrejsky); preklad aj do hebrejčiny.
+- Overené: unit testy (kľúče, parametre, výber jazyka, `dir` v odoslanom HTML), e2e (prepnutie na hebrejčinu z menu, zrkadlové rozloženie, hebrejská správa zarovnaná sprava a anglický riadok zľava, odpoveď po hebrejsky s `dir="auto"`, návrat na slovenčinu). Neoverené: preklady rodeným hovoriacim, tlač hebrejskej správy, kontrola pravopisu v hebrejčine.
+
+## 2026-10-24 – prihlásenie cez Microsoft a Google, ďalšie jazyky (0.5b)
+
+- **Prihlásenie cez Microsoft a Google (OAuth 2.0)** – na pokyn používateľa obidve (rozhodnutie „Google nerobíme“ z uzavretia 0.4 je zrušené). Postup pre desktopové aplikácie: systémový prehliadač používateľa + návrat na `http://127.0.0.1:<náhodný port>/callback` (Microsoft `localhost`), PKCE S256, náhodný `state`, 10 min na dokončenie. Heslo zadáva používateľ priamo Microsoftu/Googlu, Doar ho nevidí.
+- Ukladá sa len obnovovací token (`secrets`, kľúč `account:<id>:oauth`), prístupový token len v pamäti a obnoví sa 5 min pred vypršaním. Microsoft pri obnove vydáva nový obnovovací token – ukladá sa. Odmietnutý token (`invalid_grant`) = `OAUTH_EXPIRED`: synchronizácia sa zastaví a v Nastaveniach konta je tlačidlo „Prihlásiť sa znova cez …“. Prihlásenie iným účtom než má konto sa odmietne.
+- IMAP cez XOAUTH2/OAUTHBEARER (imapflow), SMTP cez XOAUTH2 (nodemailer). Stĺpec `auth_type` už bol v migrácii 001, nová migrácia netreba.
+- Sprievodca: pri Outlook.com/Hotmail/Microsoft 365 len tlačidlo „Prihlásiť sa cez Microsoft“ (heslo sa nezadáva). Pri Gmaile tlačidlo „Prihlásiť sa cez Google“ **a** naďalej heslo aplikácie. Konto dostane adresu, ktorou sa používateľ naozaj prihlásil.
+- **Registrácie aplikácie** (ID klienta v `src/core/oauth/oauth.ts`, `BUILT_IN`). Prázdne ID → sprievodca sa správa ako predtým (Outlook: „zatiaľ nepodporované“, Gmail: heslo aplikácie). Pri desktopovej aplikácii ID ani „tajomstvo“ klienta Google nie sú skutočné tajomstvá (Google to tak dokumentuje).
+- **Google zaregistrovaný 2026-10-25:** projekt Google Cloud „Doar Mail“, klient typu Desktop app, režim Testing (prihlásiť sa môžu len testovací používatelia zapísaní v Audience). **Prihlásenie cez Google naostro overil používateľ 2026-10-25** (konto sa pridalo). Pred vydaním pre ostatných treba v Audience zvoliť „Publish app“, inak ostatným Google prihlásenie odmietne.
+- **Microsoft zatiaľ nezaregistrovaný:** osobný účet Microsoft už nemôže registrovať aplikácie bez adresára (tenant); adresár dá bezplatný účet Azure, ktorý ale vyžaduje platobnú kartu na overenie. Používateľ zatiaľ odložil.
+- **Google obmedzenie:** rozsah `https://mail.google.com/` je „restricted“. Neoverená aplikácia: varovanie pri prihlásení a najviac 100 používateľov za celý život projektu; overenie vyžaduje platenú ročnú bezpečnostnú previerku. Preto pri Gmaile ostáva aj heslo aplikácie.
+- Testy: testovací Dovecot overuje tokeny cez introspekciu (`scripts/testserver.mjs`, port 3880), testovací SMTP prijíma XOAUTH2. Integračný test s falošným prihlasovacím serverom (PKCE, odmietnutie, sfalšovaný `state`, pridanie konta, synchronizácia, odoslanie, obnova tokenu s rotáciou, odvolaný token → `OAUTH_EXPIRED` → opätovné prihlásenie, odstránenie konta) a e2e test sprievodcu a nastavení (premenná `DOAR_OAUTH_TEST_URL`).
+- **Jazyky:** pribudli **francúzština, španielčina a ruština** (aj AI preklad do ruštiny). Preklady pripravila AI – skontrolovať rodeným hovoriacim.
+- Neoverené: skutočné prihlásenie u Microsoftu (čaká na registráciu aplikácie).
+- **Verzia 0.5.0** (2026-10-25): prihlásenie cez Google, jazyky fr/es/ru.
 
 ## Licencie závislostí (overené 2026-10-21 cez `npm view`)
 

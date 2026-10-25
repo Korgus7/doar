@@ -59,7 +59,8 @@
 
   const CSP = "default-src 'none'; img-src data:; style-src 'unsafe-inline'; font-src data:"
   const BASE_CSS = `html{color-scheme:light}body{margin:0;padding:16px 20px 32px;font:14px/1.55 'Segoe UI Variable Text','Segoe UI',system-ui,-apple-system,sans-serif;color:#1b1f24;background:#fff;overflow-wrap:anywhere}
-img{max-width:100%;height:auto}table{max-width:100%}.doar-plain{white-space:pre-wrap}blockquote{margin:0 0 0 .4em;padding-left:.8em;border-left:3px solid #c9d1dc;color:#4a5361}a{color:#1d4ed8}`
+img{max-width:100%;height:auto}table{max-width:100%}.doar-plain{white-space:pre-wrap}blockquote{margin:0;margin-inline-start:.4em;padding-inline-start:.8em;border-inline-start:3px solid #c9d1dc;color:#4a5361}a{color:#1d4ed8}
+:where(p,div,li,td,th,dd,dt,blockquote,pre,h1,h2,h3,h4,h5,h6,.doar-plain):not([dir]):not([dir] *){unicode-bidi:plaintext}`
 
   const srcdoc = $derived(
     view
@@ -135,7 +136,7 @@ img{max-width:100%;height:auto}table{max-width:100%}.doar-plain{white-space:pre-
   {:else}
     <header>
       <div class="titlebar">
-        <h1>{view.subject || t('list.noSubject')}</h1>
+        <h1 dir="auto">{view.subject || t('list.noSubject')}</h1>
         {#if listItem}
           <div class="actions">
             {#if isDraft(view.id)}
@@ -170,9 +171,9 @@ img{max-width:100%;height:auto}table{max-width:100%}.doar-plain{white-space:pre-
       </div>
       <dl>
         <dt>{t('reader.from')}</dt>
-        <dd class="from">{addressLine(view.from)}</dd>
-        {#if view.to.length}<dt>{t('reader.to')}</dt><dd>{addressLine(view.to)}</dd>{/if}
-        {#if view.cc.length}<dt>{t('reader.cc')}</dt><dd>{addressLine(view.cc)}</dd>{/if}
+        <dd class="from"><bdi>{addressLine(view.from)}</bdi></dd>
+        {#if view.to.length}<dt>{t('reader.to')}</dt><dd><bdi>{addressLine(view.to)}</bdi></dd>{/if}
+        {#if view.cc.length}<dt>{t('reader.cc')}</dt><dd><bdi>{addressLine(view.cc)}</bdi></dd>{/if}
         <dt>{t('reader.date')}</dt>
         <dd>{fullDate(view.date)}</dd>
       </dl>

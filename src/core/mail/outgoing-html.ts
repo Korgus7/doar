@@ -9,13 +9,29 @@ import sanitizeHtml from 'sanitize-html'
 
 const TAGS = ['p', 'br', 'strong', 'b', 'em', 'i', 'u', 's', 'a', 'ul', 'ol', 'li', 'blockquote', 'h1', 'h2', 'h3', 'hr', 'code', 'pre']
 
+/** Smer textu (dir) – editor ho dáva každému odseku, aby sa hebrejčina zobrazila sprava doľava aj u príjemcu. */
+const DIR_TAGS = ['p', 'li', 'ul', 'ol', 'blockquote', 'h1', 'h2', 'h3', 'pre']
+const DIR_VALUES = ['ltr', 'rtl', 'auto']
+const withDir = (extra: Record<string, string[]> = {}): Record<string, string[]> => {
+  const out: Record<string, string[]> = { a: ['href'] }
+  for (const t of DIR_TAGS) out[t] = ['dir', ...(extra[t] ?? [])]
+  return out
+}
+/** Ponechá len platnú hodnotu dir (ltr, rtl, auto). */
+function cleanDir(attribs: Record<string, string>): Record<string, string> {
+  const { dir, ...rest } = attribs
+  return dir && DIR_VALUES.includes(dir.toLowerCase()) ? { ...rest, dir: dir.toLowerCase() } : rest
+}
+const dirTransforms = Object.fromEntries(DIR_TAGS.map((t) => [t, (tagName: string, attribs: Record<string, string>) => ({ tagName, attribs: cleanDir(attribs) })]))
+
 const QUOTE_STYLE = 'margin:0 0 0 0.8ex;border-left:2px solid #c9d1dc;padding-left:1ex;color:#4a5361'
 
 /** Prečistí HTML z editora (aj koncept z iného programu) na značky, ktoré Doar vie upravovať a odoslať. */
 export function sanitizeComposeHtml(html: string): string {
   return sanitizeHtml(String(html ?? '').slice(0, 5_000_000), {
     allowedTags: TAGS,
-    allowedAttributes: { a: ['href'] },
+    allowedAttributes: withDir(),
+    transformTags: dirTransforms,
     allowedSchemes: ['http', 'https', 'mailto'],
     allowProtocolRelative: false,
     disallowedTagsMode: 'discard',
@@ -27,11 +43,12 @@ export function sanitizeComposeHtml(html: string): string {
 export function outgoingHtml(html: string): string {
   const body = sanitizeHtml(sanitizeComposeHtml(html), {
     allowedTags: TAGS,
-    allowedAttributes: { a: ['href'], blockquote: ['style'], p: ['style'] },
+    allowedAttributes: withDir({ blockquote: ['style'], p: ['style'] }),
     allowedSchemes: ['http', 'https', 'mailto'],
     transformTags: {
-      blockquote: (tagName, attribs) => ({ tagName, attribs: { ...attribs, style: QUOTE_STYLE } }),
-      p: (tagName, attribs) => ({ tagName, attribs: { ...attribs, style: 'margin:0 0 0.6em' } })
+      ...dirTransforms,
+      blockquote: (tagName, attribs) => ({ tagName, attribs: { ...cleanDir(attribs), style: QUOTE_STYLE } }),
+      p: (tagName, attribs) => ({ tagName, attribs: { ...cleanDir(attribs), style: 'margin:0 0 0.6em' } })
     }
   })
   return `<!doctype html><html><head><meta charset="utf-8"></head><body><div style="font-family:Segoe UI,Arial,sans-serif;font-size:14px;line-height:1.5">${body}</div></body></html>`

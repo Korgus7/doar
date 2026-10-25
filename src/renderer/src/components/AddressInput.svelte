@@ -90,6 +90,7 @@
 
 <div class="wrap">
   <input
+    dir="auto"
     bind:this={inputEl}
     bind:value
     {id}

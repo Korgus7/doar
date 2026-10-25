@@ -102,11 +102,19 @@
   ol.steps li::before { content: counter(s); flex: none; width: 32px; height: 32px; border-radius: 50%; display: grid; place-items: center; background: var(--accent); color: #fff; font-weight: 700; }
   ol.steps strong { display: block; }
   ol.steps span { color: var(--muted); font-size: .95rem; }
+  .sub.note { margin-top: 18px; font-size: .92rem; }
 
   .faq { max-width: 760px; margin: 0 auto; }
   details { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px 18px; margin-bottom: 10px; }
   summary { cursor: pointer; font-weight: 600; }
   details p { margin: 10px 0 0; color: var(--muted); }
+
+  .privacy { max-width: 760px; margin: 0 auto; background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 6px 24px 18px; }
+  .privacy h3 { font-size: 1.02rem; margin: 18px 0 4px; }
+  .privacy p, .privacy li { color: var(--muted); font-size: .95rem; }
+  .privacy p { margin: 0 0 8px; }
+  .privacy code { font-size: .88em; background: var(--accent-soft); padding: 1px 5px; border-radius: 5px; }
+  .privacy ul { margin: 0 0 8px; padding-left: 20px; }
 
   footer { margin-top: 70px; padding: 28px 0 40px; border-top: 1px solid var(--border); color: var(--muted); font-size: .9rem; }
   footer .wrap { display: flex; flex-wrap: wrap; gap: 10px 24px; justify-content: space-between; }
@@ -129,6 +137,7 @@
     <nav>
       <a href="#funkcie">Funkcie</a>
       <a href="#instalacia">Inštalácia</a>
+      <a href="#gmail">Gmail</a>
       <a href="#otazky">Otázky</a>
     </nav>
   </div>
@@ -160,7 +169,7 @@
   <section id="funkcie">
     <div class="wrap">
       <h2>Všetko podstatné, nič navyše</h2>
-      <p class="sub">Pre schránky s prístupom cez IMAP a SMTP – napríklad Azet, Zoznam, Gmail, Outlook.com alebo firemnú poštu.</p>
+      <p class="sub">Pre schránky s prístupom cez IMAP a SMTP – napríklad Gmail (s heslom aplikácie) alebo firemnú poštu.</p>
       <div class="grid">
         <div class="card"><div class="ico">📬</div><h3>Viac kont naraz</h3><p>Všetky schránky na jednom mieste a spoločná doručená pošta. Kontá rozlíšite farbou.</p></div>
         <div class="card"><div class="ico">💾</div><h3>Záloha a obnova</h3><p>Celé konto zálohujete do jedného súboru a kedykoľvek ho obnovíte – aj do inej schránky, bez duplicít.</p></div>
@@ -184,6 +193,39 @@
     </div>
   </section>
 
+  <section id="gmail">
+    <div class="wrap">
+      <h2>Ako pridať Gmail</h2>
+      <p class="sub">Od verzie 0.5 stačí v sprievodcovi kliknúť na <strong>Prihlásiť sa cez Google</strong> a prihlásiť sa v prehliadači. Ak to nejde, použite „heslo aplikácie“ – bežné heslo Google v iných programoch nepovoľuje:</p>
+      <ol class="steps">
+        <li><div><strong>Zapnite dvojstupňové overenie</strong><span>V účte Google: <a href="https://myaccount.google.com/signinoptions/twosv">Zabezpečenie → Dvojstupňové overenie</a>. Ak ho už máte, tento krok preskočte.</span></div></li>
+        <li><div><strong>Vytvorte heslo aplikácie</strong><span>Otvorte <a href="https://myaccount.google.com/apppasswords">myaccount.google.com/apppasswords</a>, zadajte názov „Doar Mail“ a kliknite na Vytvoriť. Zobrazí sa heslo zo 16 písmen.</span></div></li>
+        <li><div><strong>Pridajte konto v Doar Mail</strong><span>Pridať konto → vaše meno, adresa @gmail.com a ako heslo vložte heslo aplikácie (nie vaše bežné heslo). Nastavenia servera Doar Mail doplní sám.</span></div></li>
+      </ol>
+      <p class="sub note">Heslo aplikácie si netreba pamätať – Doar Mail ho bezpečne uloží. Ak ho v účte Google zrušíte, Doar Mail stratí prístup k pošte.</p>
+    </div>
+  </section>
+
+  <section id="sukromie">
+    <div class="wrap">
+      <h2 class="spaced">Ochrana súkromia</h2>
+      <div class="privacy">
+        <h3>Aké údaje Doar Mail spracúva</h3>
+        <p>Doar Mail je program na vašom počítači. Vašu poštu, kontakty a nastavenia ukladá len na tento počítač a pracuje s nimi len na vašom poštovom serveri. Autor programu k nim nemá prístup – Doar Mail nemá žiadny vlastný server, neposiela údaje o používaní ani nezobrazuje reklamy.</p>
+        <h3>Prihlásenie cez Google (Gmail)</h3>
+        <p>Ak sa prihlásite cez Google, Doar Mail dostane povolenie <code>https://mail.google.com/</code>. Používa ho výhradne na to, aby vám zobrazil, odoslal a usporiadal vašu poštu cez IMAP a SMTP – rovnako ako pri prihlásení heslom. Heslo Google zadávate priamo Googlu, Doar Mail ho nevidí. Prístupový token sa ukladá zašifrovaný v zabezpečenom úložisku Windows na vašom počítači.</p>
+        <ul>
+          <li>Údaje z Gmailu sa nikomu neposielajú, nepredávajú ani nepoužívajú na reklamu či trénovanie AI.</li>
+          <li>Ak sami zapnete voliteľnú AI a kliknete na jej tlačidlo, odošle sa text danej správy vami zvolenému poskytovateľovi AI – vždy vidíte čo a kam.</li>
+          <li>Prístup zrušíte odstránením konta v Doar Mail alebo na <a href="https://myaccount.google.com/permissions">myaccount.google.com/permissions</a>.</li>
+        </ul>
+        <p lang="en">Doar Mail's use and transfer of information received from Google APIs will adhere to the <a href="https://developers.google.com/terms/api-services-user-data-policy">Google API Services User Data Policy</a>, including the Limited Use requirements. Gmail data is used only to provide the email client features to the user on their own computer; it is never sent to the developer, sold, used for advertising or used to train AI models.</p>
+        <h3>Kontakt</h3>
+        <p>Otázky a pripomienky: <a href="https://github.com/Korgus7/doar/issues">github.com/Korgus7/doar/issues</a></p>
+      </div>
+    </div>
+  </section>
+
   <section id="otazky">
     <div class="wrap">
       <h2 class="spaced">Časté otázky</h2>
@@ -191,6 +233,7 @@
         <details><summary>Je Doar Mail naozaj zadarmo?</summary><p>Áno. Je to otvorený softvér s licenciou MIT – bez reklám, predplatného a bez zbierania údajov o používaní.</p></details>
         <details><summary>Kde je moja pošta a heslá?</summary><p>Na vašom počítači a na vašom poštovom serveri. Heslá sú uložené v zabezpečenom úložisku Windows. Doar Mail sa spája len s vašimi poštovými servermi a s GitHubom (kontrola novej verzie, dá sa vypnúť).</p></details>
         <details><summary>Musím používať AI?</summary><p>Nie. AI je predvolene vypnutá a bez nej program funguje úplne rovnako. Ak ju zapnete, obsah sa odošle zvolenému poskytovateľovi (Anthropic, OpenRouter alebo lokálny model) len po kliknutí a vždy vidíte, čo a kam. Prílohy sa neodosielajú nikdy.</p></details>
+        <details><summary>Funguje Outlook.com alebo Hotmail?</summary><p>Zatiaľ nie. Microsoft pri týchto schránkach už nepovoľuje prihlásenie heslom v iných programoch – vyžaduje prihlásenie cez účet Microsoft. Doar Mail to už vie, no prihlásenie cez Microsoft ešte čaká na registráciu u Microsoftu – zatiaľ ho nezapíname.</p></details>
         <details><summary>Windows zobrazil upozornenie – je to v poriadku?</summary><p>Doar Mail zatiaľ nie je digitálne podpísaný, preto môže Windows pri prvom spustení zobraziť „Windows ochránil váš počítač“. Kliknite na <em>Ďalšie informácie</em> → <em>Spustiť aj tak</em>.</p></details>
         <details><summary>Dá sa preniesť pošta zo starého programu?</summary><p>Ak je pošta na serveri (IMAP), stačí pridať konto. Zálohy vo formáte mbox (napr. z Thunderbirdu) viete obnoviť do schránky alebo otvoriť ako archív len na čítanie.</p></details>
       </div>
@@ -201,7 +244,7 @@
 <footer>
   <div class="wrap">
     <span>© Doar Mail · licencia MIT · bez telemetrie</span>
-    <span><a href="https://github.com/Korgus7/doar">Zdrojový kód na GitHube</a> · <a href="https://github.com/Korgus7/doar/releases">Všetky verzie</a></span>
+    <span><a href="https://github.com/Korgus7/doar">Zdrojový kód na GitHube</a> · <a href="https://github.com/Korgus7/doar/releases">Všetky verzie</a> · <a href="#sukromie">Ochrana súkromia</a></span>
   </div>
 </footer>
 

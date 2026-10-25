@@ -21,12 +21,27 @@ import { mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, chmodSync }
 import { join, resolve } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
 import net from 'node:net'
+import http from 'node:http'
 import { SMTPServer } from 'smtp-server'
 import nodemailer from 'nodemailer'
 
 export const TEST_PASSWORD = 'doar-test-heslo'
 export const TEST_DOMAIN = 'doar.test'
-export const PORTS = { imap: 3143, imaps: 3993, smtp: 3587, smtps: 3465, lmtp: 3024 }
+export const PORTS = { imap: 3143, imaps: 3993, smtp: 3587, smtps: 3465, lmtp: 3024, oauth: 3880 }
+
+/**
+ * Prístupový token pre prihlásenie cez OAuth (XOAUTH2/OAUTHBEARER) na testovací server.
+ * Platí do expMs; overuje ho introspekčný endpoint testovacieho servera (pre Dovecot) a SMTP server.
+ */
+export function testAccessToken(email, ttlMs = 3600_000) {
+  return `doar-test|${email}|${Date.now() + ttlMs}`
+}
+
+function tokenOwner(token) {
+  const m = /^doar-test\|([^|]+)\|(\d+)$/.exec(String(token ?? ''))
+  if (!m || Number(m[2]) < Date.now()) return null
+  return USERS.some((u) => `${u.name}@${TEST_DOMAIN}` === m[1]) ? m[1] : null
+}
 const USERS = [
   { name: 'alice' },
   { name: 'bob' },
@@ -89,6 +104,11 @@ function dovecotConfig(dir, { key, cert }) {
     return `${u.name}@${TEST_DOMAIN}:{PLAIN}${TEST_PASSWORD}:${uid}:${gid}::${dir}/mail/${u.name}::${extra}`
   })
   writeFileSync(join(dir, 'users'), users.join('\n') + '\n')
+  // Prihlásenie tokenom: Dovecot sa pýta introspekčného endpointu testovacieho servera.
+  writeFileSync(
+    join(dir, 'dovecot-oauth2.conf.ext'),
+    `introspection_mode = post\nintrospection_url = http://127.0.0.1:${PORTS.oauth}/introspect\nusername_attribute = username\nactive_attribute = active\nactive_value = true\n`
+  )
   return `
 base_dir = ${dir}/run
 state_dir = ${dir}/state
@@ -100,12 +120,18 @@ ssl = yes
 ssl_cert = <${cert}
 ssl_key = <${key}
 ssl_min_protocol = TLSv1.2
-auth_mechanisms = plain login
+auth_mechanisms = plain login xoauth2 oauthbearer
 disable_plaintext_auth = yes
 first_valid_uid = ${uid}
 ${asRoot ? '' : `default_internal_user = ${process.env.USER ?? 'runner'}\ndefault_login_user = ${process.env.USER ?? 'runner'}\ndefault_internal_group = ${gid}`}
 passdb {
+  driver = oauth2
+  mechanisms = xoauth2 oauthbearer
+  args = ${dir}/dovecot-oauth2.conf.ext
+}
+passdb {
   driver = passwd-file
+  mechanisms = plain login
   args = scheme=PLAIN username_format=%u ${dir}/users
 }
 userdb {
@@ -191,10 +217,15 @@ function startSmtp({ key, cert }) {
     secure,
     key: readFileSync(key),
     cert: readFileSync(cert),
-    authMethods: ['PLAIN', 'LOGIN'],
+    authMethods: ['PLAIN', 'LOGIN', 'XOAUTH2'],
     banner: 'Doar test SMTP',
     size: 50 * 1024 * 1024,
     onAuth(auth, _session, cb) {
+      if (auth.method === 'XOAUTH2') {
+        const owner = tokenOwner(auth.accessToken)
+        if (owner && owner === auth.username) return cb(null, { user: owner })
+        return cb(null, { data: { status: '401', schemes: 'bearer' } })
+      }
       const ok = USERS.some((u) => `${u.name}@${TEST_DOMAIN}` === auth.username) && auth.password === TEST_PASSWORD
       cb(ok ? null : Object.assign(new Error('Invalid credentials'), { responseCode: 535 }), ok ? { user: auth.username } : undefined)
     },
@@ -261,6 +292,17 @@ export async function startTestServer({ dir: dirOpt = '.testserver', fresh = tru
     throw new Error(`${e.message}\n${log}`)
   }
   const smtp = startSmtp(certs)
+  const introspect = http.createServer((req, res) => {
+    let body = ''
+    req.on('data', (c) => (body += c))
+    req.on('end', () => {
+      const token = new URLSearchParams(body).get('token') ?? (req.headers.authorization ?? '').replace(/^Bearer /i, '')
+      const owner = tokenOwner(token)
+      res.writeHead(200, { 'content-type': 'application/json' })
+      res.end(JSON.stringify(owner ? { active: 'true', username: owner } : { active: 'false' }))
+    })
+  })
+  await new Promise((r) => introspect.listen(PORTS.oauth, '127.0.0.1', r))
   await waitPort(PORTS.smtp)
   await waitPort(PORTS.smtps)
 
@@ -272,6 +314,7 @@ export async function startTestServer({ dir: dirOpt = '.testserver', fresh = tru
     password: TEST_PASSWORD,
     user: (name) => `${name}@${TEST_DOMAIN}`,
     async stop() {
+      await new Promise((r) => introspect.close(r))
       await new Promise((r) => smtp.plain.close(r))
       await new Promise((r) => smtp.tls.close(r))
       smtp.lmtp.close()

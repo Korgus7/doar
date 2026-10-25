@@ -1,6 +1,7 @@
 import { i18n, t } from '../i18n/index.svelte'
 
-const intlLocale = (): string => (i18n.locale === 'sk' ? 'sk-SK' : 'en-GB')
+const INTL: Record<string, string> = { sk: 'sk-SK', en: 'en-GB', cs: 'cs-CZ', de: 'de-DE', hu: 'hu-HU', fr: 'fr-FR', es: 'es-ES', ru: 'ru-RU', he: 'he-IL' }
+const intlLocale = (): string => INTL[i18n.locale] ?? 'en-GB'
 
 /** Dátum v zozname: dnes → čas, včera → „Včera“, tento rok → deň a mesiac, inak celý dátum. */
 export function listDate(iso: string | null): string {

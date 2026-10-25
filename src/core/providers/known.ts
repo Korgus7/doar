@@ -1,4 +1,4 @@
-import type { ServerSettings } from '../../shared/ipc'
+import type { OAuthProvider, ServerSettings } from '../../shared/ipc'
 
 /**
  * Známi poskytovatelia. Len overené údaje; ostatných nájde automatické zisťovanie.
@@ -17,6 +17,8 @@ export interface KnownProvider {
   needsAppPassword: boolean
   /** Heslom sa prihlásiť nedá vôbec. */
   unsupportedAuth: 'oauth2' | null
+  /** Prihlásenie cez účet poskytovateľa (OAuth), ak ho Doar Mail má nastavené. */
+  oauth: OAuthProvider | null
 }
 
 export const KNOWN_PROVIDERS: readonly KnownProvider[] = [
@@ -29,7 +31,8 @@ export const KNOWN_PROVIDERS: readonly KnownProvider[] = [
     smtp: { host: 'smtp.gmail.com', port: 465, security: 'tls' },
     saveSentCopy: false,
     needsAppPassword: true,
-    unsupportedAuth: null
+    unsupportedAuth: null,
+    oauth: 'google'
   },
   {
     key: 'microsoft',
@@ -40,7 +43,8 @@ export const KNOWN_PROVIDERS: readonly KnownProvider[] = [
     smtp: { host: 'smtp-mail.outlook.com', port: 587, security: 'starttls' },
     saveSentCopy: false,
     needsAppPassword: false,
-    unsupportedAuth: 'oauth2'
+    unsupportedAuth: 'oauth2',
+    oauth: 'microsoft'
   }
 ]
 
