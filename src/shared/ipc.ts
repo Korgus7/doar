@@ -47,7 +47,7 @@ export interface AppSettings {
 }
 
 /** Tlmené farby kont (od 0.6; staré žiarivé prevedie migrácia 010). */
-export const ACCOUNT_COLORS = ['#4a6b96', '#b5683a', '#4f7f5a', '#7d5b8f', '#3f7f84', '#a3504a', '#b08a3e', '#5f6f8f'] as const
+export const ACCOUNT_COLORS = ['#2f6db5', '#d0682a', '#2f8f4e', '#8a4bb0', '#1f8f99', '#c43c3c', '#c99418', '#4f62c4'] as const
 
 export interface AppInfo {
   version: string
@@ -396,14 +396,22 @@ export type ImportMode = 'restore' | 'single'
 /** Cieľový priečinok (pri „single“ pre všetko, pri „restore“ pre správy bez metadát Doar). */
 export type ImportTarget = { folderId: number } | { newName: string }
 
+/** Odkiaľ pošta pochádza: mbox (záloha Doar, Thunderbird…), Windows Mail (.eml), Outlook Express (.dbx), Outlook (.pst/.ost). */
+export type ImportFormat = 'mbox' | 'eml' | 'dbx' | 'pst'
+
 export interface ImportPeek {
   path: string
   name: string
+  /** Veľkosť súboru (pri priečinku 0). */
   sizeBytes: number
   /** Záloha vytvorená Doarom (blok metadát X-Doar-). */
   doar: boolean
   /** Konto, z ktorého záloha pochádza (X-Doar-Source). */
   source: string | null
+  format: ImportFormat
+  /** Počet správ a priečinkov (pri pošte z iných programov; pri mbox null). */
+  messages: number | null
+  folders: number | null
 }
 
 export type ImportPhase = 'scan' | 'folders' | 'check' | 'upload'
@@ -413,6 +421,8 @@ export interface ImportProgress {
   accountId: number
   phase: ImportPhase
   fileName: string
+  /** Čítanie súboru: bajty (mbox) alebo správy (prevod z iného programu). */
+  scanUnit?: 'bytes' | 'messages'
   bytesRead: number
   fileSize: number
   messagesTotal: number
@@ -826,6 +836,8 @@ export interface DoarApi {
   chooseExportFile(defaultName: string): Promise<string | null>
   /** Dialóg „Otvoriť“ pre súbor zálohy na obnovu. Vráti cestu (povolenú na čítanie), alebo null. */
   chooseImportFile(): Promise<string | null>
+  /** Výber priečinka s poštou (Outlook Express, Windows Mail) na import. */
+  chooseImportFolder(): Promise<string | null>
   /** Ukáže súbor zálohy v Prieskumníkovi (len súbor zvolený cez chooseExportFile). */
   showInFolder(path: string): void
   /** Dialóg „Priložiť súbory“ – vybrané súbory smie jadro čítať. */
@@ -873,7 +885,7 @@ export type MainToCore =
   /** Používateľ zvolil v natívnom dialógu súbor zálohy – jadro smie zapisovať len do takto povolených ciest. */
   | { kind: 'export.allow'; path: string }
   /** Súbor/priečinok zvolený používateľom v natívnom dialógu (alebo pretiahnutý) – jadro s ním smie pracovať. */
-  | { kind: 'files.allow'; path: string; mode: 'read' | 'write' | 'dir' }
+  | { kind: 'files.allow'; path: string; mode: 'read' | 'write' | 'dir' | 'tree' }
   /** Počítač sa prebudil / odomkol – skúsiť sa pripojiť hneď. */
   | { kind: 'reconnect' }
   | { kind: 'secret.result'; id: number; ok: boolean; value?: string | null; error?: string }

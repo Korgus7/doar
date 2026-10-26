@@ -120,6 +120,7 @@ function init(dataDir: string, appVersion: string): void {
     blobs,
     emit,
     files,
+    workDir: join(dataDir, 'import-work'),
     newClient: (id) => sync.newImapClient(id),
     afterImport: (id) => void sync.get(id)?.requestSync().catch(() => {})
   })
@@ -169,7 +170,7 @@ parentPort.on('message', (e) => {
   } else if (msg.kind === 'reconnect') {
     syncManager?.reconnectAll()
   } else if (msg.kind === 'files.allow') {
-    if (msg.mode === 'read' || msg.mode === 'write' || msg.mode === 'dir') files.allow(msg.path, msg.mode)
+    if (msg.mode === 'read' || msg.mode === 'write' || msg.mode === 'dir' || msg.mode === 'tree') files.allow(msg.path, msg.mode)
   } else if (msg.kind === 'secret.result') {
     secrets.resolve(msg)
   }

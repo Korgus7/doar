@@ -6,6 +6,7 @@ Jednoduchý, rýchly a bezplatný e-mailový klient pre desktop – v duchu Outl
 
 - IMAP a SMTP, viac kont, spoločná doručená pošta
 - záloha konta do jedného súboru `.mbox` a obnova
+- import pošty z Outlooku (.pst, .ost), Outlook Expressu (.dbx) a Windows Mail / Windows Live Mail (.eml)
 - voliteľné AI funkcie s vlastným kľúčom (Anthropic, OpenRouter) alebo lokálnym modelom: zhrnutie, návrh odpovede, úprava textu
 - slovenčina, angličtina, čeština, nemčina, maďarčina, francúzština, španielčina, ruština a hebrejčina (sprava doľava)
 - Outlook.com / Microsoft 365 a Gmail aj prihlásením cez Microsoft / Google (bez hesla v programe)

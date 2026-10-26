@@ -1,5 +1,5 @@
 import type { ImapFlow, ListResponse } from 'imapflow'
-import { stat } from 'node:fs/promises'
+import { rm, stat } from 'node:fs/promises'
 import type { Db } from '../store/db'
 import type { BlobStore } from '../store/blobs'
 import type { MailStore } from '../store/mailstore'
@@ -8,6 +8,7 @@ import { canonicalize, decodeFolderPath, encodeFolderPath, sha256 } from '../exp
 import { DEFAULT_NAMES, toFolderInfo } from '../sync/account-sync'
 import { classifyError } from '../mail/connection-test'
 import { fromAddress, normMessageId, parseEntry, readEntryAt, readMbox, weakKey, NotMboxError } from './mbox-reader'
+import { convertSource, type SourceFormat } from './sources'
 import { logger } from '../log'
 
 const log = logger('import')
@@ -41,6 +42,13 @@ export interface ImportConfig {
   startedAt: string
   /** Oddeľovač priečinkov cieľového servera (pre súhrn). */
   delimiter?: string
+  /**
+   * Pošta iného programu (Outlook, Outlook Express, Windows Mail): `path` je potom dočasný súbor prevodu
+   * vo formáte zálohy Doar, `source` pôvodný súbor alebo priečinok.
+   */
+  source?: { format: SourceFormat; path: string; size: number; mtimeMs: number }
+  /** Správy, ktoré sa v pôvodnom súbore nedali prečítať (poškodené). */
+  sourceSkipped?: number
 }
 
 export interface ImportRun {
@@ -208,6 +216,7 @@ export async function importToAccount(deps: ImportDeps, run: ImportRun): Promise
   try {
     // ---------- 1. prečítanie súboru ----------
     emit('scan', true)
+    if (cfg.source) await prepareSource(cfg.source)
     const st = await stat(cfg.path).catch(() => null)
     if (!st) throw new ImportFailure('FILE_MISSING', 'Súbor zálohy sa nenašiel')
     if (cfg.scanned && (st.size !== cfg.fileSize || Math.round(st.mtimeMs) !== Math.round(cfg.fileMtimeMs))) {
@@ -216,6 +225,7 @@ export async function importToAccount(deps: ImportDeps, run: ImportRun): Promise
     if (!cfg.scanned) {
       cfg.fileSize = st.size
       cfg.fileMtimeMs = st.mtimeMs
+      progress.scanUnit = 'bytes'
       progress.fileSize = st.size
       db.prepare(`DELETE FROM import_items WHERE job_id = ?`).run(run.jobId)
       const ins = db.prepare(
@@ -377,6 +387,42 @@ export async function importToAccount(deps: ImportDeps, run: ImportRun): Promise
   }
 
   // ---------- pomocné funkcie ----------
+
+  /**
+   * Pošta iného programu: prevod do dočasného súboru (pri novej obnove, alebo keď dočasný súbor zmizol).
+   * Pri pokračovaní sa overí, že pôvodný súbor je ten istý.
+   */
+  async function prepareSource(src: NonNullable<ImportConfig['source']>): Promise<void> {
+    const orig = await stat(src.path).catch(() => null)
+    if (!orig) throw new ImportFailure('FILE_MISSING', 'Pôvodný súbor sa nenašiel')
+    if (orig.isFile() && (orig.size !== src.size || Math.round(orig.mtimeMs) !== Math.round(src.mtimeMs))) {
+      throw new ImportFailure('FILE_CHANGED', 'Pôvodný súbor sa medzitým zmenil', false)
+    }
+    const converted = await stat(cfg.path).catch(() => null)
+    if (cfg.scanned && converted) return
+    // Nový prevod: obsah je pre rovnaký zdroj rovnaký, takže už nahraté správy sa pri kontrole duplicít nájdu.
+    cfg.scanned = false
+    progress.scanUnit = 'messages'
+    try {
+      const r = await convertSource(src.format, src.path, cfg.path, {
+        signal: run.signal,
+        onProgress: (done, total) => {
+          progress.bytesRead = done
+          progress.fileSize = total
+          emit()
+        }
+      })
+      cfg.sourceSkipped = r.skipped
+      saveCfg()
+    } catch (e) {
+      isAbort(run.signal)
+      const code = (e as { code?: string }).code
+      await rm(cfg.path, { force: true })
+      if (code === 'NO_MESSAGES' || code === 'NOT_PST' || code === 'NOT_DBX') throw new ImportFailure(code, 'Súbor sa nedá prečítať', false)
+      if ((e as NodeJS.ErrnoException).code === 'ENOSPC') throw new ImportFailure('DISK_FULL', 'Na disku nie je dosť miesta')
+      throw e
+    }
+  }
 
   /**
    * Porovná správy zo súboru so správami v priečinku na serveri. Každá správa na serveri „pokryje“ najviac
@@ -568,7 +614,7 @@ export async function importToAccount(deps: ImportDeps, run: ImportRun): Promise
       changedOutside: counts.ch ?? 0,
       foreign: counts.fo ?? 0,
       keywordsDropped,
-      skipped,
+      skipped: skipped + (cfg.sourceSkipped ?? 0),
       failures: [...failures].map(([code, count]) => ({ code, count })),
       resumable: (result === 'stopped' || result === 'cancelled') && resumable
     }

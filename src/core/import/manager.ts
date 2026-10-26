@@ -1,10 +1,13 @@
+import { mkdirSync, mkdtempSync, readdirSync, rmSync } from 'node:fs'
 import { stat } from 'node:fs/promises'
-import { basename } from 'node:path'
+import { basename, extname, join } from 'node:path'
+import { tmpdir } from 'node:os'
 import type { Db } from '../store/db'
 import type { FileGrants } from '../files'
-import type { ImportJobInfo, ImportMode, ImportPeek, ImportProgress, ImportState, ImportSummary, ImportTarget } from '../../shared/ipc'
+import type { ImportFormat, ImportJobInfo, ImportMode, ImportPeek, ImportProgress, ImportState, ImportSummary, ImportTarget } from '../../shared/ipc'
 import { importToAccount, type ImportConfig, type ImportDeps } from './import-account'
 import { NotMboxError, peekMbox } from './mbox-reader'
+import { detectSource, sourceInfo } from './sources'
 
 function err(code: string, message: string): Error {
   return Object.assign(new Error(message), { code })
@@ -21,10 +24,35 @@ export class ImportManager {
   private last: ImportSummary | null = null
 
   constructor(
-    private readonly deps: ImportDeps & { files: FileGrants },
+    private readonly deps: ImportDeps & { files: FileGrants; workDir?: string },
     private readonly testHooks: { beforeAppend?: (seq: number) => Promise<void> } = {}
   ) {
     this.recoverInterrupted()
+    this.cleanWork()
+  }
+
+  /** Dočasný súbor prevodu (Outlook, Outlook Express, Windows Mail) pre úlohu. */
+  private tmpWork: string | null = null
+  /** Priečinok dočasných súborov prevodu (v aplikácii v dátovom priečinku, v testoch vlastný dočasný). */
+  private get workDir(): string {
+    return this.deps.workDir ?? (this.tmpWork ??= mkdtempSync(join(tmpdir(), 'doar-import-')))
+  }
+
+  private workFile(jobId: number): string {
+    return join(this.workDir, `import-${jobId}.mbox`)
+  }
+
+  /** Dočasné súbory prevodu, ktoré už nepatria žiadnej nedokončenej obnove, sa zmažú. */
+  private cleanWork(): void {
+    try {
+      mkdirSync(this.workDir, { recursive: true })
+      const keep = new Set(
+        (this.deps.db.prepare(`SELECT id FROM jobs WHERE kind = 'import' AND state IN ('interrupted', 'running')`).all() as { id: number }[]).map((r) => `import-${r.id}.mbox`)
+      )
+      for (const name of readdirSync(this.workDir)) if (!keep.has(name)) rmSync(join(this.workDir, name), { force: true })
+    } catch {
+      /* priečinok sa nedá čítať – nič nemažeme */
+    }
   }
 
   /** Obnova prerušená pádom aplikácie: dá sa v nej pokračovať. Nejasné nahrávanie sa overí pri pokračovaní. */
@@ -35,16 +63,33 @@ export class ImportManager {
   }
 
   async peek(path: string): Promise<ImportPeek> {
-    const p = await this.deps.files.require(path, 'read')
+    const p = await this.deps.files.require(path, ['read', 'tree'])
     const st = await stat(p).catch(() => null)
-    if (!st?.isFile()) throw err('FILE_MISSING', 'Súbor sa nenašiel')
+    if (!st) throw err('FILE_MISSING', 'Súbor sa nenašiel')
+    const format = await this.formatOf(p, st.isDirectory())
+    if (format !== 'mbox') {
+      const info = await sourceInfo(format, p).catch((e: unknown) => {
+        throw err((e as { code?: string }).code ?? 'NOT_SUPPORTED', 'Súbor sa nedá prečítať')
+      })
+      if (!info.messages) throw err('NO_MESSAGES', 'Nenašli sa žiadne správy')
+      return { path: p, name: basename(p), sizeBytes: st.isFile() ? st.size : 0, doar: false, source: null, format, messages: info.messages, folders: info.folders }
+    }
     try {
       const info = await peekMbox(p)
-      return { path: p, name: basename(p), sizeBytes: st.size, doar: info.doar, source: info.source }
+      return { path: p, name: basename(p), sizeBytes: st.size, doar: info.doar, source: info.source, format, messages: null, folders: null }
     } catch (e) {
       if (e instanceof NotMboxError) throw err('NOT_MBOX', 'Súbor nie je vo formáte mbox')
       throw e
     }
+  }
+
+  /** Formát: mbox, alebo pošta iného programu (priečinok Windows Mail / Outlook Express, súbor .pst/.ost/.dbx/.eml). */
+  private async formatOf(path: string, isDir: boolean): Promise<ImportFormat> {
+    if (!isDir && /^\.(mbox|mbx)$/i.test(extname(path))) return 'mbox'
+    const f = await detectSource(path)
+    if (f) return f
+    if (isDir) throw err('NOT_SUPPORTED', 'V priečinku nie je pošta Outlook Express ani Windows Mail')
+    return 'mbox'
   }
 
   async start(input: { accountId: number; path: string; mode: ImportMode; target: ImportTarget }): Promise<{ jobId: number }> {
@@ -52,9 +97,10 @@ export class ImportManager {
     if (!Number.isInteger(accountId) || !this.deps.db.prepare('SELECT id FROM accounts WHERE id = ?').get(accountId)) throw err('NO_ACCOUNT', 'Konto neexistuje')
     if (this.running) throw err('IMPORT_RUNNING', 'Obnova už prebieha')
     const mode: ImportMode = input?.mode === 'restore' ? 'restore' : 'single'
-    const path = await this.deps.files.require(typeof input?.path === 'string' ? input.path : '', 'read')
+    const path = await this.deps.files.require(typeof input?.path === 'string' ? input.path : '', ['read', 'tree'])
     const st = await stat(path).catch(() => null)
-    if (!st?.isFile()) throw err('FILE_MISSING', 'Súbor sa nenašiel')
+    if (!st) throw err('FILE_MISSING', 'Súbor sa nenašiel')
+    const format = await this.formatOf(path, st.isDirectory())
 
     let target: ImportConfig['target']
     const t = input?.target as { folderId?: unknown; newName?: unknown } | undefined
@@ -71,6 +117,14 @@ export class ImportManager {
     const jobId = (this.deps.db
       .prepare(`INSERT INTO jobs (kind, account_id, state, started_at, progress_json) VALUES ('import', ?, 'running', ?, ?) RETURNING id`)
       .get(accountId, cfg.startedAt, JSON.stringify(cfg)) as { id: number }).id
+    if (format !== 'mbox') {
+      // Pošta iného programu sa najprv prevedie do dočasného súboru vo formáte zálohy Doar.
+      mkdirSync(this.workDir, { recursive: true })
+      cfg.source = { format, path, size: st.isFile() ? st.size : 0, mtimeMs: st.mtimeMs }
+      cfg.path = this.workFile(jobId)
+      cfg.fileSize = 0
+      this.deps.db.prepare(`UPDATE jobs SET progress_json = ? WHERE id = ?`).run(JSON.stringify(cfg), jobId)
+    }
     this.launch(jobId, accountId)
     return { jobId }
   }
@@ -128,6 +182,7 @@ export class ImportManager {
         this.last = summary
         const state = summary.resumable ? 'interrupted' : summary.result === 'failed' ? 'failed' : 'done'
         this.deps.db.prepare(`UPDATE jobs SET state = ?, finished_at = ?, summary_json = ? WHERE id = ?`).run(state, summary.finishedAt, JSON.stringify(summary), jobId)
+        if (state !== 'interrupted') rmSync(this.workFile(jobId), { force: true })
         this.deps.emit('import.finished', summary)
         this.deps.emit('import.changed', null)
         return summary
@@ -142,6 +197,7 @@ export class ImportManager {
   discard(jobId: number): void {
     if (this.running?.jobId === jobId) throw err('IMPORT_RUNNING', 'Obnova práve prebieha')
     this.deps.db.prepare(`UPDATE jobs SET state = 'discarded' WHERE id = ? AND kind = 'import' AND state = 'interrupted'`).run(jobId)
+    rmSync(this.workFile(jobId), { force: true })
     this.deps.emit('import.changed', null)
   }
 

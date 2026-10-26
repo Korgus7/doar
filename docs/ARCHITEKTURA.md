@@ -31,7 +31,7 @@ Verzia návrhu: 1 (2026-10-21). Mení sa len s odôvodnením v `ROZHODNUTIA.md`.
 | `providers` | tabuľka známych poskytovateľov, autoconfig, rozpoznanie špeciálnych priečinkov |
 | `sync` | synchronizácia priečinkov a správ, IDLE, fronta operácií, odosielacia fronta |
 | `export` | export mboxrd (záloha) |
-| `import` | čítanie mbox prúdom, obnova do konta (IMAP APPEND, duplicity, pokračovanie) |
+| `import` | čítanie mbox prúdom, obnova do konta (IMAP APPEND, duplicity, pokračovanie); `import/sources` – prevod pošty z Outlooku (.pst/.ost), Outlook Expressu (.dbx) a Windows Mail (.eml) do formátu zálohy Doar |
 | `archive` | lokálny archív – súbor mbox len na čítanie (zoznam, fulltext, čítanie zo súboru); v rozhraní záporné ID |
 | `ai` | voliteľná AI (0.4c): `providers.ts` (Anthropic, OpenAI-kompatibilné – OpenRouter, lokálny server; streamovanie SSE), `prompts.ts` (zadania, obsah pošty ako nedôveryhodné dáta), `service.ts` (nastavenia, kľúč, spúšťanie úloh) |
 | `jobs` | dlhé úlohy s priebehom a zrušením (sync, export, import) |
@@ -207,7 +207,7 @@ doar/
       providers/ known.ts, autoconfig.ts, discover.ts, net.ts (neskôr special-folders.ts)
       sync/      account-sync.ts (vrátane odosielacej fronty), manager.ts
       export/    mboxrd.ts, export-account.ts, manager.ts
-      import/    mbox-reader.ts, import-account.ts, manager.ts
+      import/    mbox-reader.ts, import-account.ts, manager.ts, sources/ (eml, dbx, pst, prevod)
       archive/   archive.ts
       jobs/      job-runner.ts
       ai/        providers.ts, prompts.ts, service.ts

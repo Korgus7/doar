@@ -3,6 +3,8 @@ import type { ImportJobInfo, ImportProgress, ImportSummary } from '../../../shar
 /** Stav obnovy zo zálohy v rozhraní – samotná obnova beží v jadre. */
 export const restore = $state({
   open: false,
+  /** Odkiaľ sa dialóg otvoril: obnova zálohy, alebo import z iného programu (Outlook, Outlook Express, Windows Mail). */
+  kind: 'restore' as 'restore' | 'import',
   progress: null as ImportProgress | null,
   summary: null as ImportSummary | null,
   /** Prerušené obnovy, v ktorých sa dá pokračovať. */
@@ -36,6 +38,6 @@ export function initRestoreEvents(): () => void {
 
 /** „Doar-jan@firma.sk-2026-10-01-1436.mbox“ → „Import – Doar-jan@firma.sk-2026-10-01-1436“. */
 export function defaultImportFolder(fileName: string): string {
-  const stem = fileName.replace(/\.(mbox|mbx)$/i, '').replace(/[/\\%*]/g, '_').trim()
+  const stem = fileName.replace(/\.(mbox|mbx|pst|ost|dbx|eml)$/i, '').replace(/[/\\%*]/g, '_').trim()
   return `Import – ${stem || 'mbox'}`.slice(0, 120)
 }

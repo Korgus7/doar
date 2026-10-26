@@ -70,7 +70,7 @@
       window.doar.onMenuAction((action) => {
         if (action === 'add-account') wizardOpen = true
         else if (action === 'backup' && mail.accounts.length) backup.open = true
-        else if (action === 'restore' && mail.accounts.length) restore.open = true
+        else if (action === 'restore' && mail.accounts.length) ((restore.kind = 'restore'), (restore.open = true))
         else if (action === 'open-archive') void openArchive()
         else if (action === 'check-updates') checkUpdates()
         else if (action.startsWith('locale:') && isUiLocale(action.slice(7))) setLocale(action.slice(7) as Locale)
@@ -98,11 +98,11 @@
     return () => offs.forEach((off) => off())
   })
 
-  // Neprečítané v doručenej pošte: odznak na ikone aplikácie a v názve okna.
+  // Neprečítané v doručenej pošte: odznak na ikone aplikácie (počty sú pri priečinkoch, nie v názve okna).
   $effect(() => {
     const n = mail.folders.filter((f) => f.specialUse === 'inbox').reduce((s, f) => s + f.unread, 0)
     window.doar.setUnreadCount(n)
-    document.title = n ? `${t('app.name')} (${n})` : t('app.name')
+    document.title = t('app.name')
   })
 
   function errorText(code: string | undefined): string {

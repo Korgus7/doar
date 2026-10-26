@@ -121,7 +121,8 @@
           backup.open = true
         }
       },
-      { label: t('menu.restore'), run: () => (restore.open = true) },
+      { label: t('menu.restore'), run: () => ((restore.kind = 'restore'), (restore.open = true)) },
+      { label: t('menu.importOther'), run: () => ((restore.kind = 'import'), (restore.open = true)) },
       { label: t('menu.openArchive'), run: () => void openArchive() },
       'sep',
       { label: t('menu.settings'), shortcut: 'Ctrl+,', run: () => openSettings() },

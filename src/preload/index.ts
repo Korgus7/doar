@@ -88,6 +88,9 @@ const api: DoarApi = {
   chooseImportFile() {
     return ipcRenderer.invoke('choose-import-file') as Promise<string | null>
   },
+  chooseImportFolder() {
+    return ipcRenderer.invoke('choose-import-folder') as Promise<string | null>
+  },
   chooseAttachFiles() {
     return ipcRenderer.invoke('choose-attach-files')
   },

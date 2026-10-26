@@ -16,6 +16,8 @@ files:
   - resources/**
   - package.json
   - "!**/*.map"
+  # pst-extractor obsahuje ukážkové súbory (~46 MB) – do balíka nepatria.
+  - "!node_modules/pst-extractor/example/**"
 # Ikona pre odkazy v ponuke Štart a na ploche – musí byť skutočný súbor (nie v app.asar).
 extraResources:
   - from: build/icon.ico

@@ -71,6 +71,9 @@ const USERS = [
   { name: 'beata' },
   { name: 'cyril' },
   { name: 'dusan' },
+  { name: 'quido' },
+  { name: 'rita' },
+  { name: 'viera' },
   { name: 'plna', quota: '20K' },
   { name: 'mala', quota: '12K' }
 ]

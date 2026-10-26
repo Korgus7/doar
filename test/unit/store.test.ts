@@ -43,9 +43,9 @@ describe('databáza a migrácie', () => {
     expect(schemaVersion(db)).toBe(MIGRATIONS.at(-1)!.version)
     const acc = db.prepare('SELECT email, password_storage FROM accounts').get() as { email: string; password_storage: string }
     expect(acc).toEqual({ email: 'a@b.sk', password_storage: 'os' })
-    // Migrácia 010: stará žiarivá predvolená farba → tlmená; vlastná farba ostane.
+    // Migrácie 010 a 011: stará predvolená farba → aktuálna paleta; vlastná farba ostane.
     expect(db.prepare('SELECT email, color FROM accounts ORDER BY id').all()).toEqual([
-      { email: 'a@b.sk', color: '#4a6b96' },
+      { email: 'a@b.sk', color: '#2f6db5' },
       { email: 'c@d.sk', color: '#123456' }
     ])
     db.close()

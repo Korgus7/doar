@@ -267,7 +267,18 @@ Záznam dohodnutých rozhodnutí. Nové rozhodnutia pridávaj na koniec s dátum
 - **Ľavý panel:** každé konto je samostatný blok s podfarbenou hlavičkou, farebným prúžkom a zbalením. Spodné odkazy (Pridať konto, Zálohovať, Obnoviť, Otvoriť archív) presunuté do **menu ☰** v hornej lište (aplikačné menu je skryté, ukáže sa len po Alt).
 - **Farby kont** tlmené; migrácia 010 preklopí staré žiarivé predvolené farby na tlmené, vlastné voľby používateľa nemení.
 - **Nová ikona programu:** obrys obálky na oceľovom podklade.
-- Overené: unit 143, integračné 111, e2e 20; snímky svetlá/tmavá/menu/nastavenia pozreté. Neoverené: vzhľad na skutočnom Windows (používateľ).
+- Overené: unit 143, integračné 111, e2e 20; snímky svetlá/tmavá/menu/nastavenia pozreté. **Vydanie `v0.6.0` (2026-10-26); vzhľad na Windows aj aktualizáciu 0.5.0 → 0.6.0 overil používateľ.**
+
+## 2026-10-26 – import z iných programov (0.7)
+
+- **Windows Mail / Windows Live Mail** (priečinok so súbormi `.eml`), **Outlook Express 5/6** (priečinok so súbormi `.dbx` a Folders.dbx, alebo jeden `.dbx`), **Outlook** (`.pst`, aj `.ost`). Ponuka ☰ → „Importovať z iného programu…“; ten istý dialóg ako obnova zálohy (rovnaké kroky, priebeh, súhrn, pokračovanie).
+- **Princíp:** zdroj sa najprv prevedie do dočasného súboru vo formáte zálohy Doar (`import-work/import-<úloha>.mbox` v dátovom priečinku, `.part` a premenovanie) a ďalej ide bežná obnova – priečinky, duplicity, pokračovanie po prerušení, plná schránka. Dočasný súbor sa zmaže po dokončení alebo zahodení obnovy (a pri štarte, ak nepatrí nedokončenej obnove). Ak pri pokračovaní chýba, prevedie sa znova – výsledok je pre rovnaký zdroj vždy rovnaký, takže už nahraté správy sa nájdu ako duplicity.
+- **Priečinky:** štandardné (Doručená, Odoslaná, Koncepty, Odstránená, Nevyžiadaná pošta) sa rozpoznajú podľa názvu v 9 jazykoch a priradia k priečinkom servera podľa funkcie; podpriečinky doručenej pošty idú pod INBOX. Outlook: koreň a „Top of Personal Folders“ sa vynechajú, preskočia sa vyhľadávacie priečinky, kalendár, kontakty, úlohy a poznámky.
+- **Outlook Express:** vlastná čítačka podľa verejného popisu formátu (bez cudzej knižnice). Príznak „prečítané“ (0x80) je istý, „odpovedané“ (0x80000) podľa popisu – overí sa na skutočných súboroch. Názvy priečinkov v kódovaní Windows (stredoeurópske/západné podľa obsahu).
+- **Outlook:** knižnica pst-extractor (MIT). Outlook neukladá text správy RFC 5322 – správa sa zloží znova: pôvodné internetové hlavičky (prijatá pošta), telo (text/HTML) a prílohy (aj vložené obrázky a priložené správy) cez MailComposer; hranice MIME odvodené z obsahu (opakovateľný výsledok). Príznaky: prečítané, označené, odpovedané, preposlané, neodoslané (koncept).
+- **Windows Mail:** stav „prečítané“ je v osobitnej databáze programu, nie v `.eml` – správy sa importujú ako prečítané (rozhranie to povie).
+- **Bezpečnosť:** priečinok vyberá používateľ v natívnom dialógu (nové povolenie „tree“ = čítanie priečinka); dlhý prevod Outlooku sa delí po správach, aby jadro neprestalo reagovať.
+- Overené: unit testy čítačiek (vygenerované `.dbx` podľa popisu formátu, `.eml`, ukážkový `enron.pst` z balíka pst-extractor), integračné testy importu do testovacieho servera (štandardné priečinky, podpriečinky, príznaky, dátumy, opakovanie bez duplicít, zrušenie a pokračovanie, jeden priečinok), e2e test dialógu. **Neoverené: skutočné súbory Outlook Expressu a Outlooku používateľa** (dodá ich na testovanie).
 
 ## Licencie závislostí (overené 2026-10-21 cez `npm view`)
 
@@ -284,6 +295,8 @@ Všetky sú kompatibilné s MIT.
 | @tanstack/svelte-virtual | 3.13.47 | MIT | virtualizovaný zoznam správ |
 | @tiptap/core, @tiptap/starter-kit, @tiptap/pm | 3.31.4 (pevná verzia) | MIT | editor formátovaného textu (0.2f); závislosti ProseMirror, linkifyjs a pod. – MIT (overené 2026-10-22) |
 | sanitize-html | 2.18.1 | MIT | sanitizácia HTML pošty |
+| pst-extractor | 1.12.0 (pevná verzia) | MIT | čítanie súborov Outlooku .pst/.ost (import, 0.7); ukážkové súbory balíka (~46 MB) sa do aplikácie nebalia |
+| long, uuid-parse | 5.3.2, 1.1.0 | Apache-2.0, MIT | závislosti pst-extractor (overené 2026-10-26) |
 | dompurify | 3.4.17 | MPL-2.0 OR Apache-2.0 | záložná sanitizácia (použijeme pod Apache-2.0) |
 | iconv-lite, libmime | – | MIT | kódovania |
 | vite, electron-vite, @sveltejs/vite-plugin-svelte | – | MIT | zostavenie |

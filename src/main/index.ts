@@ -208,6 +208,8 @@ function createWindow(): BrowserWindow {
     backgroundColor: '#00000000',
     webPreferences: webPreferences()
   })
+  // Klasické menu (Súbor, Úpravy…) sa nezobrazuje – všetko je v ponuke ☰. Klávesové skratky z neho fungujú ďalej.
+  win.setMenuBarVisibility(false)
   win.once('ready-to-show', () => {
     if (state.maximized) win.maximize()
     win.show()
@@ -358,6 +360,8 @@ if (!gotLock) {
       if (isUiLocale(locale)) {
         uiLocale = locale
         buildMenu(locale, () => mainWindow, DEV_URL !== undefined)
+        // Nové menu by sa vo Windows znova ukázalo – skryť ho vo všetkých oknách.
+        for (const w of BrowserWindow.getAllWindows()) w.setMenuBarVisibility(false)
       }
     })
     // Vzhľad: nativeTheme prepne prefers-color-scheme vo všetkých oknách aj farbu titulku okna.
@@ -391,7 +395,7 @@ if (!gotLock) {
       return path
     })
     // Prílohy: cesty k súborom pochádzajú len z natívnych dialógov alebo z pretiahnutých súborov.
-    const allow = (path: string, mode: 'read' | 'write' | 'dir'): void => core?.postMessage({ kind: 'files.allow', path, mode } satisfies MainToCore)
+    const allow = (path: string, mode: 'read' | 'write' | 'dir' | 'tree'): void => core?.postMessage({ kind: 'files.allow', path, mode } satisfies MainToCore)
     const picked = (path: string): PickedFile | null => {
       try {
         const st = statSync(path)
@@ -411,7 +415,7 @@ if (!gotLock) {
       const r = await dialog.showOpenDialog(w, {
         defaultPath: app.getPath('documents'),
         filters: [
-          { name: 'mbox', extensions: ['mbox', 'mbx'] },
+          { name: translate(uiLocale, 'restore.fileTypes'), extensions: ['mbox', 'mbx', 'pst', 'ost', 'dbx', 'eml'] },
           { name: '*', extensions: ['*'] }
         ],
         properties: ['openFile']
@@ -419,6 +423,21 @@ if (!gotLock) {
       const path = r.canceled ? null : (r.filePaths[0] ?? null)
       if (!path || !picked(path)) return null
       allow(path, 'read')
+      return path
+    })
+    // Import z Outlook Expressu a Windows Mail: priečinok s poštou; jadro ho smie len čítať.
+    ipcMain.handle('choose-import-folder', async (e) => {
+      const w = BrowserWindow.fromWebContents(e.sender)
+      if (!w || w !== mainWindow) return null
+      const r = await dialog.showOpenDialog(w, { defaultPath: app.getPath('documents'), properties: ['openDirectory'] })
+      const path = r.canceled ? null : (r.filePaths[0] ?? null)
+      if (!path) return null
+      try {
+        if (!statSync(path).isDirectory()) return null
+      } catch {
+        return null
+      }
+      allow(path, 'tree')
       return path
     })
     ipcMain.handle('choose-attach-files', async (e) => {

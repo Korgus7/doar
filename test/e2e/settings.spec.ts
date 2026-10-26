@@ -92,7 +92,7 @@ test('nastavenia: názov, farba, podpis v novej správe, server, upozornenia, od
   // Ponuka ☰: položky, ktoré boli dole v paneli; „Pridať konto…“ otvorí sprievodcu.
   await win.getByRole('button', { name: 'Ponuka' }).click()
   const menu = win.getByRole('menu', { name: 'Ponuka' })
-  await expect(menu.getByRole('menuitem')).toHaveText([/^Pridať konto…/, /^Zálohovať konto…/, /^Obnoviť zo zálohy…/, /^Otvoriť archív…/, /^Nastavenia…/, /^Skontrolovať aktualizácie…/, /^O aplikácii Doar Mail/])
+  await expect(menu.getByRole('menuitem')).toHaveText([/^Pridať konto…/, /^Zálohovať konto…/, /^Obnoviť zo zálohy…/, /^Importovať z iného programu…/, /^Otvoriť archív…/, /^Nastavenia…/, /^Skontrolovať aktualizácie…/, /^O aplikácii Doar Mail/])
   await menu.getByRole('menuitem', { name: 'Pridať konto…' }).click()
   await expect(win.getByRole('heading', { name: 'Pridať konto' })).toBeVisible()
   await win.getByRole('button', { name: 'Zrušiť' }).click()

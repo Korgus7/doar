@@ -3,7 +3,8 @@ import { dirname, join, resolve, extname, basename } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { OPEN_ATTACHMENTS_DIR } from '../shared/ipc'
 
-export type GrantMode = 'read' | 'write' | 'dir'
+/** read = súbor na čítanie, write = súbor na zápis, dir = priečinok na ukladanie, tree = priečinok na čítanie (import). */
+export type GrantMode = 'read' | 'write' | 'dir' | 'tree'
 
 function err(code: string, message: string): Error {
   return Object.assign(new Error(message), { code })
@@ -29,9 +30,11 @@ export class FileGrants {
   }
 
   /** Povolenie prichádza od main procesu iným kanálom než požiadavka z rozhrania – chvíľu naň počkáme. */
-  async require(path: string, mode: GrantMode): Promise<string> {
-    for (let i = 0; i < 20 && !this.has(path, mode); i++) await new Promise((r) => setTimeout(r, 50))
-    if (!this.has(path, mode)) throw err('PATH_NOT_ALLOWED', 'Súbor treba vybrať v dialógu')
+  async require(path: string, mode: GrantMode | GrantMode[]): Promise<string> {
+    const modes = Array.isArray(mode) ? mode : [mode]
+    const ok = (): boolean => modes.some((m) => this.has(path, m))
+    for (let i = 0; i < 20 && !ok(); i++) await new Promise((r) => setTimeout(r, 50))
+    if (!ok()) throw err('PATH_NOT_ALLOWED', 'Súbor treba vybrať v dialógu')
     return resolve(path)
   }
 }

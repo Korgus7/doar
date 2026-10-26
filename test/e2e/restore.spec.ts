@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { addAccountViaWizard, launchApp, testServer } from './helpers'
 import { encodeMessage } from '../../src/core/export/mboxrd'
+import { dbxFolders, dbxMessages } from '../fixtures/dbx-writer'
 
 const srv = testServer()
 test.skip(!srv, 'testovací poštový server (Dovecot) nie je k dispozícii')
@@ -72,5 +73,46 @@ test('obnova zo zálohy cez rozhranie: výber súboru, priebeh, súhrn, opakovan
   await expect(dlg.getByText('„Už boli“', { exact: false })).toBeVisible()
   await dlg.getByRole('button', { name: 'Zavrieť' }).click()
   await expect(list.getByRole('option')).toHaveCount(2)
+  await app.close()
+})
+
+test('import z Outlook Expressu cez ponuku ☰: výber priečinka, náhľad, štandardné priečinky', async () => {
+  test.setTimeout(150_000)
+  const dir = mkdtempSync(join(tmpdir(), 'doar-e2e-oe-'))
+  writeFileSync(
+    join(dir, 'Folders.dbx'),
+    dbxFolders([
+      { id: 1, parent: 0, name: 'Miestne priečinky' },
+      { id: 2, parent: 1, name: 'Doručená pošta', file: 'Doručená pošta.dbx' },
+      { id: 3, parent: 2, name: 'Rodina', file: 'Rodina.dbx' }
+    ])
+  )
+  writeFileSync(join(dir, 'Doručená pošta.dbx'), dbxMessages([{ raw: msg('Stará pošta 1'), flags: 0x80 }, { raw: msg('Stará pošta 2') }]))
+  writeFileSync(join(dir, 'Rodina.dbx'), dbxMessages([{ raw: msg('Fotky z výletu'), flags: 0x80 }]))
+
+  const { app } = await launchApp({ LANG: 'sk_SK.UTF-8' })
+  const win = await app.firstWindow()
+  await win.getByRole('status').filter({ hasText: 'SQLite' }).waitFor()
+  await addAccountViaWizard(win, srv!, 'quido')
+  await app.evaluate(({ dialog }, p) => {
+    dialog.showOpenDialog = (async () => ({ canceled: false, filePaths: [p] })) as typeof dialog.showOpenDialog
+  }, dir)
+
+  await win.getByRole('button', { name: 'Ponuka' }).click()
+  await win.getByRole('menu', { name: 'Ponuka' }).getByRole('menuitem', { name: 'Importovať z iného programu…' }).click()
+  const dlg = win.getByRole('dialog', { name: 'Import z iného programu' })
+  await dlg.getByRole('button', { name: 'Vybrať priečinok s poštou…' }).click()
+  await expect(dlg.getByText('Outlook Express · priečinky: 2 · správy: 3')).toBeVisible()
+  await expect(dlg.getByLabel('Do pôvodných priečinkov (chýbajúce sa vytvoria)')).toBeChecked()
+  await win.screenshot({ path: 'test-results/import-oe-start.png' })
+  await dlg.getByRole('button', { name: 'Začať import' }).click()
+  await expect(dlg.getByText('Import dokončený')).toBeVisible({ timeout: 60_000 })
+  await expect(dlg.getByRole('row', { name: /^Doručená pošta\s+2\s+2\s+0/ })).toBeVisible()
+  await expect(dlg.getByRole('row', { name: /Doručená pošta \/ Rodina\s+1\s+1\s+0/ })).toBeVisible()
+  await win.screenshot({ path: 'test-results/import-oe-suhrn.png' })
+  await dlg.getByRole('button', { name: 'Zavrieť' }).click()
+  const list = win.getByRole('listbox', { name: 'Zoznam správ' })
+  await expect(list.getByRole('option')).toHaveCount(2, { timeout: 30_000 })
+  await expect(win.getByRole('navigation', { name: 'Priečinky' }).getByText('Rodina')).toBeVisible()
   await app.close()
 })

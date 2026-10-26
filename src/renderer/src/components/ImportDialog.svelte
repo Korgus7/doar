@@ -21,7 +21,9 @@
   const account = $derived(mail.accounts.find((a) => a.id === accountId) ?? null)
   const folders = $derived(mail.folders.filter((f: FolderItem) => f.accountId === accountId && f.selectable))
   const view = $derived(restore.progress ? 'running' : restore.summary ? 'done' : 'setup')
-  const effectiveMode = $derived<ImportMode>(file?.doar ? mode : 'single')
+  /** Pôvodné priečinky sa dajú obnoviť zo zálohy Doar aj z pošty iných programov (nie z cudzieho mbox). */
+  const keepsFolders = $derived(!!file && (file.doar || file.format !== 'mbox'))
+  const effectiveMode = $derived<ImportMode>(keepsFolders ? mode : 'single')
 
   $effect(() => {
     if (restore.open) void tick().then(() => dialogEl?.querySelector<HTMLElement>('button.btn-primary, button')?.focus())
@@ -32,16 +34,16 @@
     return t(key) !== key ? t(key) : t('errors.UNKNOWN')
   }
 
-  async function chooseFile(): Promise<void> {
+  async function chooseFile(folder = false): Promise<void> {
     error = null
     busy = true
     try {
-      const path = await window.doar.chooseImportFile()
+      const path = folder ? await window.doar.chooseImportFolder() : await window.doar.chooseImportFile()
       if (!path) return
       const peek = await window.doar.invoke('import.peek', { path })
       file = peek
       newName = defaultImportFolder(peek.name)
-      mode = peek.doar ? 'restore' : 'single'
+      mode = peek.doar || peek.format !== 'mbox' ? 'restore' : 'single'
       // Predvolené cieľové konto: to, z ktorého záloha pochádza (ak je v Doare), inak prvé.
       const same = peek.source ? mail.accounts.find((a) => a.email.toLowerCase() === peek.source!.toLowerCase()) : undefined
       accountId = same?.id ?? accountId ?? mail.accounts[0]?.id ?? null
@@ -111,7 +113,9 @@
   }
 
   function rowLabel(f: ImportFolderSummary): string {
-    return f.specialUse ? t(`folder.${f.specialUse}` as MessageKey) : f.path
+    if (f.specialUse) return t(`folder.${f.specialUse}` as MessageKey)
+    // Podpriečinky doručenej pošty: „INBOX / Rodina“ → „Doručená pošta / Rodina“.
+    return /^INBOX( \/ |$)/.test(f.path) ? t('folder.inbox') + f.path.slice(5) : f.path
   }
 
   const ORDER: ImportPhase[] = ['scan', 'folders', 'check', 'upload']
@@ -128,7 +132,12 @@
     if (!p) return ''
     const st = stepState(step)
     if (st === 'waiting') return t('backup.waiting')
-    if (step === 'scan') return st === 'done' ? t('restore.scanDone', { messages: p.messagesTotal }) : `${fileSize(p.bytesRead)} / ${fileSize(p.fileSize)}`
+    if (step === 'scan')
+      return st === 'done'
+        ? t('restore.scanDone', { messages: p.messagesTotal })
+        : p.scanUnit === 'messages'
+          ? t('restore.scanMessages', { done: p.bytesRead, total: p.fileSize })
+          : `${fileSize(p.bytesRead)} / ${fileSize(p.fileSize)}`
     if (step === 'folders') return st === 'done' ? t('backup.done') : '…'
     if (step === 'check') return st === 'done' ? t('restore.checkDone', { upload: p.toUpload - p.uploaded, duplicates: p.duplicates }) : `${p.foldersDone} / ${p.foldersTotal || '…'}`
     return `${p.uploaded} / ${p.toUpload}${p.failed ? ` · ${t('restore.failedN', { n: p.failed })}` : ''}`
@@ -154,7 +163,7 @@
 {#if restore.open}
   <div class="overlay" role="presentation">
     <div class="dialog" bind:this={dialogEl} role="dialog" aria-modal="true" aria-labelledby="restore-title" tabindex="-1" onkeydown={onKey}>
-      <h1 id="restore-title">{t('restore.title')}</h1>
+      <h1 id="restore-title">{restore.kind === 'import' ? t('restore.importTitle') : t('restore.title')}</h1>
 
       {#if view === 'setup'}
         {#if restore.resumable.length}
@@ -175,20 +184,34 @@
           </section>
         {/if}
 
-        <p>{t('restore.lead')}</p>
+        <p>{restore.kind === 'import' ? t('restore.importLead') : t('restore.lead')}</p>
         <div class="file">
-          <button class="btn" onclick={chooseFile} disabled={busy}>{file ? t('restore.otherFile') : t('restore.chooseFile')}</button>
+          {#if restore.kind === 'import'}
+            <div class="pick">
+              <button class="btn" onclick={() => chooseFile(false)} disabled={busy}>{t('restore.chooseSourceFile')}</button>
+              <button class="btn" onclick={() => chooseFile(true)} disabled={busy}>{t('restore.chooseSourceFolder')}</button>
+            </div>
+          {:else}
+            <button class="btn" onclick={() => chooseFile(false)} disabled={busy}>{file ? t('restore.otherFile') : t('restore.chooseFile')}</button>
+          {/if}
           {#if file}
             <div class="fileinfo">
-              <strong>{file.name}</strong> · {fileSize(file.sizeBytes)}
-              <div class="sub">{file.doar ? (file.source ? t('restore.doarFrom', { email: file.source }) : t('restore.doar')) : t('restore.foreign')}</div>
+              <strong>{file.name}</strong>{#if file.sizeBytes} · {fileSize(file.sizeBytes)}{/if}
+              <div class="sub">
+                {#if file.format !== 'mbox'}
+                  {t(`restore.format.${file.format}` as MessageKey, { folders: file.folders ?? 0, messages: file.messages ?? 0 })}
+                {:else}
+                  {file.doar ? (file.source ? t('restore.doarFrom', { email: file.source }) : t('restore.doar')) : t('restore.foreign')}
+                {/if}
+              </div>
             </div>
           {/if}
         </div>
+        {#if file?.format === 'eml'}<p class="hint">{t('restore.emlReadHint')}</p>{/if}
 
         {#if file}
           <label class="field">
-            <span>{t('restore.account')}</span>
+            <span>{restore.kind === 'import' ? t('restore.importAccount') : t('restore.account')}</span>
             <select value={accountId} onchange={(e) => ((accountId = Number((e.currentTarget as HTMLSelectElement).value)), (existingId = null))}>
               {#each mail.accounts as a (a.id)}
                 <option value={a.id}>{a.email}</option>
@@ -198,7 +221,7 @@
 
           <fieldset>
             <legend>{t('restore.where')}</legend>
-            {#if file.doar}
+            {#if keepsFolders}
               <label class="radio"><input type="radio" name="mode" value="restore" bind:group={mode} /> {t('restore.modeRestore')}</label>
             {/if}
             <label class="radio"><input type="radio" name="mode" value="single" bind:group={mode} /> {t('restore.modeSingle')}</label>
@@ -223,13 +246,13 @@
         <ul class="notes">
           <li>ℹ {t('restore.noOverwrite')}</li>
           <li>ℹ {t('restore.noDuplicates')}</li>
-          <li>ℹ {t('backup.noEmptyFolders')}</li>
+          {#if restore.kind !== 'import'}<li>ℹ {t('backup.noEmptyFolders')}</li>{/if}
         </ul>
         {#if error}<p class="alert error" role="alert">{error}</p>{/if}
         <div class="actions">
           <button class="btn" onclick={close}>{t('wizard.cancel')}</button>
           <span class="spacer"></span>
-          <button class="btn btn-primary" onclick={start} disabled={!file || !account || busy}>{t('restore.start')}</button>
+          <button class="btn btn-primary" onclick={start} disabled={!file || !account || busy}>{restore.kind === 'import' ? t('restore.importStart') : t('restore.start')}</button>
         </div>
       {:else if view === 'running'}
         {@const p = restore.progress!}
@@ -257,7 +280,7 @@
         {@const s = restore.summary}
         <div class="result {s.result}" role="status">
           {#if s.result === 'complete'}
-            <strong>✔ {t('restore.result.complete')}</strong>
+            <strong>✔ {restore.kind === 'import' ? t('restore.importDone') : t('restore.result.complete')}</strong>
           {:else if s.result === 'partial'}
             <strong>⚠ {t('restore.result.partial', { n: s.totals.failed })}</strong>
           {:else if s.result === 'cancelled'}
@@ -280,7 +303,7 @@
               <thead>
                 <tr>
                   <th scope="col">{t('backup.col.folder')}</th>
-                  <th scope="col" class="n">{t('restore.col.total')}</th>
+                  <th scope="col" class="n">{restore.kind === 'import' ? t('restore.col.inSource') : t('restore.col.total')}</th>
                   <th scope="col" class="n">{t('restore.col.uploaded')}</th>
                   <th scope="col" class="n">{t('restore.col.duplicate')}</th>
                   {#if showProblems}
@@ -384,9 +407,15 @@
   }
   .file {
     display: flex;
+    flex-wrap: wrap;
     gap: 0.8rem;
     align-items: center;
     margin-bottom: 0.9rem;
+  }
+  .pick {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
   }
   .fileinfo {
     min-width: 0;
