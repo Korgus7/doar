@@ -2,14 +2,47 @@
   import type { FolderItem } from '../../../shared/ipc'
   import { t } from '../i18n/index.svelte'
   import { mail, selectFolder } from '../lib/mail.svelte'
-  import { backup } from '../lib/backup.svelte'
-  import { restore } from '../lib/restore.svelte'
-  import { openArchive, closeArchive, archivePercent } from '../lib/archive.svelte'
+  import { closeArchive, archivePercent } from '../lib/archive.svelte'
   import type { MessageKey } from '../i18n/index.svelte'
   import { ui, moveTo, openMenu, folderLabel } from '../lib/actions.svelte'
   import { openSettings } from '../lib/settings.svelte'
+  import Icon, { type IconName } from './Icon.svelte'
+  import type { SpecialUse } from '../../../shared/ipc'
 
-  let { onAddAccount }: { onAddAccount: () => void } = $props()
+  const ICON_OF: Record<SpecialUse, IconName> = {
+    inbox: 'inbox',
+    drafts: 'drafts',
+    sent: 'sent',
+    archive: 'archive',
+    junk: 'spam',
+    trash: 'trash',
+    all: 'inboxes',
+    flagged: 'star',
+    important: 'star'
+  }
+
+  // Zbalené kontá (a archívy so záporným id) – pamätá sa v tomto počítači.
+  const COLLAPSED_KEY = 'doar.collapsed'
+  let collapsed = $state<number[]>(loadCollapsed())
+  function loadCollapsed(): number[] {
+    try {
+      const v = JSON.parse(localStorage.getItem(COLLAPSED_KEY) ?? '[]') as unknown
+      return Array.isArray(v) ? v.filter((x): x is number => Number.isInteger(x)) : []
+    } catch {
+      return []
+    }
+  }
+  function toggle(id: number): void {
+    collapsed = collapsed.includes(id) ? collapsed.filter((x) => x !== id) : [...collapsed, id]
+    try {
+      localStorage.setItem(COLLAPSED_KEY, JSON.stringify(collapsed))
+    } catch {
+      /* nezapamätá sa */
+    }
+  }
+  function inboxUnread(accountId: number): number {
+    return mail.folders.filter((f) => f.accountId === accountId && f.specialUse === 'inbox').reduce((s, f) => s + f.unread, 0)
+  }
 
   const unifiedUnread = $derived(mail.folders.filter((f) => f.specialUse === 'inbox').reduce((s, f) => s + f.unread, 0))
 
@@ -58,7 +91,7 @@
   <ul class="tree">
     <li>
       <button class="item unified" class:active={mail.folderId === null} aria-current={mail.folderId === null ? 'page' : undefined} onclick={() => selectFolder(null)}>
-        <span class="icon" aria-hidden="true">★</span>
+        <span class="icon"><Icon name="inboxes" /></span>
         <span class="name">{t('folders.unifiedInbox')}</span>
         {#if unifiedUnread}<span class="badge">{unifiedUnread}</span>{/if}
       </button>
@@ -66,7 +99,9 @@
   </ul>
 
   {#each mail.accounts as acc (acc.id)}
-    <section class="account">
+    {@const open = !collapsed.includes(acc.id)}
+    {@const unread = inboxUnread(acc.id)}
+    <section class="account" style:--acc={acc.color}>
       <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
       <h2
         oncontextmenu={(e) => {
@@ -77,12 +112,15 @@
           ], acc.email)
         }}
       >
-        <span class="dot" style:background={acc.color} aria-hidden="true"></span>
-        <span class="acc-name" title={acc.email}>{!acc.name || acc.name === acc.email.split('@')[1] ? acc.email : acc.name}</span>
-        <button class="new" title={t('folders.accountSettings')} aria-label={`${t('folders.accountSettings')} – ${acc.email}`} onclick={() => openSettings({ accountId: acc.id })}>⚙</button>
-        <button class="new" title={t('actions.newFolder')} aria-label={`${t('actions.newFolder')} – ${acc.email}`} onclick={() => newFolder(acc.id, null)}>+</button>
+        <button class="toggle" aria-expanded={open} title={acc.email} onclick={() => toggle(acc.id)}>
+          <span class="chev" class:shut={!open}><Icon name="chevron" size={14} /></span>
+          <span class="acc-name">{!acc.name || acc.name === acc.email.split('@')[1] ? acc.email : acc.name}</span>
+          {#if unread && !open}<span class="badge">{unread}</span>{/if}
+        </button>
+        <button class="new" title={t('folders.accountSettings')} aria-label={`${t('folders.accountSettings')} – ${acc.email}`} onclick={() => openSettings({ accountId: acc.id })}><Icon name="settings" size={14} /></button>
+        <button class="new" title={t('actions.newFolder')} aria-label={`${t('actions.newFolder')} – ${acc.email}`} onclick={() => newFolder(acc.id, null)}><Icon name="plus" size={14} /></button>
       </h2>
-      <ul class="tree">
+      <ul class="tree" hidden={!open}>
         {#each foldersOf(acc.id) as f (f.id)}
           <li>
             <button
@@ -99,6 +137,7 @@
               ondragleave={() => dropTarget === f.id && (dropTarget = null)}
               ondrop={(e) => onDrop(e, f)}
             >
+              <span class="ficon"><Icon name={f.specialUse ? ICON_OF[f.specialUse] : 'folder'} /></span>
               <span class="name">{label(f)}</span>
               {#if f.unread && f.specialUse !== 'sent' && f.specialUse !== 'drafts' && f.specialUse !== 'trash'}
                 <span class="badge">{f.unread}</span>
@@ -111,11 +150,15 @@
   {/each}
 
   {#each mail.archives as a (a.id)}
+    {@const open = !collapsed.includes(-a.id)}
     <section class="account archive" aria-label={`${t('archive.label')}: ${a.name}`}>
       <h2>
-        <span class="arch-icon" aria-hidden="true">🗃</span>
-        <span class="acc-name" title={a.path}>{a.name}</span>
-        <button class="new close" title={t('archive.close')} aria-label={`${t('archive.close')} – ${a.name}`} onclick={() => closeArchive(a)}>×</button>
+        <button class="toggle" aria-expanded={open} title={a.path} onclick={() => toggle(-a.id)}>
+          <span class="chev" class:shut={!open}><Icon name="chevron" size={14} /></span>
+          <span class="arch-icon"><Icon name="archive" size={14} /></span>
+          <span class="acc-name">{a.name}</span>
+        </button>
+        <button class="new close" title={t('archive.close')} aria-label={`${t('archive.close')} – ${a.name}`} onclick={() => closeArchive(a)}><Icon name="close" size={14} /></button>
       </h2>
       {#if a.state === 'indexing'}
         <p class="arch-state">{t('archive.indexing', { pct: archivePercent(a), n: a.progress?.messages ?? 0 })}</p>
@@ -124,7 +167,7 @@
       {:else if a.state === 'failed'}
         <p class="arch-state warn">⚠ {t(`errors.${a.error ?? 'UNKNOWN'}` as MessageKey)}</p>
       {/if}
-      <ul class="tree">
+      <ul class="tree" hidden={!open}>
         {#each mail.archiveFolders.filter((f) => f.accountId === -a.id) as f (f.id)}
           <li>
             <button
@@ -135,6 +178,7 @@
               title={`${label(f)} – ${t('archive.count', { n: f.total })}`}
               onclick={() => selectFolder(f.id)}
             >
+              <span class="ficon"><Icon name={f.specialUse ? ICON_OF[f.specialUse] : 'folder'} /></span>
               <span class="name">{label(f)}</span>
               {#if f.unread && f.specialUse !== 'sent' && f.specialUse !== 'drafts' && f.specialUse !== 'trash'}
                 <span class="badge">{f.unread}</span>
@@ -146,23 +190,13 @@
     </section>
   {/each}
 
-  <button class="add" onclick={onAddAccount}>+ {t('menu.addAccount').replace('…', '')}</button>
-  <button
-    class="add"
-    onclick={() => {
-      backup.accountId = mail.folderId === null ? null : (mail.folders.find((f) => f.id === mail.folderId)?.accountId ?? null)
-      backup.open = true
-    }}>⤓ {t('menu.backup').replace('…', '')}</button
-  >
-  <button class="add" onclick={() => (restore.open = true)}>⤒ {t('menu.restore').replace('…', '')}</button>
-  <button class="add" onclick={() => void openArchive()}>🗃 {t('menu.openArchive').replace('…', '')}</button>
 </nav>
 
 <style>
   .pane {
     height: 100%;
     overflow-y: auto;
-    padding: 0.5rem 0.4rem 1rem;
+    padding: 0.5rem 0.45rem 1rem;
     background: var(--surface-2);
   }
   .tree {
@@ -170,21 +204,53 @@
     margin: 0;
     padding: 0;
   }
+  /* Každé konto je samostatný blok: podfarbená hlavička s farbou konta a jeho priečinky. */
   .account {
-    margin-top: 0.9rem;
+    margin-top: 0.7rem;
+    padding-bottom: 0.2rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface);
+    overflow: hidden;
   }
   h2 {
     display: flex;
     align-items: center;
-    gap: 0.45rem;
+    gap: 0.15rem;
     margin: 0 0 0.2rem;
-    padding: 0 0.75rem;
-    font-size: 0.78rem;
+    padding: 0.3rem 0.35rem 0.3rem 0;
+    padding-inline: 0 0.35rem;
+    border-inline-start: 3px solid var(--acc, var(--text-muted));
+    background: var(--surface-3);
+    font-size: 0.8rem;
     font-weight: 600;
-    color: var(--text-muted);
-    overflow: hidden;
-    text-overflow: ellipsis;
+    color: var(--text);
     white-space: nowrap;
+  }
+  .toggle {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.15rem 0.4rem;
+    border: 0;
+    background: none;
+    color: inherit;
+    font-weight: 600;
+    text-align: start;
+    cursor: pointer;
+  }
+  .chev {
+    display: inline-flex;
+    color: var(--text-muted);
+    transition: transform 0.12s ease;
+  }
+  .chev.shut {
+    transform: rotate(-90deg);
+  }
+  :global([dir='rtl']) .chev.shut {
+    transform: rotate(90deg);
   }
   .acc-name {
     flex: 1;
@@ -194,15 +260,14 @@
   }
   .new {
     flex: none;
+    display: inline-flex;
     border: 0;
     background: none;
     color: var(--text-muted);
     cursor: pointer;
-    font-size: 1rem;
-    line-height: 1;
-    padding: 0 0.25rem;
+    padding: 0.2rem;
     border-radius: var(--radius-sm);
-    opacity: 0.6;
+    opacity: 0.55;
   }
   .account:hover .new,
   .new:focus-visible {
@@ -210,32 +275,31 @@
   }
   .new:hover {
     color: var(--accent);
-    background: color-mix(in srgb, var(--text) 7%, transparent);
+    background: color-mix(in srgb, var(--text) 8%, transparent);
   }
   .item.drop {
     background: var(--accent-soft);
     outline: 2px dashed var(--accent);
     outline-offset: -2px;
   }
-  .dot {
-    flex: 0 0 9px;
-    height: 9px;
-    border-radius: 50%;
-  }
   .item {
     display: flex;
     align-items: center;
     gap: 0.5rem;
     width: 100%;
-    padding: 0.35rem 0.75rem;
+    padding: 0.32rem 0.75rem;
     border: 0;
     border-radius: var(--radius-sm);
     background: transparent;
     text-align: start;
     cursor: pointer;
   }
+  .account .item {
+    width: calc(100% - 0.4rem);
+    margin-inline: 0.2rem;
+  }
   .item:hover:not(:disabled) {
-    background: color-mix(in srgb, var(--text) 7%, transparent);
+    background: color-mix(in srgb, var(--text) 6%, transparent);
   }
   .item.active {
     background: var(--accent-soft);
@@ -252,7 +316,13 @@
   .unified {
     font-weight: 600;
   }
-  .icon {
+  .icon,
+  .ficon {
+    display: inline-flex;
+    color: var(--text-muted);
+  }
+  .item.active .ficon,
+  .item.active .icon {
     color: var(--accent);
   }
   .name {
@@ -264,21 +334,15 @@
   }
   .badge {
     font-size: 0.75rem;
-    font-weight: 600;
+    font-weight: 650;
     color: var(--accent);
   }
-  .add {
-    display: block;
-    margin: 0.6rem 0.75rem 0;
-    padding: 0.3rem 0;
-    border: 0;
-    background: none;
-    color: var(--text-muted);
-    cursor: pointer;
-    font-size: 0.85rem;
-  }
   .arch-icon {
-    font-size: 0.85rem;
+    display: inline-flex;
+    color: var(--text-muted);
+  }
+  .archive h2 {
+    border-inline-start-color: var(--text-muted);
   }
   .new.close {
     opacity: 1;
@@ -290,8 +354,5 @@
   }
   .arch-state.warn {
     color: var(--warning);
-  }
-  .add:hover {
-    color: var(--accent);
   }
 </style>

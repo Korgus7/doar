@@ -577,5 +577,10 @@
   "errors.OAUTH_FAILED": "A bejelentkezés nem sikerült.",
   "errors.OAUTH_NOT_CONFIGURED": "Ennél a szolgáltatónál a bejelentkezés a Doar Mail ezen verziójában nem érhető el.",
   "errors.OAUTH_REQUIRED": "Előbb jelentkezzen be.",
-  "errors.OAUTH_WRONG_ACCOUNT": "Egy másik fiókkal jelentkezett be, nem ezzel."
+  "errors.OAUTH_WRONG_ACCOUNT": "Egy másik fiókkal jelentkezett be, nem ezzel.",
+  "settings.theme": "Megjelenés",
+  "settings.theme.system": "Rendszer szerint",
+  "settings.theme.light": "Világos",
+  "settings.theme.dark": "Sötét",
+  "toolbar.menu": "Menü"
 }

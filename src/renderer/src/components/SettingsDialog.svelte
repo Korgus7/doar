@@ -10,6 +10,7 @@
   import { settingsUi } from '../lib/settings.svelte'
   import AiSettings from './AiSettings.svelte'
   import { oauthProviderName, oauthSignIn } from '../lib/oauth.svelte'
+  import { setTheme, themeChoice, type ThemeChoice } from '../lib/theme'
 
   let dialogEl: HTMLDivElement | undefined = $state()
   let details = $state<AccountDetails | null>(null)
@@ -21,6 +22,7 @@
   let serverResult = $state<{ ok: boolean; test: ConnectionTestResult | null; text: string } | null>(null)
   let app = $state<AppSettings | null>(null)
   let lang = $state<Locale | 'auto'>('auto')
+  let theme = $state<ThemeChoice>('system')
 
   const selectedId = $derived(settingsUi.accountId ?? mail.accounts[0]?.id ?? null)
 
@@ -29,6 +31,7 @@
     void tick().then(() => dialogEl?.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]')?.focus())
     void window.doar.invoke('settings.get').then((s) => (app = s))
     lang = localeChoice()
+    theme = themeChoice()
   })
 
   $effect(() => {
@@ -300,6 +303,20 @@
               {#each AVAILABLE_LOCALES as l (l)}<option value={l}>{LOCALE_NAMES[l]}</option>{/each}
             </select>
           </label>
+          <label class="field">
+            <span>{t('settings.theme')}</span>
+            <select
+              value={theme}
+              onchange={(e) => {
+                theme = (e.currentTarget as HTMLSelectElement).value as ThemeChoice
+                setTheme(theme)
+              }}
+            >
+              <option value="system">{t('settings.theme.system')}</option>
+              <option value="light">{t('settings.theme.light')}</option>
+              <option value="dark">{t('settings.theme.dark')}</option>
+            </select>
+          </label>
           {#if app}
             <fieldset class="field">
               <legend>{t('general.compose')}</legend>
@@ -362,7 +379,7 @@
     flex-direction: column;
     background: var(--surface);
     border: 1px solid var(--border);
-    border-radius: 14px;
+    border-radius: var(--radius);
     box-shadow: 0 12px 40px rgb(0 0 0 / 25%);
     overflow: hidden;
   }
@@ -444,7 +461,7 @@
   .dot {
     flex: 0 0 10px;
     height: 10px;
-    border-radius: 50%;
+    border-radius: var(--radius);
   }
   .acc-text {
     display: flex;
@@ -508,7 +525,7 @@
   .swatch {
     width: 1.7rem;
     height: 1.7rem;
-    border-radius: 50%;
+    border-radius: var(--radius);
     display: grid;
     place-items: center;
     cursor: pointer;

@@ -577,5 +577,10 @@
   "errors.OAUTH_FAILED": "Sign-in failed.",
   "errors.OAUTH_NOT_CONFIGURED": "Sign-in with this provider is not available in this version of Doar Mail.",
   "errors.OAUTH_REQUIRED": "Please sign in first.",
-  "errors.OAUTH_WRONG_ACCOUNT": "You signed in with a different account than this one."
+  "errors.OAUTH_WRONG_ACCOUNT": "You signed in with a different account than this one.",
+  "settings.theme": "Appearance",
+  "settings.theme.system": "System default",
+  "settings.theme.light": "Light",
+  "settings.theme.dark": "Dark",
+  "toolbar.menu": "Menu"
 }

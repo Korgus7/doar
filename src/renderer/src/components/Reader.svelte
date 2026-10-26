@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Icon from './Icon.svelte'
   import type { MessageView } from '../../../shared/ipc'
   import { t, type MessageKey } from '../i18n/index.svelte'
   import { addressLine, fileSize, fullDate } from '../lib/format'
@@ -58,8 +59,8 @@
   })
 
   const CSP = "default-src 'none'; img-src data:; style-src 'unsafe-inline'; font-src data:"
-  const BASE_CSS = `html{color-scheme:light}body{margin:0;padding:16px 20px 32px;font:14px/1.55 'Segoe UI Variable Text','Segoe UI',system-ui,-apple-system,sans-serif;color:#1b1f24;background:#fff;overflow-wrap:anywhere}
-img{max-width:100%;height:auto}table{max-width:100%}.doar-plain{white-space:pre-wrap}blockquote{margin:0;margin-inline-start:.4em;padding-inline-start:.8em;border-inline-start:3px solid #c9d1dc;color:#4a5361}a{color:#1d4ed8}
+  const BASE_CSS = `html{color-scheme:light}body{margin:0;padding:16px 20px 32px;font:14px/1.55 'Segoe UI Variable Text','Segoe UI',system-ui,-apple-system,sans-serif;color:#1d2229;background:#fbfaf7;overflow-wrap:anywhere}
+img{max-width:100%;height:auto}table{max-width:100%}.doar-plain{white-space:pre-wrap}blockquote{margin:0;margin-inline-start:.4em;padding-inline-start:.8em;border-inline-start:3px solid #d6d2ca;color:#4f555d}a{color:#2d4362}
 :where(p,div,li,td,th,dd,dt,blockquote,pre,h1,h2,h3,h4,h5,h6,.doar-plain):not([dir]):not([dir] *){unicode-bidi:plaintext}`
 
   const srcdoc = $derived(
@@ -118,10 +119,10 @@ img{max-width:100%;height:auto}table{max-width:100%}.doar-plain{white-space:pre-
         <button class="btn" onclick={() => void setFlags(ids, { seen: items.some((m) => !m.seen) })}>
           {items.some((m) => !m.seen) ? t('reader.markRead') : t('reader.markUnread')}
         </button>
-        <button class="btn" disabled={allInArchive(ids)} onclick={() => archive(ids)}>🗄 {t('actions.archive')}</button>
+        <button class="btn" disabled={allInArchive(ids)} onclick={() => archive(ids)}><Icon name="archive" />{t('actions.archive')}</button>
         <button class="btn" disabled={singleAccount(ids) === null} onclick={() => openMoveDialog(ids)}>{t('actions.moveTo')}</button>
         <button class="btn" onclick={() => toggleSpam(ids)}>{allInJunk(ids) ? t('actions.notSpam') : t('actions.spam')}</button>
-        <button class="btn danger" onclick={() => remove(ids)}>🗑 {allInTrash(ids) ? t('actions.deleteForever') : t('actions.delete')}</button>
+        <button class="btn danger" onclick={() => remove(ids)}><Icon name="trash" />{allInTrash(ids) ? t('actions.deleteForever') : t('actions.delete')}</button>
       </div>
     </div>
   {:else if mail.selectedId === null}
@@ -142,28 +143,28 @@ img{max-width:100%;height:auto}table{max-width:100%}.doar-plain{white-space:pre-
             {#if isDraft(view.id)}
               <button class="btn small btn-primary" title="Enter" onclick={() => window.doar.openCompose('draft', view!.id)}>✎ {t('reader.editDraft')}</button>
             {:else}
-              <button class="btn small" title="Ctrl+R" onclick={() => window.doar.openCompose('reply', view!.id)}>↩ {t('toolbar.reply')}</button>
-              <button class="btn small" title="Ctrl+Shift+R" onclick={() => window.doar.openCompose('replyAll', view!.id)}>↩↩ {t('toolbar.replyAll')}</button>
-              <button class="btn small" title="Ctrl+F" onclick={() => window.doar.openCompose('forward', view!.id)}>↪ {t('toolbar.forward')}</button>
+              <button class="btn small" title="Ctrl+R" onclick={() => window.doar.openCompose('reply', view!.id)}><Icon name="reply" size={15} />{t('toolbar.reply')}</button>
+              <button class="btn small" title="Ctrl+Shift+R" onclick={() => window.doar.openCompose('replyAll', view!.id)}><Icon name="replyAll" size={15} />{t('toolbar.replyAll')}</button>
+              <button class="btn small" title="Ctrl+F" onclick={() => window.doar.openCompose('forward', view!.id)}><Icon name="forward" size={15} />{t('toolbar.forward')}</button>
               {#if aiReady(ai.config)}
-                <button class="btn small" class:on={aiUi.summaryFor === view.id} title={t('ai.summary.buttonTitle')} onclick={() => (aiUi.summaryFor = aiUi.summaryFor === view!.id ? null : view!.id)}>✨ {t('ai.summary.button')}</button>
+                <button class="btn small" class:on={aiUi.summaryFor === view.id} title={t('ai.summary.buttonTitle')} onclick={() => (aiUi.summaryFor = aiUi.summaryFor === view!.id ? null : view!.id)}><Icon name="ai" size={15} />{t('ai.summary.button')}</button>
               {/if}
             {/if}
             {#if isArchiveId(view.id)}
-              <span class="readonly" title={t('archive.readOnlyHint')}>🗃 {t('archive.readOnly')}</span>
-              <button class="icon" title={`${t('reader.print')} (Ctrl+P)`} aria-label={t('reader.print')} onclick={() => window.doar.printHtml(printDocument(view!), view!.subject)}>🖨</button>
+              <span class="readonly" title={t('archive.readOnlyHint')}><Icon name="archive" size={14} /> {t('archive.readOnly')}</span>
+              <button class="icon" title={`${t('reader.print')} (Ctrl+P)`} aria-label={t('reader.print')} onclick={() => window.doar.printHtml(printDocument(view!), view!.subject)}><Icon name="print" size={17} /></button>
             {:else}
-              <button class="icon" title={listItem.flagged ? t('reader.unflag') : t('reader.flag')} aria-label={listItem.flagged ? t('reader.unflag') : t('reader.flag')} class:on={listItem.flagged} onclick={toggleFlag}>{listItem.flagged ? '★' : '☆'}</button>
-              <button class="icon" title={listItem.seen ? t('reader.markUnread') : t('reader.markRead')} aria-label={listItem.seen ? t('reader.markUnread') : t('reader.markRead')} onclick={toggleSeen}>{listItem.seen ? '◉' : '○'}</button>
+              <button class="icon" title={listItem.flagged ? t('reader.unflag') : t('reader.flag')} aria-label={listItem.flagged ? t('reader.unflag') : t('reader.flag')} class:on={listItem.flagged} onclick={toggleFlag}><Icon name="star" size={17} filled={listItem.flagged} /></button>
+              <button class="icon" title={listItem.seen ? t('reader.markUnread') : t('reader.markRead')} aria-label={listItem.seen ? t('reader.markUnread') : t('reader.markRead')} onclick={toggleSeen}><Icon name={listItem.seen ? 'unread' : 'read'} size={17} /></button>
               {#if !allInArchive([listItem.id])}
-                <button class="icon" title={`${t('actions.archive')} (E)`} aria-label={t('actions.archive')} onclick={() => archive([listItem!.id])}>🗄</button>
+                <button class="icon" title={`${t('actions.archive')} (E)`} aria-label={t('actions.archive')} onclick={() => archive([listItem!.id])}><Icon name="archive" size={17} /></button>
               {/if}
-              <button class="icon" title={`${t('reader.print')} (Ctrl+P)`} aria-label={t('reader.print')} onclick={() => window.doar.printHtml(printDocument(view!), view!.subject)}>🖨</button>
+              <button class="icon" title={`${t('reader.print')} (Ctrl+P)`} aria-label={t('reader.print')} onclick={() => window.doar.printHtml(printDocument(view!), view!.subject)}><Icon name="print" size={17} /></button>
               <button
                 class="icon"
                 title={`${allInTrash([listItem.id]) ? t('actions.deleteForever') : t('actions.delete')} (Del)`}
                 aria-label={allInTrash([listItem.id]) ? t('actions.deleteForever') : t('actions.delete')}
-                onclick={() => remove([listItem!.id])}>🗑</button
+                onclick={() => remove([listItem!.id])}><Icon name="trash" size={17} /></button
               >
             {/if}
           </div>
@@ -219,7 +220,7 @@ img{max-width:100%;height:auto}table{max-width:100%}.doar-plain{white-space:pre-
                   openMenu(e.clientX, e.clientY, attachmentMenu(v.id, a), a.filename)
                 }}
               >
-                <span aria-hidden="true">{isDangerousFile(a.filename) ? '⛔' : '📎'}</span>
+                {#if isDangerousFile(a.filename)}<span aria-hidden="true">⛔</span>{:else}<Icon name="attachment" size={15} />{/if}
                 <span class="att-name">{a.filename}</span>
                 <span class="size">{fileSize(a.size)}</span>
               </button>
@@ -264,7 +265,7 @@ img{max-width:100%;height:auto}table{max-width:100%}.doar-plain{white-space:pre-
     color: var(--text-muted);
     padding: 0.1rem 0.5rem;
     border: 1px solid var(--border);
-    border-radius: 999px;
+    border-radius: var(--radius);
   }
   .empty {
     margin: auto;
@@ -313,7 +314,7 @@ img{max-width:100%;height:auto}table{max-width:100%}.doar-plain{white-space:pre-
     background: var(--surface-2);
   }
   .icon.on {
-    color: #e8a400;
+    color: #d4961a;
   }
   dl {
     display: grid;
@@ -357,7 +358,7 @@ img{max-width:100%;height:auto}table{max-width:100%}.doar-plain{white-space:pre-
     flex: 1;
     width: 100%;
     border: 0;
-    background: #fff;
+    background: #fbfaf7;
     min-height: 0;
   }
   footer {

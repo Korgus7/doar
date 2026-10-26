@@ -66,6 +66,38 @@ test('nastavenia: názov, farba, podpis v novej správe, server, upozornenia, od
   expect(await c.getByRole('textbox', { name: 'Text správy' }).innerHTML()).toMatch(/^<p dir="auto"><br class="ProseMirror-trailingBreak"><\/p><p dir="auto">--<br>S pozdravom<br>Tomáš Kováč<\/p>$/)
   await Promise.all([c.waitForEvent('close'), app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().find((w) => w.getTitle() === 'Nová správa')?.close())])
 
+  // Vzhľad: Tmavý / Svetlý / Podľa systému – prepne sa hneď a zapamätá sa.
+  await win.getByRole('button', { name: 'Nastavenia', exact: true }).click()
+  await dlg.getByRole('tab', { name: 'Všeobecné' }).click()
+  await dlg.getByLabel('Vzhľad').selectOption('dark')
+  expect(await win.evaluate(() => [document.documentElement.dataset['theme'], getComputedStyle(document.body).colorScheme])).toEqual(['dark', 'dark'])
+  expect(await win.evaluate(() => localStorage.getItem('doar.theme'))).toBe('dark')
+  expect(await app.evaluate(({ nativeTheme }) => nativeTheme.themeSource)).toBe('dark')
+  await dlg.getByLabel('Vzhľad').selectOption('light')
+  expect(await win.evaluate(() => getComputedStyle(document.body).colorScheme)).toBe('light')
+  await dlg.getByLabel('Vzhľad').selectOption('system')
+  expect(await win.evaluate(() => document.documentElement.hasAttribute('data-theme'))).toBe(false)
+  expect(await app.evaluate(({ nativeTheme }) => nativeTheme.themeSource)).toBe('system')
+  await win.keyboard.press('Escape')
+
+  // Konto sa dá zbaliť a rozbaliť (zapamätá sa).
+  const accToggle = folders.getByRole('button', { name: /Práca/ })
+  await expect(accToggle).toHaveAttribute('aria-expanded', 'true')
+  await accToggle.click()
+  await expect(accToggle).toHaveAttribute('aria-expanded', 'false')
+  await expect(folders.getByRole('button', { name: /^Doručená pošta/ })).toBeHidden()
+  await accToggle.click()
+  await expect(folders.getByRole('button', { name: /^Doručená pošta/ })).toBeVisible()
+
+  // Ponuka ☰: položky, ktoré boli dole v paneli; „Pridať konto…“ otvorí sprievodcu.
+  await win.getByRole('button', { name: 'Ponuka' }).click()
+  const menu = win.getByRole('menu', { name: 'Ponuka' })
+  await expect(menu.getByRole('menuitem')).toHaveText([/^Pridať konto…/, /^Zálohovať konto…/, /^Obnoviť zo zálohy…/, /^Otvoriť archív…/, /^Nastavenia…/, /^Skontrolovať aktualizácie…/, /^O aplikácii Doar Mail/])
+  await menu.getByRole('menuitem', { name: 'Pridať konto…' }).click()
+  await expect(win.getByRole('heading', { name: 'Pridať konto' })).toBeVisible()
+  await win.getByRole('button', { name: 'Zrušiť' }).click()
+  await expect(folders).toBeVisible()
+
   // Odstránenie konta → uvítanie; pošta na serveri zostane.
   await win.getByRole('button', { name: 'Nastavenia', exact: true }).click()
   win.once('dialog', (d) => void d.accept())

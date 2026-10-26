@@ -577,5 +577,10 @@
   "errors.OAUTH_FAILED": "La connexion a échoué.",
   "errors.OAUTH_NOT_CONFIGURED": "La connexion avec ce fournisseur n’est pas disponible dans cette version de Doar Mail.",
   "errors.OAUTH_REQUIRED": "Connectez-vous d’abord.",
-  "errors.OAUTH_WRONG_ACCOUNT": "Vous vous êtes connecté avec un autre compte que celui-ci."
+  "errors.OAUTH_WRONG_ACCOUNT": "Vous vous êtes connecté avec un autre compte que celui-ci.",
+  "settings.theme": "Apparence",
+  "settings.theme.system": "Selon le système",
+  "settings.theme.light": "Clair",
+  "settings.theme.dark": "Sombre",
+  "toolbar.menu": "Menu"
 }

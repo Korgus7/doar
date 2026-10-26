@@ -171,7 +171,7 @@ export interface OAuthPageText {
 function page(lang: string, title: string, text: string, ok: boolean): string {
   const esc = (s: string): string => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!)
   return `<!doctype html><html lang="${esc(lang)}" dir="auto"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'"><title>${esc(title)}</title>
-<style>body{font:16px/1.5 'Segoe UI',system-ui,sans-serif;display:grid;place-items:center;min-height:90vh;margin:0;background:#f6f8fc;color:#1b1f24}div{background:#fff;border:1px solid #e1e6ef;border-radius:14px;padding:28px 34px;max-width:420px;text-align:center}b{font-size:2rem;color:${ok ? '#2f9e44' : '#e03131'}}</style></head>
+<style>body{font:16px/1.5 'Segoe UI',system-ui,sans-serif;display:grid;place-items:center;min-height:90vh;margin:0;background:#efede9;color:#1d2229}div{background:#fbfaf7;border:1px solid #e3e0da;border-radius:3px;padding:28px 34px;max-width:420px;text-align:center}b{font-size:2rem;color:${ok ? '#2e7d4f' : '#b3261e'}}</style></head>
 <body><div><b>${ok ? '✓' : '✕'}</b><h1 style="font-size:1.2rem">${esc(title)}</h1><p>${esc(text)}</p></div></body></html>`
 }
 

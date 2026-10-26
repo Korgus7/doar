@@ -257,7 +257,17 @@ Záznam dohodnutých rozhodnutí. Nové rozhodnutia pridávaj na koniec s dátum
 - Testy: testovací Dovecot overuje tokeny cez introspekciu (`scripts/testserver.mjs`, port 3880), testovací SMTP prijíma XOAUTH2. Integračný test s falošným prihlasovacím serverom (PKCE, odmietnutie, sfalšovaný `state`, pridanie konta, synchronizácia, odoslanie, obnova tokenu s rotáciou, odvolaný token → `OAUTH_EXPIRED` → opätovné prihlásenie, odstránenie konta) a e2e test sprievodcu a nastavení (premenná `DOAR_OAUTH_TEST_URL`).
 - **Jazyky:** pribudli **francúzština, španielčina a ruština** (aj AI preklad do ruštiny). Preklady pripravila AI – skontrolovať rodeným hovoriacim.
 - Neoverené: skutočné prihlásenie u Microsoftu (čaká na registráciu aplikácie).
-- **Verzia 0.5.0** (2026-10-25): prihlásenie cez Google, jazyky fr/es/ru.
+- **Verzia 0.5.0** (2026-10-25): prihlásenie cez Google, jazyky cs/de/hu/fr/es/ru/he. Vydanie `v0.5.0` na GitHube; aplikácia Google prepnutá do produkcie (neoverená, limit 100 používateľov), zásady súkromia na `cami.sk/doar/#sukromie`. **Aktualizáciu 0.4.0 → 0.5.0 overil používateľ naostro.**
+
+## 2026-10-26 – nový vzhľad a výber svetlý/tmavý (0.6)
+
+- **Vzhľad podľa webu:** hlavná farba tmavá oceľová `#2d4362` (žiadna žiarivá modrá), minimálne zaoblenia 3 px všade (používateľ nechce guľaté tlačidlá), čiarové ikony (`components/Icon.svelte`, vlastné kresby) namiesto emoji a znakov.
+- **Svetlá téma jemne krémová:** zoznam a čítanie `#fbfaf7`, ľavý panel `#f1efea`, hlavičky kont `#e8e5df`, čiary `#e3e0da`. **Tmavá téma** grafitová so svetlejšou oceľovou. HTML e‑maily ostávajú na svetlom pozadí aj v tmavej téme (sú robené na bielu).
+- **Výber vzhľadu** v Nastaveniach → Všeobecné: Podľa systému / Svetlý / Tmavý; prepne sa hneď (hlavný proces cez `nativeTheme.themeSource`, aj titulok okna a ostatné okná).
+- **Ľavý panel:** každé konto je samostatný blok s podfarbenou hlavičkou, farebným prúžkom a zbalením. Spodné odkazy (Pridať konto, Zálohovať, Obnoviť, Otvoriť archív) presunuté do **menu ☰** v hornej lište (aplikačné menu je skryté, ukáže sa len po Alt).
+- **Farby kont** tlmené; migrácia 010 preklopí staré žiarivé predvolené farby na tlmené, vlastné voľby používateľa nemení.
+- **Nová ikona programu:** obrys obálky na oceľovom podklade.
+- Overené: unit 143, integračné 111, e2e 20; snímky svetlá/tmavá/menu/nastavenia pozreté. Neoverené: vzhľad na skutočnom Windows (používateľ).
 
 ## Licencie závislostí (overené 2026-10-21 cez `npm view`)
 

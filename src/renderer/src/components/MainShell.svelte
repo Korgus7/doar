@@ -15,6 +15,12 @@
   import { ui, undoLast, folderLabel } from '../lib/actions.svelte'
   import { runSearch } from '../lib/mail.svelte'
   import { openSettings } from '../lib/settings.svelte'
+  import Icon from './Icon.svelte'
+  import { openMenu } from '../lib/actions.svelte'
+  import { backup } from '../lib/backup.svelte'
+  import { restore } from '../lib/restore.svelte'
+  import { openArchive } from '../lib/archive.svelte'
+  import { checkUpdates } from '../lib/update.svelte'
 
   let { onAddAccount }: { onAddAccount: () => void } = $props()
 
@@ -102,6 +108,28 @@
     }
   }
 
+  /** Ponuka ☰: veci, ktoré boli dole v paneli priečinkov, plus nastavenia a pomocník. */
+  function appMenu(e: MouseEvent): void {
+    const r = (e.currentTarget as HTMLElement).getBoundingClientRect()
+    const rtl = document.documentElement.dir === 'rtl'
+    openMenu(rtl ? r.left : r.right - 240, r.bottom + 4, [
+      { label: t('menu.addAccount'), run: onAddAccount },
+      {
+        label: t('menu.backup'),
+        run: () => {
+          backup.accountId = mail.folderId === null ? null : (findFolder(mail.folderId)?.accountId ?? null)
+          backup.open = true
+        }
+      },
+      { label: t('menu.restore'), run: () => (restore.open = true) },
+      { label: t('menu.openArchive'), run: () => void openArchive() },
+      'sep',
+      { label: t('menu.settings'), shortcut: 'Ctrl+,', run: () => openSettings() },
+      { label: t('menu.checkUpdates'), run: checkUpdates },
+      { label: t('menu.about'), run: () => window.doar.showAbout() }
+    ], t('toolbar.menu'))
+  }
+
   function syncNow(): void {
     void window.doar.invoke('sync.now', {})
   }
@@ -143,14 +171,13 @@
 
 <div class="shell">
   <div class="toolbar">
-    <button class="btn btn-primary" onclick={() => window.doar.openCompose('new')} title="Ctrl+N">✉ {t('toolbar.newMessage')}</button>
+    <button class="btn btn-primary" onclick={() => window.doar.openCompose('new')} title="Ctrl+N"><Icon name="compose" />{t('toolbar.newMessage')}</button>
     <button class="btn" onclick={syncNow} disabled={syncing} title="F5">
-      <span class:spin={syncing} aria-hidden="true">⟳</span>
+      <span class="sync-ico" class:spin={syncing}><Icon name="sync" /></span>
       {t('toolbar.sync')}
     </button>
-    <button class="btn icon-btn" onclick={() => openSettings()} title={`${t('toolbar.settings')} (Ctrl+,)`} aria-label={t('toolbar.settings')}>⚙</button>
     <div class="search" role="search">
-      <span class="glass" aria-hidden="true">⌕</span>
+      <span class="glass"><Icon name="search" /></span>
       <input
         bind:this={searchEl}
         bind:value={query}
@@ -173,11 +200,13 @@
         </select>
       {/if}
     </div>
+    <button class="btn icon-btn" onclick={() => openSettings()} title={`${t('toolbar.settings')} (Ctrl+,)`} aria-label={t('toolbar.settings')}><Icon name="settings" size={17} /></button>
+    <button class="btn icon-btn" onclick={appMenu} title={t('toolbar.menu')} aria-label={t('toolbar.menu')} aria-haspopup="menu"><Icon name="menu" size={17} /></button>
   </div>
   <UpdateBanner />
   <OutboxBanner />
   <div class="panes" style:grid-template-columns={`${widths.folders}px 5px ${widths.list}px 5px minmax(0, 1fr)`}>
-    <FolderPane {onAddAccount} />
+    <FolderPane />
     <!-- Posúvateľný oddeľovač je podľa ARIA interaktívny prvok (ovládanie šípkami). -->
     <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
     <div
@@ -231,13 +260,19 @@
     padding: 0.35em 0.8em;
   }
   .icon-btn {
-    font-size: 1.05rem;
-    line-height: 1;
+    padding-inline: 0.55em !important;
+    color: var(--text-muted);
+  }
+  .icon-btn:hover {
+    color: var(--text);
+  }
+  .sync-ico {
+    display: inline-flex;
   }
   .search {
     flex: 1;
     max-width: 34rem;
-    margin-inline-start: auto;
+    margin-inline: auto 0.25rem;
     display: flex;
     align-items: center;
     gap: 0.4rem;
@@ -246,9 +281,9 @@
   .glass {
     position: absolute;
     inset-inline-start: 0.6rem;
+    display: inline-flex;
     color: var(--text-muted);
     pointer-events: none;
-    font-size: 1.05rem;
   }
   .search input {
     flex: 1;

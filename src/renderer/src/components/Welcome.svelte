@@ -46,7 +46,7 @@
     text-align: center;
     background: var(--surface);
     border: 1px solid var(--border);
-    border-radius: 14px;
+    border-radius: var(--radius);
     padding: 2.5rem 2rem 1.5rem;
     box-shadow: var(--shadow);
   }

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Icon from './Icon.svelte'
   import { onDestroy, onMount, untrack } from 'svelte'
   import { t } from '../i18n/index.svelte'
   import { ai, aiErrorText, aiTarget, aiUi, runAi, summaries } from '../lib/ai.svelte'
@@ -53,7 +54,7 @@
 
 <section class="sum" aria-label={t('ai.summary.title')} aria-live="polite">
   {#if phase === 'confirm'}
-    <p>✨ {t('ai.summary.confirm', { target: aiTarget() })}</p>
+    <p><Icon name="ai" size={15} /> {t('ai.summary.confirm', { target: aiTarget() })}</p>
     <div class="acts">
       <button class="btn small btn-primary" onclick={() => void start()}>{t('ai.summary.send')}</button>
       <button class="btn small" onclick={close}>{t('ai.cancel')}</button>
@@ -61,7 +62,7 @@
     </div>
   {:else}
     <div class="head">
-      <strong>✨ {t('ai.summary.title')}</strong>
+      <strong><Icon name="ai" size={15} /> {t('ai.summary.title')}</strong>
       <span class="muted">{target} · {t('ai.mayErr')}</span>
       <button class="x" aria-label={t('ai.summary.close')} title={t('ai.summary.close')} onclick={close}>×</button>
     </div>

@@ -237,7 +237,7 @@
     overflow: auto;
     background: var(--surface);
     border: 1px solid var(--border);
-    border-radius: 14px;
+    border-radius: var(--radius);
     padding: 1.5rem 1.6rem 1.2rem;
     box-shadow: 0 12px 40px rgb(0 0 0 / 25%);
   }
@@ -295,7 +295,7 @@
     place-items: center;
     width: 1.5rem;
     height: 1.5rem;
-    border-radius: 50%;
+    border-radius: var(--radius);
     border: 1px solid var(--border);
     font-size: 0.8rem;
   }

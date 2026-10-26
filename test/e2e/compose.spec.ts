@@ -68,7 +68,7 @@ test('písanie: nová správa, odpoveď s citáciou, nejasný výsledok, zatvore
   // 2. Odpoveď
   await win.getByRole('navigation', { name: 'Priečinky' }).getByRole('button', { name: /^Doručená pošta/ }).click()
   await list.getByRole('option', { name: /Obed v piatok/ }).click()
-  const c2 = await openCompose(() => win.getByRole('button', { name: /^↩ Odpovedať$/ }).click())
+  const c2 = await openCompose(() => win.getByRole('button', { name: /^Odpovedať$/ }).click())
   await expect(c2.getByLabel('Komu')).toHaveValue('Gita <gita@doar.test>')
   await expect(c2.getByLabel('Predmet')).toHaveValue('Re: Obed v piatok?')
   // Formátovaná odpoveď: prázdny odsek na písanie, hlavička citácie, citácia ako blockquote.

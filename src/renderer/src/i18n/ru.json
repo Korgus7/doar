@@ -577,5 +577,10 @@
   "errors.OAUTH_FAILED": "Не удалось войти.",
   "errors.OAUTH_NOT_CONFIGURED": "Вход через этого провайдера недоступен в этой версии Doar Mail.",
   "errors.OAUTH_REQUIRED": "Сначала войдите.",
-  "errors.OAUTH_WRONG_ACCOUNT": "Вы вошли с другой учётной записью, а не с этой."
+  "errors.OAUTH_WRONG_ACCOUNT": "Вы вошли с другой учётной записью, а не с этой.",
+  "settings.theme": "Оформление",
+  "settings.theme.system": "Как в системе",
+  "settings.theme.light": "Светлое",
+  "settings.theme.dark": "Тёмное",
+  "toolbar.menu": "Меню"
 }

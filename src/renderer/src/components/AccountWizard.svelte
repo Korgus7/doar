@@ -369,7 +369,7 @@
     width: min(640px, 100%);
     background: var(--surface);
     border: 1px solid var(--border);
-    border-radius: 14px;
+    border-radius: var(--radius);
     padding: 2rem;
     box-shadow: var(--shadow);
   }

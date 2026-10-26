@@ -3,6 +3,10 @@ import App from './App.svelte'
 import ComposeApp from './ComposeApp.svelte'
 import './styles/base.css'
 import { isComposeMode } from '../../shared/ipc'
+import { initTheme } from './lib/theme'
+
+// Vzhľad ešte pred vykreslením (bez preblesknutia svetlej/tmavej).
+initTheme()
 
 const target = document.getElementById('app')
 if (!target) throw new Error('#app chýba')

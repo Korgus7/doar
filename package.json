@@ -1,7 +1,7 @@
 {
   "name": "doar",
   "productName": "Doar Mail",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Jednoduchý e-mailový klient pre desktop (IMAP/SMTP) so zálohou do mbox.",
   "license": "MIT",
   "author": "Milan Caputa",

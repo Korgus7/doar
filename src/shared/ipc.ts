@@ -46,7 +46,8 @@ export interface AppSettings {
   composeHtml: boolean
 }
 
-export const ACCOUNT_COLORS = ['#3b82f6', '#e8590c', '#2f9e44', '#ae3ec9', '#0c8599', '#e03131', '#f08c00', '#5c7cfa'] as const
+/** Tlmené farby kont (od 0.6; staré žiarivé prevedie migrácia 010). */
+export const ACCOUNT_COLORS = ['#4a6b96', '#b5683a', '#4f7f5a', '#7d5b8f', '#3f7f84', '#a3504a', '#b08a3e', '#5f6f8f'] as const
 
 export interface AppInfo {
   version: string
@@ -807,6 +808,10 @@ export interface DoarApi {
   locale: string
   /** Oznámi hlavnému procesu jazyk rozhrania (menu). */
   setUiLocale(locale: UiLocale): void
+  /** Oznámi hlavnému procesu zvolený vzhľad (titulok okna, posuvníky, ostatné okná). */
+  setTheme(theme: 'system' | 'light' | 'dark'): void
+  /** Okno „O programe“ (z ponuky ☰). */
+  showAbout(): void
   /** Akcie z aplikačného menu (napr. 'add-account'). */
   onMenuAction(fn: (action: string) => void): () => void
   /** Otvorí odkaz (http, https, mailto) v systémovom prehliadači / poštovom programe. */

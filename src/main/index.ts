@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, MessageChannelMain, nativeImage, Notification, powerMonitor, session, shell, utilityProcess, type UtilityProcess } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, MessageChannelMain, nativeImage, nativeTheme, Notification, powerMonitor, session, shell, utilityProcess, type UtilityProcess } from 'electron'
 import { deflateSync } from 'node:zlib'
 import { basename, join, relative, isAbsolute } from 'node:path'
 import { statSync, writeFileSync, rmSync } from 'node:fs'
@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os'
 import { randomUUID } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import { SecretStore } from './secrets'
-import { buildMenu, systemUiLocale, translate } from './menu'
+import { buildMenu, showAbout, systemUiLocale, translate } from './menu'
 import { loadWindowState, trackWindowState } from './window-state'
 import { ensureShortcuts } from './shortcuts'
 import { Updater } from './updater'
@@ -116,9 +116,9 @@ function dotImage(): Electron.NativeImage {
       const d = Math.hypot(x - 7.5, y - 7.5)
       const a = Math.max(0, Math.min(1, 7.5 - d)) // vyhladený okraj
       const o = y * (size * 4 + 1) + 1 + x * 4
-      raw[o] = 0xe0
-      raw[o + 1] = 0x31
-      raw[o + 2] = 0x31
+      raw[o] = 0xb3
+      raw[o + 1] = 0x26
+      raw[o + 2] = 0x1e
       raw[o + 3] = Math.round(a * 255)
     }
   }
@@ -359,6 +359,14 @@ if (!gotLock) {
         uiLocale = locale
         buildMenu(locale, () => mainWindow, DEV_URL !== undefined)
       }
+    })
+    // Vzhľad: nativeTheme prepne prefers-color-scheme vo všetkých oknách aj farbu titulku okna.
+    ipcMain.on('ui-theme', (e, theme: unknown) => {
+      if (!senderWindow(e)) return
+      if (theme === 'system' || theme === 'light' || theme === 'dark') nativeTheme.themeSource = theme
+    })
+    ipcMain.on('show-about', (e) => {
+      if (mainWindow && e.sender === mainWindow.webContents) showAbout(mainWindow)
     })
     ipcMain.on('open-compose', (e, mode: unknown, messageId: unknown) => {
       if (!senderWindow(e)) return

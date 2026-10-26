@@ -577,5 +577,10 @@
   "errors.OAUTH_FAILED": "No se ha podido iniciar sesión.",
   "errors.OAUTH_NOT_CONFIGURED": "El inicio de sesión con este proveedor no está disponible en esta versión de Doar Mail.",
   "errors.OAUTH_REQUIRED": "Primero inicia sesión.",
-  "errors.OAUTH_WRONG_ACCOUNT": "Has iniciado sesión con una cuenta distinta de esta."
+  "errors.OAUTH_WRONG_ACCOUNT": "Has iniciado sesión con una cuenta distinta de esta.",
+  "settings.theme": "Apariencia",
+  "settings.theme.system": "Según el sistema",
+  "settings.theme.light": "Claro",
+  "settings.theme.dark": "Oscuro",
+  "toolbar.menu": "Menú"
 }

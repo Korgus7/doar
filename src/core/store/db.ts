@@ -10,6 +10,7 @@ import m006 from './migrations/006_drafts'
 import m007 from './migrations/007_import'
 import m008 from './migrations/008_archives'
 import m009 from './migrations/009_moving'
+import m010 from './migrations/010_muted_colors'
 
 /** Zoznam migrácií v poradí. Pridávaj len na koniec. */
 export const MIGRATIONS: readonly { version: number; name: string; sql: string }[] = [
@@ -21,7 +22,8 @@ export const MIGRATIONS: readonly { version: number; name: string; sql: string }
   { version: 6, name: 'drafts', sql: m006 },
   { version: 7, name: 'import', sql: m007 },
   { version: 8, name: 'archives', sql: m008 },
-  { version: 9, name: 'moving', sql: m009 }
+  { version: 9, name: 'moving', sql: m009 },
+  { version: 10, name: 'muted_colors', sql: m010 }
 ]
 
 export type Db = DatabaseSync

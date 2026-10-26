@@ -106,7 +106,7 @@
     width: min(420px, 100%);
     background: var(--surface);
     border: 1px solid var(--border);
-    border-radius: 14px;
+    border-radius: var(--radius);
     padding: 1.3rem 1.4rem 1.1rem;
     box-shadow: 0 12px 40px rgb(0 0 0 / 25%);
   }

@@ -65,6 +65,12 @@ const api: DoarApi = {
   setUiLocale(locale) {
     ipcRenderer.send('ui-locale', locale)
   },
+  setTheme(theme) {
+    ipcRenderer.send('ui-theme', theme)
+  },
+  showAbout() {
+    ipcRenderer.send('show-about')
+  },
   openCompose(mode, messageId) {
     ipcRenderer.send('open-compose', mode, messageId)
   },

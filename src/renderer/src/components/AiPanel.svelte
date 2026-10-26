@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Icon from './Icon.svelte'
   import { onMount } from 'svelte'
   import type { AiRewriteStyle } from '../../../shared/ipc'
   import { t, i18n } from '../i18n/index.svelte'
@@ -118,7 +119,7 @@
 <section class="ai" aria-label={t('ai.compose.title')}>
   <div class="row">
     {#if replyTo !== null}
-      <button class="btn small btn-primary" disabled={disabled || phase === 'running'} onclick={() => void start('reply')} onmouseenter={refresh} onfocus={refresh}>✨ {t('ai.compose.reply')}</button>
+      <button class="btn small btn-primary" disabled={disabled || phase === 'running'} onclick={() => void start('reply')} onmouseenter={refresh} onfocus={refresh}><Icon name="ai" size={15} />{t('ai.compose.reply')}</button>
     {/if}
     <button class="btn small" disabled={disabled || phase === 'running'} onclick={() => void start('fix')} onmouseenter={refresh} onfocus={refresh}>{t('ai.compose.fix')}</button>
     <button class="btn small" disabled={disabled || phase === 'running'} onclick={() => void start('formal')} onmouseenter={refresh} onfocus={refresh}>{t('ai.compose.formal')}</button>

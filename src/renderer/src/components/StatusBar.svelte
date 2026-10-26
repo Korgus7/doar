@@ -34,7 +34,7 @@
   .dot {
     width: 8px;
     height: 8px;
-    border-radius: 50%;
+    border-radius: var(--radius);
     background: var(--text-muted);
   }
   .dot.ok {

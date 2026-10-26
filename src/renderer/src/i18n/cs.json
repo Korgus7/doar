@@ -577,5 +577,10 @@
   "errors.OAUTH_FAILED": "Přihlášení se nepodařilo.",
   "errors.OAUTH_NOT_CONFIGURED": "Přihlášení přes tohoto poskytovatele není v této verzi Doar Mail dostupné.",
   "errors.OAUTH_REQUIRED": "Nejprve se přihlaste.",
-  "errors.OAUTH_WRONG_ACCOUNT": "Přihlásili jste se jiným účtem, než je tento."
+  "errors.OAUTH_WRONG_ACCOUNT": "Přihlásili jste se jiným účtem, než je tento.",
+  "settings.theme": "Vzhled",
+  "settings.theme.system": "Podle systému",
+  "settings.theme.light": "Světlý",
+  "settings.theme.dark": "Tmavý",
+  "toolbar.menu": "Nabídka"
 }

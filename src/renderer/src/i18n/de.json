@@ -577,5 +577,10 @@
   "errors.OAUTH_FAILED": "Die Anmeldung ist fehlgeschlagen.",
   "errors.OAUTH_NOT_CONFIGURED": "Die Anmeldung bei diesem Anbieter ist in dieser Version von Doar Mail nicht verfügbar.",
   "errors.OAUTH_REQUIRED": "Bitte melden Sie sich zuerst an.",
-  "errors.OAUTH_WRONG_ACCOUNT": "Sie haben sich mit einem anderen Konto angemeldet."
+  "errors.OAUTH_WRONG_ACCOUNT": "Sie haben sich mit einem anderen Konto angemeldet.",
+  "settings.theme": "Darstellung",
+  "settings.theme.system": "Wie im System",
+  "settings.theme.light": "Hell",
+  "settings.theme.dark": "Dunkel",
+  "toolbar.menu": "Menü"
 }

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Icon from './components/Icon.svelte'
   import { onMount, tick } from 'svelte'
   import type { AccountSummary, Address, ComposeAttachment, ComposeMode, ComposePrefill } from '../../shared/ipc'
   import { MAX_ATTACHMENTS_BYTES, WARN_ATTACHMENTS_BYTES } from '../../shared/ipc'
@@ -444,12 +445,12 @@
     <button class="btn btn-primary" onclick={send} disabled={sending || !ready} title={t('compose.shortcut')}>
       {sending ? t('compose.sending') : `${t('compose.send')} ➤`}
     </button>
-    <button class="btn" onclick={pickFiles} disabled={sending || !ready}>📎 {t('compose.attach')}</button>
+    <button class="btn" onclick={pickFiles} disabled={sending || !ready}><Icon name="attachment" size={15} />{t('compose.attach')}</button>
     <button class="btn" class:on={format === 'html'} aria-pressed={format === 'html'} onclick={toggleFormat} disabled={sending || !ready} title={t('compose.formatTitle')}>
       {format === 'html' ? t('compose.formatOn') : t('compose.formatOff')}
     </button>
     {#if aiReady(ai.config)}
-      <button class="btn" class:on={aiOpen} aria-pressed={aiOpen} onclick={() => (aiOpen = !aiOpen)} disabled={sending || !ready} title={t('ai.compose.buttonTitle')}>✨ {t('ai.compose.button')}</button>
+      <button class="btn" class:on={aiOpen} aria-pressed={aiOpen} onclick={() => (aiOpen = !aiOpen)} disabled={sending || !ready} title={t('ai.compose.buttonTitle')}><Icon name="ai" size={15} />{t('ai.compose.button')}</button>
     {/if}
     <button class="btn" onclick={discard} disabled={sending || !ready} title={t('compose.discardTitle')}>🗑 {t('compose.discardBtn')}</button>
     <span class="status" class:warn={saveFailed} role="status">

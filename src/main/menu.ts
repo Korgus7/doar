@@ -23,8 +23,24 @@ export function translate(locale: UiLocale, k: Key, params?: Record<string, stri
   return params ? msg.replace(/\{(\w+)\}/g, (_, p: string) => String(params[p] ?? '')) : msg
 }
 
+let currentLocale: UiLocale = 'sk'
+
+/** Okno „O programe“ (z menu Pomocník aj z ponuky ☰ v rozhraní). */
+export function showAbout(win: BrowserWindow | null): void {
+  const t = (k: Key): string => translate(currentLocale, k)
+  const opts = {
+    type: 'info' as const,
+    title: t('menu.about'),
+    message: `${t('app.name')} ${app.getVersion()}`,
+    detail: t('about.detail'),
+    buttons: ['OK']
+  }
+  void (win ? dialog.showMessageBox(win, opts) : dialog.showMessageBox(opts))
+}
+
 /** Postaví aplikačné menu v jazyku rozhrania. */
 export function buildMenu(locale: UiLocale, getWindow: () => BrowserWindow | null, isDev: boolean): void {
+  currentLocale = locale
   const t = (k: Key): string => translate(locale, k)
   const send = (action: string): void => getWindow()?.webContents.send('menu-action', action)
   const isMac = process.platform === 'darwin'
@@ -78,20 +94,7 @@ export function buildMenu(locale: UiLocale, getWindow: () => BrowserWindow | nul
       submenu: [
         { label: t('menu.checkUpdates'), click: () => send('check-updates') },
         { type: 'separator' },
-        {
-          label: t('menu.about'),
-          click: () => {
-            const win = getWindow()
-            const opts = {
-              type: 'info' as const,
-              title: t('menu.about'),
-              message: `${t('app.name')} ${app.getVersion()}`,
-              detail: t('about.detail'),
-              buttons: ['OK']
-            }
-            void (win ? dialog.showMessageBox(win, opts) : dialog.showMessageBox(opts))
-          }
-        }
+        { label: t('menu.about'), click: () => showAbout(getWindow()) }
       ]
     }
   ]

@@ -1,62 +1,67 @@
-/* Doar – základné tokeny. Svetlá a tmavá téma podľa systému, prípadne data-theme. */
+/* Doar – základné tokeny. */
+/* Paleta 0.6: jemne krémová svetlá téma, grafitová tmavá, tmavá oceľová ako hlavná farba.
+   Zaoblenia minimálne (3 px). Tmavá téma podľa systému, alebo vynútená cez data-theme (Nastavenia → Vzhľad). */
 :root {
   --font-ui: 'Segoe UI Variable Text', 'Segoe UI', system-ui, -apple-system, 'SF Pro Text', Cantarell, 'Noto Sans', sans-serif;
   --font-size: 14px;
-  --radius: 8px;
-  --radius-sm: 5px;
+  --radius: 3px;
+  --radius-sm: 3px;
 
-  --bg: #f6f7f9;
-  --surface: #ffffff;
-  --surface-2: #eef0f3;
-  --border: #dde1e6;
-  --text: #1b1f24;
-  --text-muted: #5b6470;
-  --accent: #2463eb;
+  --bg: #f4f2ee;
+  --surface: #fbfaf7;
+  --surface-2: #f1efea;
+  --surface-3: #e8e5df;
+  --border: #e3e0da;
+  --text: #1d2229;
+  --text-muted: #5f646c;
+  --accent: #2d4362;
   --accent-text: #ffffff;
-  --accent-soft: #e3ebfd;
-  --danger: #c62828;
-  --warning: #a35c00;
-  --ok: #1d7a3e;
-  --focus: #2463eb;
-  --shadow: 0 1px 2px rgb(16 24 40 / 6%), 0 1px 3px rgb(16 24 40 / 10%);
+  --accent-soft: #dde2e8;
+  --danger: #b3261e;
+  --warning: #8a5300;
+  --ok: #2e7d4f;
+  --focus: #2d4362;
+  --shadow: 0 1px 2px rgb(29 34 41 / 6%), 0 2px 6px rgb(29 34 41 / 8%);
   color-scheme: light;
 }
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme='light']) {
-    --bg: #15171a;
-    --surface: #1d2024;
-    --surface-2: #262a2f;
-    --border: #33383e;
-    --text: #e8eaed;
-    --text-muted: #a1a8b3;
-    --accent: #6b9bff;
-    --accent-text: #0b1220;
-    --accent-soft: #23314d;
-    --danger: #ff7a7a;
-    --warning: #f0b45a;
-    --ok: #5fd38d;
-    --focus: #8fb3ff;
-    --shadow: 0 1px 2px rgb(0 0 0 / 40%);
+    --bg: #1b1c1e;
+    --surface: #222326;
+    --surface-2: #19191b;
+    --surface-3: #2a2c30;
+    --border: #34363b;
+    --text: #e7e6e3;
+    --text-muted: #a5a8ad;
+    --accent: #8ea6c6;
+    --accent-text: #10151c;
+    --accent-soft: #2e3746;
+    --danger: #ff8a80;
+    --warning: #e9b25c;
+    --ok: #6fcf97;
+    --focus: #8ea6c6;
+    --shadow: 0 1px 2px rgb(0 0 0 / 40%), 0 2px 8px rgb(0 0 0 / 30%);
     color-scheme: dark;
   }
 }
 
 :root[data-theme='dark'] {
-  --bg: #15171a;
-  --surface: #1d2024;
-  --surface-2: #262a2f;
-  --border: #33383e;
-  --text: #e8eaed;
-  --text-muted: #a1a8b3;
-  --accent: #6b9bff;
-  --accent-text: #0b1220;
-  --accent-soft: #23314d;
-  --danger: #ff7a7a;
-  --warning: #f0b45a;
-  --ok: #5fd38d;
-  --focus: #8fb3ff;
-  --shadow: 0 1px 2px rgb(0 0 0 / 40%);
+  --bg: #1b1c1e;
+  --surface: #222326;
+  --surface-2: #19191b;
+  --surface-3: #2a2c30;
+  --border: #34363b;
+  --text: #e7e6e3;
+  --text-muted: #a5a8ad;
+  --accent: #8ea6c6;
+  --accent-text: #10151c;
+  --accent-soft: #2e3746;
+  --danger: #ff8a80;
+  --warning: #e9b25c;
+  --ok: #6fcf97;
+  --focus: #8ea6c6;
+  --shadow: 0 1px 2px rgb(0 0 0 / 40%), 0 2px 8px rgb(0 0 0 / 30%);
   color-scheme: dark;
 }
 
@@ -74,6 +79,7 @@ body,
 }
 
 body {
+  accent-color: var(--accent);
   font-family: var(--font-ui);
   font-size: var(--font-size);
   line-height: 1.45;
@@ -118,7 +124,7 @@ textarea {
 }
 .btn-primary:hover {
   background: var(--accent);
-  filter: brightness(1.08);
+  filter: brightness(1.12);
 }
 
 .visually-hidden {

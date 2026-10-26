@@ -35,12 +35,19 @@ describe('databáza a migrácie', () => {
     old.prepare('INSERT INTO schema_migrations(version, name) VALUES (1, ?)').run('init')
     old.prepare(`INSERT INTO accounts(email,imap_host,imap_port,imap_security,smtp_host,smtp_port,smtp_security,username)
       VALUES ('a@b.sk','imap.b.sk',993,'tls','smtp.b.sk',465,'tls','a@b.sk')`).run()
+    old.prepare(`INSERT INTO accounts(email,imap_host,imap_port,imap_security,smtp_host,smtp_port,smtp_security,username,color)
+      VALUES ('c@d.sk','imap.d.sk',993,'tls','smtp.d.sk',465,'tls','c@d.sk','#123456')`).run()
     old.close()
 
     const db = openDb(file)
     expect(schemaVersion(db)).toBe(MIGRATIONS.at(-1)!.version)
     const acc = db.prepare('SELECT email, password_storage FROM accounts').get() as { email: string; password_storage: string }
     expect(acc).toEqual({ email: 'a@b.sk', password_storage: 'os' })
+    // Migrácia 010: stará žiarivá predvolená farba → tlmená; vlastná farba ostane.
+    expect(db.prepare('SELECT email, color FROM accounts ORDER BY id').all()).toEqual([
+      { email: 'a@b.sk', color: '#4a6b96' },
+      { email: 'c@d.sk', color: '#123456' }
+    ])
     db.close()
     expect(existsSync(`${file}.bak-v1`)).toBe(true)
   })

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Icon from './Icon.svelte'
   import { t } from '../i18n/index.svelte'
   import { listDate } from '../lib/format'
   import { mail, messageAt, loadPage, PAGE, setFlags, setSelection, indexOf, allIds, itemsById, findFolder } from '../lib/mail.svelte'
@@ -240,9 +241,9 @@
               </div>
               <div class="line2">
                 <span class="subject"><bdi>{m.subject || t('list.noSubject')}</bdi></span>
-                {#if m.hasAttachments}<span class="clip" title={t('list.attachment')}>📎</span>{/if}
+                {#if m.hasAttachments}<span class="clip" title={t('list.attachment')}><Icon name="attachment" size={14} /></span>{/if}
                 {#if isArchiveId(m.id)}
-                  {#if m.flagged}<span class="star on" aria-label={t('reader.flagged')}>★</span>{/if}
+                  {#if m.flagged}<span class="star on" aria-label={t('reader.flagged')}><Icon name="star" size={14} filled /></span>{/if}
                 {:else}
                   <button
                     class="star"
@@ -250,7 +251,7 @@
                     title={m.flagged ? t('reader.unflag') : t('reader.flag')}
                     aria-label={m.flagged ? t('reader.unflag') : t('reader.flag')}
                     tabindex="-1"
-                    onclick={(e) => toggleFlag(e, m.id, m.flagged)}>{m.flagged ? '★' : '☆'}</button
+                    onclick={(e) => toggleFlag(e, m.id, m.flagged)}><Icon name="star" size={14} filled={m.flagged} /></button
                   >
                 {/if}
               </div>
@@ -349,7 +350,7 @@
     left: -100px;
     max-width: 280px;
     padding: 0.3rem 0.7rem;
-    border-radius: 6px;
+    border-radius: var(--radius);
     background: var(--accent);
     color: var(--accent-text);
     font: 600 0.85rem var(--font-ui);
@@ -443,6 +444,6 @@
     opacity: 1;
   }
   .star.on {
-    color: #e8a400;
+    color: #d4961a;
   }
 </style>

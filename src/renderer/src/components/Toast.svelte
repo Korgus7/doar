@@ -31,8 +31,8 @@
     padding-block: 0.55rem;
     padding-inline: 1rem 0.6rem;
     border-radius: var(--radius);
-    background: #2b3038;
-    color: #f2f4f7;
+    background: #26303d;
+    color: #f3f2ef;
     box-shadow: 0 6px 24px rgb(0 0 0 / 28%);
     font-size: 0.9rem;
   }
@@ -45,7 +45,7 @@
   .undo {
     border: 0;
     background: none;
-    color: #9ec0ff;
+    color: #bccbe0;
     font-weight: 650;
     cursor: pointer;
     padding: 0.2rem 0.4rem;

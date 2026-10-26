@@ -577,5 +577,10 @@
   "errors.OAUTH_FAILED": "ההתחברות נכשלה.",
   "errors.OAUTH_NOT_CONFIGURED": "התחברות דרך ספק זה אינה זמינה בגרסה זו של Doar Mail.",
   "errors.OAUTH_REQUIRED": "יש להתחבר קודם.",
-  "errors.OAUTH_WRONG_ACCOUNT": "התחברת עם חשבון אחר מזה של החשבון הזה."
+  "errors.OAUTH_WRONG_ACCOUNT": "התחברת עם חשבון אחר מזה של החשבון הזה.",
+  "settings.theme": "מראה",
+  "settings.theme.system": "לפי המערכת",
+  "settings.theme.light": "בהיר",
+  "settings.theme.dark": "כהה",
+  "toolbar.menu": "תפריט"
 }
