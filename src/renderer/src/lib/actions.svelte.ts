@@ -1,7 +1,7 @@
 import type { AttachmentInfo, FolderItem } from '../../../shared/ipc'
 import { isArchiveId, isDangerousFile } from '../../../shared/ipc'
 import { t, type MessageKey } from '../i18n/index.svelte'
-import { mail, setSelection, indexOf, messageAt, itemsById, allIds, setFlags, loadFolders, findFolder } from './mail.svelte'
+import { mail, setSelection, indexOf, messageAt, itemsById, allIds, setFlags, loadFolders, findFolder, selectFolder } from './mail.svelte'
 
 /**
  * Akcie nad správami (Kôš, Archív, presun, spam, natrvalo) a stav okolo nich:
@@ -27,12 +27,17 @@ const TOAST_MS = 7000
 export const ui = $state({
   toast: null as null | { seq: number; text: string; undo: number[] | null; restore: number[]; tone: 'info' | 'error' },
   menu: null as null | { x: number; y: number; items: MenuEntry[]; label: string },
+  /** Otvorený adresár. */
+  contacts: false,
   moveDialog: null as null | { ids: number[]; accountId: number },
-  newFolder: null as null | { accountId: number; parentId: number | null },
+  /** Dialóg priečinka: nový (parentId = predvolené umiestnenie), alebo úprava existujúceho (editId). */
+  newFolder: null as null | { accountId: number; parentId: number | null; editId?: number },
   /** Naposledy založený priečinok (dialóg presunu ho hneď vyberie). */
   createdFolderId: null as number | null,
   /** Práve ťahané správy (dragover nevidí obsah dataTransfer). */
-  dragging: null as null | { ids: number[]; accountIds: number[] }
+  dragging: null as null | { ids: number[]; accountIds: number[] },
+  /** Ťahaný priečinok (presun pod iný priečinok alebo na najvyššiu úroveň). */
+  draggingFolder: null as null | { id: number; accountId: number }
 })
 
 let toastSeq = 0
@@ -226,6 +231,49 @@ export async function createFolder(accountId: number, parentId: number | null, n
   ui.createdFolderId = r.folderId
   showToast(t('folderDialog.created', { name: name.trim() }))
   return r.folderId
+}
+
+/** Premenuje priečinok a/alebo ho presunie pod iný (parentId null = najvyššia úroveň). */
+export async function renameFolder(folderId: number, name: string, parentId: number | null): Promise<void> {
+  await window.doar.invoke('folders.rename', { folderId, name, parentId })
+  await loadFolders()
+  showToast(t('folderDialog.renamed', { name: name.trim() }))
+}
+
+/** Priečinky pod daným priečinkom (všetky úrovne). */
+export function descendantIds(f: FolderItem): Set<number> {
+  const own = mail.folders.filter((x) => x.accountId === f.accountId)
+  const byPath = new Map(own.map((x) => [x.path, x]))
+  const out = new Set<number>()
+  for (const x of own) {
+    for (let p = x.parentPath, i = 0; p !== null && i < 64; p = byPath.get(p)?.parentPath ?? null, i++) {
+      if (p === f.path) {
+        out.add(x.id)
+        break
+      }
+    }
+  }
+  return out
+}
+
+/** Odstráni priečinok aj s podpriečinkami po potvrdení (správy idú do Koša; Gmail: len štítok). */
+export async function deleteFolder(f: FolderItem): Promise<void> {
+  const own = mail.folders.filter((x) => x.accountId === f.accountId)
+  const below = descendantIds(f)
+  const sub = own.filter((x) => x.id === f.id || below.has(x.id))
+  const n = sub.reduce((s, x) => s + Math.max(x.total, x.localCount), 0)
+  const gmail = own.some((x) => /^\[(Gmail|Google Mail)\]/.test(x.path))
+  const name = folderLabel(f)
+  if (!confirm(gmail ? t('folders.deleteConfirmGmail', { name }) : t('folders.deleteConfirm', { name, n }))) return
+  try {
+    const r = await window.doar.invoke('folders.delete', { folderId: f.id })
+    await loadFolders()
+    if (mail.folderId !== null && !isArchiveId(mail.folderId) && !mail.folders.some((x) => x.id === mail.folderId)) await selectFolder(null)
+    showToast(r.moved ? t('folders.deletedMoved', { name, n: r.moved }) : t('folders.deleted', { name }))
+  } catch (e) {
+    await loadFolders().catch(() => {})
+    showToast(errorText(e), { tone: 'error' })
+  }
 }
 
 /** Položky kontextovej ponuky pre vybrané správy. */

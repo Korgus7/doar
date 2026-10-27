@@ -1,7 +1,7 @@
 import net from 'node:net'
 import type { Db } from './store/db'
 import type { AccountDetails, AccountPatch, AccountSettings, AccountSummary, AddAccountInput, OAuthProvider, ServerSettings } from '../shared/ipc'
-import { ACCOUNT_COLORS } from '../shared/ipc'
+import { ACCOUNT_COLORS_VIVID } from '../shared/ipc'
 import { passwordKey, type Secrets } from './secrets'
 import { emailDomain } from './providers/discover'
 import type { OAuthService } from './oauth/oauth'
@@ -12,7 +12,7 @@ export function oauthProviderOf(providerKey: string | null | undefined): OAuthPr
 }
 
 /** Farby kont v poradí pridávania (dobre rozlíšiteľné v svetlej aj tmavej téme). */
-const COLORS = ACCOUNT_COLORS
+const COLORS = ACCOUNT_COLORS_VIVID
 
 function err(code: string, message: string): Error {
   return Object.assign(new Error(message), { code })

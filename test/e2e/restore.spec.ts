@@ -116,3 +116,37 @@ test('import z Outlook Expressu cez ponuku ☰: výber priečinka, náhľad, št
   await expect(win.getByRole('navigation', { name: 'Priečinky' }).getByText('Rodina')).toBeVisible()
   await app.close()
 })
+
+test('import: server odmietne prihlásenie → zadanie hesla priamo v okne importu a pokračovanie', async () => {
+  test.setTimeout(150_000)
+  const dir = mkdtempSync(join(tmpdir(), 'doar-e2e-oe-heslo-'))
+  writeFileSync(join(dir, 'Folders.dbx'), dbxFolders([{ id: 1, parent: 0, name: 'Doručená pošta', file: 'Doručená pošta.dbx' }]))
+  writeFileSync(join(dir, 'Doručená pošta.dbx'), dbxMessages([{ raw: msg('Po zadaní hesla'), flags: 0x80 }]))
+
+  // Heslo len do zatvorenia aplikácie (Linux bez kľúčenky) → po novom spustení chýba.
+  const first = await launchApp({ LANG: 'sk_SK.UTF-8' })
+  const win1 = await first.app.firstWindow()
+  await win1.getByRole('status').filter({ hasText: 'SQLite' }).waitFor()
+  await addAccountViaWizard(win1, srv!, 'viera')
+  await first.app.close()
+
+  const { app } = await launchApp({ LANG: 'sk_SK.UTF-8', DOAR_DATA_DIR: first.dataDir })
+  const win = await app.firstWindow()
+  await expect(win.getByRole('navigation', { name: 'Priečinky' })).toBeVisible({ timeout: 30_000 })
+  await app.evaluate(({ dialog }, p) => {
+    dialog.showOpenDialog = (async () => ({ canceled: false, filePaths: [p] })) as typeof dialog.showOpenDialog
+  }, dir)
+  await win.getByRole('button', { name: 'Ponuka' }).click()
+  await win.getByRole('menu', { name: 'Ponuka' }).getByRole('menuitem', { name: 'Importovať z iného programu…' }).click()
+  const dlg = win.getByRole('dialog', { name: 'Import z iného programu' })
+  await dlg.getByRole('button', { name: 'Vybrať priečinok s poštou…' }).click()
+  await dlg.getByRole('button', { name: 'Začať import' }).click()
+  await expect(dlg.getByText('Doar nemá uložené heslo ku kontu viera@doar.test', { exact: false })).toBeVisible({ timeout: 60_000 })
+  await expect(dlg.getByText('Import sa zastavil', { exact: false })).toBeVisible()
+  await dlg.getByLabel('Heslo').fill(srv!.password)
+  await win.screenshot({ path: 'test-results/import-heslo.png' })
+  await dlg.getByRole('button', { name: 'Uložiť heslo a pokračovať' }).click()
+  await expect(dlg.getByText('Import dokončený')).toBeVisible({ timeout: 60_000 })
+  await expect(dlg.getByRole('row', { name: /^Doručená pošta\s+1\s+1\s+0/ })).toBeVisible()
+  await app.close()
+})

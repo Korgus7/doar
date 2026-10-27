@@ -52,7 +52,8 @@ export class Updater {
       error: null,
       manual: false,
       auto: this.prefs.auto,
-      canInstall: app.isPackaged && process.platform === 'win32',
+      // Verziu z Microsoft Store aktualizuje Store – Doar ju nesmie prepísať.
+      canInstall: app.isPackaged && process.platform === 'win32' && !process.windowsStore,
       lastCheck: null
     }
   }
@@ -95,6 +96,7 @@ export class Updater {
     }
     // Pri vývoji (npm run dev) sa automaticky nekontroluje – len na požiadanie.
     if (!app.isPackaged && !process.env['DOAR_UPDATE_FEED']) return
+    if (process.windowsStore) return
     this.schedule()
   }
 
@@ -111,7 +113,7 @@ export class Updater {
     this.prefs.auto = on
     this.savePrefs()
     this.set({ auto: on })
-    if (app.isPackaged || process.env['DOAR_UPDATE_FEED']) this.schedule()
+    if ((app.isPackaged || process.env['DOAR_UPDATE_FEED']) && !process.windowsStore) this.schedule()
   }
 
   private ses: Session | null = null

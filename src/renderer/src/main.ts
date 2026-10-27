@@ -11,10 +11,10 @@ initTheme()
 const target = document.getElementById('app')
 if (!target) throw new Error('#app chýba')
 
-// To isté rozhranie slúži hlavnému oknu aj oknu na písanie správy (?compose=new|reply|replyAll|forward&id=…).
+// To isté rozhranie slúži hlavnému oknu aj oknu na písanie správy (?compose=new|reply|replyAll|forward&id=…&to=…).
 const params = new URLSearchParams(location.search)
 const compose = params.get('compose')
 
 export default compose
-  ? mount(ComposeApp, { target, props: { mode: isComposeMode(compose) ? compose : 'new', messageId: Number(params.get('id')) || undefined } })
+  ? mount(ComposeApp, { target, props: { mode: isComposeMode(compose) ? compose : 'new', messageId: Number(params.get('id')) || undefined, to: params.get('to') ?? undefined } })
   : mount(App, { target })

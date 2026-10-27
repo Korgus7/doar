@@ -103,6 +103,22 @@ textarea {
   outline-offset: 2px;
 }
 
+/* Textové polia: jednotný vzhľad (komponent si ho môže upraviť). Fokus len farbou rámika – bez hrubého
+   obrysu s medzerou okolo poľa. */
+:where(input:not([type='checkbox'], [type='radio'], [type='range'], [type='file']), select, textarea) {
+  padding: 0.42em 0.55em;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--text);
+}
+:where(input:not([type='checkbox'], [type='radio'], [type='range'], [type='file']), select, textarea):focus,
+:where(input:not([type='checkbox'], [type='radio'], [type='range'], [type='file']), select, textarea):focus-visible {
+  outline: none;
+  border-color: color-mix(in srgb, var(--accent) 70%, var(--border));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 25%, transparent);
+}
+
 .btn {
   display: inline-flex;
   align-items: center;

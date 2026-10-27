@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, MessageChannelMain, nativeImage, nativeTheme, Notification, powerMonitor, session, shell, utilityProcess, type UtilityProcess } from 'electron'
+import { app, BrowserWindow, clipboard, dialog, ipcMain, MessageChannelMain, nativeImage, nativeTheme, Notification, powerMonitor, session, shell, utilityProcess, type UtilityProcess } from 'electron'
 import { deflateSync } from 'node:zlib'
 import { basename, join, relative, isAbsolute } from 'node:path'
 import { statSync, writeFileSync, rmSync } from 'node:fs'
@@ -220,7 +220,7 @@ function createWindow(): BrowserWindow {
 }
 
 /** Okno na písanie správy (samostatné, ako v Outlook Expresse). */
-function createComposeWindow(mode: ComposeMode, messageId?: number): BrowserWindow {
+function createComposeWindow(mode: ComposeMode, messageId?: number, to?: string): BrowserWindow {
   const parent = mainWindow
   const b = parent?.getBounds()
   const win = new BrowserWindow({
@@ -242,7 +242,7 @@ function createComposeWindow(mode: ComposeMode, messageId?: number): BrowserWind
     e.preventDefault()
     win.webContents.send('close-request')
   })
-  registerWindow(win, { compose: mode, ...(messageId ? { id: String(messageId) } : {}) })
+  registerWindow(win, { compose: mode, ...(messageId ? { id: String(messageId) } : {}), ...(to ? { to } : {}) })
   return win
 }
 
@@ -304,7 +304,8 @@ if (!gotLock) {
     // Windows: oznámenia sa zobrazia pod menom aplikácie (nie „electron.app.Electron“).
     if (process.platform === 'win32') app.setAppUserModelId('sk.doar.app')
     // Balík bez inštalátora: odkazy v ponuke Štart a na ploche si aplikácia vytvorí sama.
-    ensureShortcuts(APP_NAME, 'sk.doar.app')
+    // Verzia z Microsoft Store má odkaz v ponuke Štart od Windowsu – vlastné odkazy netreba.
+    if (!process.windowsStore) ensureShortcuts(APP_NAME, 'sk.doar.app')
     // Aktualizácie (GitHub Releases) – nič sa nestiahne bez súhlasu používateľa.
     updater = new Updater(() => [...appWindows])
     ipcMain.handle('update-state', () => updater!.getState())
@@ -372,10 +373,12 @@ if (!gotLock) {
     ipcMain.on('show-about', (e) => {
       if (mainWindow && e.sender === mainWindow.webContents) showAbout(mainWindow)
     })
-    ipcMain.on('open-compose', (e, mode: unknown, messageId: unknown) => {
+    ipcMain.on('open-compose', (e, mode: unknown, messageId: unknown, to: unknown) => {
       if (!senderWindow(e)) return
       const m = isComposeMode(mode) ? mode : 'new'
-      createComposeWindow(m, Number.isInteger(messageId) ? (messageId as number) : undefined)
+      // Adresát z adresára – len text do poľa Komu (overí ho okno správy ako hocičo napísané).
+      const recipient = m === 'new' && typeof to === 'string' && to.length <= 2000 && !/[\r\n]/.test(to) ? to : undefined
+      createComposeWindow(m, Number.isInteger(messageId) ? (messageId as number) : undefined, recipient)
     })
     // Záloha: súbor vyberá používateľ v natívnom dialógu; jadro smie zapisovať len do takto zvolenej cesty.
     const exportPaths = new Set<string>()
@@ -439,6 +442,28 @@ if (!gotLock) {
       }
       allow(path, 'tree')
       return path
+    })
+    // Schránka: len text (napr. meno a adresa z adresára), len z okien aplikácie.
+    ipcMain.on('copy-text', (e, text: unknown) => {
+      if (!senderWindow(e) || typeof text !== 'string' || text.length > 100_000) return
+      clipboard.writeText(text)
+    })
+    // Adresár: súbory s kontaktmi (vCard, CSV) vyberá používateľ; jadro ich smie len čítať.
+    ipcMain.handle('choose-contacts-files', async (e) => {
+      const w = BrowserWindow.fromWebContents(e.sender)
+      if (!w || w !== mainWindow) return []
+      const r = await dialog.showOpenDialog(w, {
+        defaultPath: app.getPath('documents'),
+        filters: [
+          { name: translate(uiLocale, 'contacts.fileTypes'), extensions: ['vcf', 'vcard', 'csv', 'txt'] },
+          { name: '*', extensions: ['*'] }
+        ],
+        properties: ['openFile', 'multiSelections']
+      })
+      if (r.canceled) return []
+      const out = r.filePaths.filter((p) => picked(p)).slice(0, 50)
+      for (const p of out) allow(p, 'read')
+      return out
     })
     ipcMain.handle('choose-attach-files', async (e) => {
       const w = windowOf(e)

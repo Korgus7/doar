@@ -263,6 +263,29 @@ export class SyncManager {
     return s.createFolder(parent?.path ?? null, clean)
   }
 
+  /** Premenovanie a/alebo presun pod iný priečinok (parentFolderId null = najvyššia úroveň). */
+  async renameFolder(folderId: number, name: string, parentFolderId: number | null): Promise<void> {
+    const clean = name.trim()
+    if (!clean || clean.length > 200 || /[%*\u0000-\u001f]/.test(clean)) throw Object.assign(new Error('Neplatný názov priečinka'), { code: 'INVALID_FOLDER_NAME' })
+    const folder = this.deps.store.folder(folderId)
+    if (!folder) throw Object.assign(new Error('Priečinok neexistuje'), { code: 'NO_TARGET' })
+    if (folder.special_use || folder.path.toUpperCase() === 'INBOX') throw Object.assign(new Error('Tento priečinok sa nedá premenovať'), { code: 'FOLDER_PROTECTED' })
+    const parent = parentFolderId === null ? null : this.deps.store.folder(parentFolderId)
+    if (parentFolderId !== null && (!parent || parent.account_id !== folder.account_id)) throw Object.assign(new Error('Nadradený priečinok neexistuje'), { code: 'NO_TARGET' })
+    const s = this.syncs.get(folder.account_id)
+    if (!s) throw Object.assign(new Error('Konto neexistuje'), { code: 'NO_ACCOUNT' })
+    return s.renameFolder(folder.path, parent?.path ?? null, clean)
+  }
+
+  async deleteFolder(folderId: number): Promise<{ moved: number; labelsOnly: boolean }> {
+    const folder = this.deps.store.folder(folderId)
+    if (!folder) throw Object.assign(new Error('Priečinok neexistuje'), { code: 'NO_TARGET' })
+    if (folder.special_use || folder.path.toUpperCase() === 'INBOX') throw Object.assign(new Error('Tento priečinok sa odstrániť nedá'), { code: 'FOLDER_PROTECTED' })
+    const s = this.syncs.get(folder.account_id)
+    if (!s) throw Object.assign(new Error('Konto neexistuje'), { code: 'NO_ACCOUNT' })
+    return s.deleteFolder(folder.path)
+  }
+
   private afterLocalChange(folderIds: number[]): void {
     const unique = [...new Set(folderIds)]
     this.deps.emit('messages.changed', { folderIds: unique })

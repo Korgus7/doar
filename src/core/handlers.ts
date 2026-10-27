@@ -24,6 +24,8 @@ import { OAuthService } from './oauth/oauth'
 import { oauthProviderOf } from './accounts'
 import type { FetchFn } from './ai/providers'
 import { isArchiveId, isComposeMode } from '../shared/ipc'
+import { readFile, rename, stat, writeFile } from 'node:fs/promises'
+import { addFromMail, deleteContacts, listContacts, mailAddresses, mergeContacts, parseContactsFile, saveContact, toCsv, toVcards, type ParsedContact } from './contacts'
 
 export interface CoreContext {
   db: Db
@@ -283,6 +285,37 @@ export function createHandlers(ctx: CoreContext): Handlers {
     'folders.create': async (data) => {
       const parentId = Number.isInteger(data?.parentId) ? (data!.parentId as number) : null
       return { folderId: await ctx.sync.createFolder(Number(data?.accountId), parentId, str(data?.name, 300)) }
+    },
+
+    'folders.delete': (data) => ctx.sync.deleteFolder(Number(data?.folderId)),
+    'folders.rename': (data) => ctx.sync.renameFolder(Number(data?.folderId), str(data?.name, 300), Number.isInteger(data?.parentId) ? (data!.parentId as number) : null),
+
+    'contacts.list': (data) => listContacts(ctx.db, str(data?.query, 200)),
+    'contacts.fromMail': (data) => mailAddresses(ctx.db, str(data?.query, 200)),
+    'contacts.save': (data) => saveContact(ctx.db, data),
+    'contacts.delete': (data) => deleteContacts(ctx.db, ids(data?.ids)),
+    'contacts.addFromMail': (data) => addFromMail(ctx.db, Array.isArray(data?.emails) ? data.emails.filter((e): e is string => typeof e === 'string') : []),
+    'contacts.import': async (data) => {
+      const paths = Array.isArray(data?.paths) ? data.paths.filter((p): p is string => typeof p === 'string').slice(0, 50) : []
+      const items: ParsedContact[] = []
+      for (const p of paths) {
+        const path = await ctx.files.require(p, 'read')
+        const st = await stat(path)
+        if (st.size > 50 * 1024 * 1024) throw err('FILE_TOO_LARGE', 'Súbor je príliš veľký')
+        items.push(...parseContactsFile(path, await readFile(path)))
+      }
+      if (!items.some((i) => i.emails.length)) throw err('NO_CONTACTS', 'V súbore sa nenašli žiadne kontakty s e-mailovou adresou')
+      return mergeContacts(ctx.db, items)
+    },
+    'contacts.export': async (data) => {
+      const path = await ctx.files.require(str(data?.path, 4096), 'write')
+      const all = listContacts(ctx.db)
+      const only = Array.isArray(data?.ids) && data.ids.length ? new Set(ids(data.ids)) : null
+      const list = only ? all.filter((c) => only.has(c.id)) : all
+      const part = `${path}.part`
+      await writeFile(part, /\.csv$/i.test(path) ? toCsv(list) : toVcards(list), 'utf8')
+      await rename(part, path)
+      return { count: list.length }
     },
 
     'ai.config.get': () => ai.getConfig(),

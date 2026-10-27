@@ -3,7 +3,7 @@
   import { timeOnly } from '../lib/format'
   import { tick } from 'svelte'
   import type { AccountDetails, AppSettings, ConnectionTestResult, ServerSettings } from '../../../shared/ipc'
-  import { ACCOUNT_COLORS, LOCALE_NAMES } from '../../../shared/ipc'
+  import { ACCOUNT_COLORS_MUTED, ACCOUNT_COLORS_VIVID, ACCOUNT_COLOR_NEUTRAL, LOCALE_NAMES } from '../../../shared/ipc'
   import { t, setLocale, localeChoice, AVAILABLE_LOCALES, type Locale, type MessageKey } from '../i18n/index.svelte'
   import { mail, loadAccounts, selectFolder } from '../lib/mail.svelte'
   import { errorText, showToast } from '../lib/actions.svelte'
@@ -203,13 +203,16 @@
                 </label>
                 <fieldset class="field">
                   <legend>{t('account.color')}</legend>
-                  <div class="swatches">
-                    {#each ACCOUNT_COLORS as c, i (c)}
-                      <label class="swatch" style:background={c} title={t('account.colorPick', { n: i + 1 })}>
-                        <input type="radio" name="color" value={c} bind:group={form.color} aria-label={t('account.colorPick', { n: i + 1 })} />
-                      </label>
-                    {/each}
-                  </div>
+                  {#each [ACCOUNT_COLORS_VIVID, [...ACCOUNT_COLORS_MUTED, ACCOUNT_COLOR_NEUTRAL]] as row, r (r)}
+                    <div class="swatches">
+                      {#each row as c, i (c)}
+                        {@const n = r * ACCOUNT_COLORS_VIVID.length + i + 1}
+                        <label class="swatch" style:background={c} title={t('account.colorPick', { n })}>
+                          <input type="radio" name="color" value={c} bind:group={form.color} aria-label={t('account.colorPick', { n })} />
+                        </label>
+                      {/each}
+                    </div>
+                  {/each}
                 </fieldset>
                 <label class="field">
                   <span>{t('account.signature')}</span>
@@ -521,6 +524,9 @@
     display: flex;
     gap: 0.5rem;
     flex-wrap: wrap;
+  }
+  .swatches + .swatches {
+    margin-top: 0.5rem;
   }
   .swatch {
     width: 1.7rem;

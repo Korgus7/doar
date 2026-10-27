@@ -1,8 +1,8 @@
 <script lang="ts">
-  import { tick } from 'svelte'
+  import { tick, untrack } from 'svelte'
   import { t } from '../i18n/index.svelte'
   import { mail } from '../lib/mail.svelte'
-  import { ui, createFolder, errorText, folderLabel } from '../lib/actions.svelte'
+  import { ui, createFolder, renameFolder, descendantIds, errorText, folderLabel } from '../lib/actions.svelte'
 
   let el: HTMLDivElement | undefined = $state()
   let name = $state('')
@@ -11,16 +11,27 @@
   let busy = $state(false)
 
   const account = $derived(mail.accounts.find((a) => a.id === ui.newFolder?.accountId))
-  const parents = $derived(mail.folders.filter((f) => f.accountId === ui.newFolder?.accountId))
+  /** Upravovaný priečinok (premenovanie/presun); null = nový priečinok. */
+  const editing = $derived(ui.newFolder?.editId !== undefined ? (mail.folders.find((f) => f.id === ui.newFolder!.editId) ?? null) : null)
+  const excluded = $derived(editing ? new Set([editing.id, ...descendantIds(editing)]) : new Set<number>())
+  const parents = $derived(mail.folders.filter((f) => f.accountId === ui.newFolder?.accountId && !excluded.has(f.id)))
 
   $effect(() => {
     const d = ui.newFolder
     if (!d) return
-    name = ''
-    error = null
-    busy = false
-    parentId = d.parentId
-    void tick().then(() => el?.querySelector<HTMLInputElement>('input')?.focus())
+    // Len pri otvorení dialógu – obnovený zoznam priečinkov (synchronizácia) nesmie prepísať, čo používateľ píše.
+    untrack(() => {
+      const f = d.editId !== undefined ? mail.folders.find((x) => x.id === d.editId) : undefined
+      name = f?.name ?? ''
+      error = null
+      busy = false
+      parentId = f ? (mail.folders.find((x) => x.accountId === f.accountId && x.path === f.parentPath)?.id ?? null) : d.parentId
+    })
+    void tick().then(() => {
+      const input = el?.querySelector<HTMLInputElement>('input')
+      input?.focus()
+      input?.select()
+    })
   })
 
   function close(): void {
@@ -38,7 +49,8 @@
     busy = true
     error = null
     try {
-      await createFolder(d.accountId, parentId, name)
+      if (d.editId !== undefined) await renameFolder(d.editId, name, parentId)
+      else await createFolder(d.accountId, parentId, name)
       close()
     } catch (err) {
       error = errorText(err)
@@ -65,7 +77,7 @@
         }
       }}
     >
-      <h1 id="nf-title">{t('folderDialog.titleNew')}</h1>
+      <h1 id="nf-title">{editing ? t('folderDialog.titleRename') : t('folderDialog.titleNew')}</h1>
       <p class="sub">{account?.email}</p>
       <form onsubmit={submit}>
         <label class="field">
@@ -85,7 +97,7 @@
         <div class="actions">
           <span class="spacer"></span>
           <button type="button" class="btn" onclick={close}>{t('wizard.cancel')}</button>
-          <button type="submit" class="btn btn-primary" disabled={busy}>{t('folderDialog.create')}</button>
+          <button type="submit" class="btn btn-primary" disabled={busy}>{editing ? t('folderDialog.save') : t('folderDialog.create')}</button>
         </div>
       </form>
     </div>

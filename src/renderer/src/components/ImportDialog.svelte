@@ -94,6 +94,37 @@
     }
   }
 
+  /** Server odmietol heslo: nové heslo sa overí a uloží (ako v nastaveniach konta) a import pokračuje. */
+  let password = $state('')
+  let authType = $state<'password' | 'oauth2' | null>(null)
+  const authProblem = $derived(!!restore.summary?.resumable && (restore.summary.errorCode === 'AUTH_FAILED' || restore.summary.errorCode === 'PASSWORD_REQUIRED'))
+  $effect(() => {
+    const id = authProblem ? restore.summary!.accountId : null
+    authType = null
+    if (id !== null) void window.doar.invoke('accounts.get', { id }).then((d) => (authType = d.authType)).catch(() => {})
+  })
+  async function savePasswordAndResume(e: SubmitEvent, jobId: number, id: number): Promise<void> {
+    e.preventDefault()
+    if (!password || busy) return
+    error = null
+    busy = true
+    try {
+      const d = await window.doar.invoke('accounts.get', { id })
+      const r = await window.doar.invoke('accounts.updateServer', { id, username: d.username, imap: d.imap, smtp: d.smtp, password })
+      if (!r.saved) {
+        error = errText(r.test.imap?.code ?? r.test.smtp?.code ?? 'AUTH_FAILED')
+        return
+      }
+      password = ''
+    } catch (err) {
+      error = errText((err as { code?: string }).code)
+      return
+    } finally {
+      busy = false
+    }
+    await resume(jobId)
+  }
+
   async function discard(jobId: number): Promise<void> {
     if (!confirm(t('restore.discardConfirm'))) return
     await window.doar.invoke('import.discard', { jobId }).catch(() => {})
@@ -286,9 +317,9 @@
           {:else if s.result === 'cancelled'}
             <strong>{t('restore.result.cancelled')}</strong>
           {:else if s.result === 'stopped'}
-            <strong>⚠ {t('restore.result.stopped', { reason: errText(s.errorCode) })}</strong>
+            <strong>⚠ {t(restore.kind === 'import' ? 'restore.result.stoppedImport' : 'restore.result.stopped', { reason: errText(s.errorCode) })}</strong>
           {:else}
-            <strong>✕ {t('restore.result.failed', { reason: errText(s.errorCode) })}</strong>
+            <strong>✕ {t(restore.kind === 'import' ? 'restore.result.failedImport' : 'restore.result.failed', { reason: errText(s.errorCode) })}</strong>
           {/if}
           <div class="line">
             {t('restore.summaryLine', { file: s.fileName, email: s.email, uploaded: s.totals.uploaded, duplicate: s.totals.duplicate, start: timeOnly(s.startedAt), end: timeOnly(s.finishedAt) })}
@@ -337,9 +368,21 @@
           {#if s.keywordsDropped}<li>ℹ {t('restore.keywordsDropped', { n: s.keywordsDropped })}</li>{/if}
           {#if s.skipped}<li>ℹ {t('restore.skipped', { n: s.skipped })}</li>{/if}
         </ul>
+        {#if authProblem && authType === 'oauth2'}
+          <p class="alert error">{t('errors.OAUTH_EXPIRED')}</p>
+        {:else if authProblem && authType === 'password'}
+          <form class="password" onsubmit={(e) => savePasswordAndResume(e, s.jobId, s.accountId)}>
+            <p>{t(s.errorCode === 'PASSWORD_REQUIRED' ? 'restore.passwordMissing' : 'restore.passwordNeeded', { email: s.email })}</p>
+            <label class="field">
+              <span>{t('restore.password')}</span>
+              <input type="password" bind:value={password} autocomplete="current-password" disabled={busy} />
+            </label>
+            <button class="btn btn-primary" type="submit" disabled={busy || !password}>{t('restore.passwordContinue')}</button>
+          </form>
+        {/if}
         {#if error}<p class="alert error" role="alert">{error}</p>{/if}
         <div class="actions">
-          {#if s.resumable}<button class="btn" onclick={() => resume(s.jobId)} disabled={busy}>{t('restore.resume')}</button>{/if}
+          {#if s.resumable && !(authProblem && authType === 'password')}<button class="btn" onclick={() => resume(s.jobId)} disabled={busy}>{t('restore.resume')}</button>{/if}
           <span class="spacer"></span>
           <button class="btn btn-primary" onclick={close}>{t('backup.close')}</button>
         </div>
@@ -420,6 +463,16 @@
   .fileinfo {
     min-width: 0;
     overflow-wrap: anywhere;
+  }
+  .password {
+    margin: 0.8rem 0;
+    padding: 0.7rem 0.8rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface-2);
+  }
+  .password p {
+    margin: 0 0 0.6rem;
   }
   .field {
     display: flex;

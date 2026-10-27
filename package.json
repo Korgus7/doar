@@ -1,7 +1,7 @@
 {
   "name": "doar",
   "productName": "Doar Mail",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "description": "Jednoduchý e-mailový klient pre desktop (IMAP/SMTP) so zálohou do mbox.",
   "license": "MIT",
   "author": "Milan Caputa",
@@ -26,7 +26,8 @@
     "test:e2e": "playwright test",
     "testserver": "node scripts/testserver.mjs",
     "rebuild:electron": "echo nič na zostavenie",
-    "dist": "electron-vite build && electron-builder --win --publish never && node scripts/release-manifest.mjs"
+    "dist": "electron-vite build && electron-builder --win --publish never && node scripts/release-manifest.mjs",
+    "dist:store": "electron-vite build && electron-builder --win appx --publish never"
   },
   "dependencies": {
     "imapflow": "^2.5.9",

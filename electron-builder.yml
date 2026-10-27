@@ -34,3 +34,11 @@ win:
     - target: zip
       arch: [x64]
   artifactName: Doar-Mail-${version}-win-${arch}.${ext}
+# Balík pre Microsoft Store (npm run dist:store → dist\*.appx). Podpisuje ho Store, preto ho Windows neblokuje.
+# Verzia zo Store sa aktualizuje cez Store (vlastné aktualizácie a odkazy sa v nej vypnú – process.windowsStore).
+# identityName a publisher sa doplnia z Partner Center (Product identity) po rezervovaní názvu aplikácie.
+appx:
+  displayName: Doar Mail
+  backgroundColor: transparent
+  languages: [sk-SK, cs-CZ, en-US, de-DE, es-ES, fr-FR, he-IL, hu-HU, ru-RU]
+  artifactName: Doar-Mail-${version}-store.${ext}

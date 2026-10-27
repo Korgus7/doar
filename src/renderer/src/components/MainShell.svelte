@@ -173,6 +173,7 @@
 <div class="shell">
   <div class="toolbar">
     <button class="btn btn-primary" onclick={() => window.doar.openCompose('new')} title="Ctrl+N"><Icon name="compose" />{t('toolbar.newMessage')}</button>
+    <button class="btn" onclick={() => (ui.contacts = true)}><Icon name="contacts" />{t('toolbar.contacts')}</button>
     <button class="btn" onclick={syncNow} disabled={syncing} title="F5">
       <span class="sync-ico" class:spin={syncing}><Icon name="sync" /></span>
       {t('toolbar.sync')}

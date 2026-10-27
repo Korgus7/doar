@@ -12,6 +12,7 @@
   import BackupDialog from './components/BackupDialog.svelte'
   import { backup, initBackupEvents } from './lib/backup.svelte'
   import ImportDialog from './components/ImportDialog.svelte'
+  import ContactsDialog from './components/ContactsDialog.svelte'
   import { restore, initRestoreEvents } from './lib/restore.svelte'
   import { initArchiveEvents, openArchive, archivePercent } from './lib/archive.svelte'
   import { initUpdateEvents, checkUpdates } from './lib/update.svelte'
@@ -171,6 +172,7 @@
 </div>
 <BackupDialog />
 <ImportDialog />
+<ContactsDialog />
 <SettingsDialog />
 
 <style>

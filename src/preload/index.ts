@@ -71,8 +71,8 @@ const api: DoarApi = {
   showAbout() {
     ipcRenderer.send('show-about')
   },
-  openCompose(mode, messageId) {
-    ipcRenderer.send('open-compose', mode, messageId)
+  openCompose(mode, messageId, to) {
+    ipcRenderer.send('open-compose', mode, messageId, to)
   },
   closeWindow() {
     ipcRenderer.send('close-window')
@@ -90,6 +90,12 @@ const api: DoarApi = {
   },
   chooseImportFolder() {
     return ipcRenderer.invoke('choose-import-folder') as Promise<string | null>
+  },
+  copyText(text) {
+    if (typeof text === 'string') ipcRenderer.send('copy-text', text)
+  },
+  chooseContactsFiles() {
+    return ipcRenderer.invoke('choose-contacts-files') as Promise<string[]>
   },
   chooseAttachFiles() {
     return ipcRenderer.invoke('choose-attach-files')

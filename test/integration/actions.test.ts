@@ -137,6 +137,53 @@ describe('presuny a mazanie', () => {
     await until(async () => (await serverSubjects('Projekty/Žltá ponorka')).includes('Do projektu'))
   })
 
+  it('odstránenie priečinka s podpriečinkom: správy do Koša, priečinky zmiznú', async () => {
+    const parentId = await sync.createFolder(accountId, null, 'Staré')
+    await sync.createFolder(accountId, parentId, 'Ešte staršie')
+    await other.append('Staré', msg('Zo starého'), [])
+    await other.append('Staré/Ešte staršie', msg('Z ešte staršieho'), [])
+    await expect(sync.deleteFolder(folder('inbox').id)).rejects.toMatchObject({ code: 'FOLDER_PROTECTED' })
+    await expect(sync.deleteFolder(folder('trash').id)).rejects.toMatchObject({ code: 'FOLDER_PROTECTED' })
+    expect(await sync.deleteFolder(parentId)).toEqual({ moved: 2, labelsOnly: false })
+    expect(byPath('Staré')).toBeUndefined()
+    expect(byPath('Staré/Ešte staršie')).toBeUndefined()
+    expect((await other.list()).some((f) => f.path.startsWith('Staré'))).toBe(false)
+    expect(await serverSubjects('Trash')).toEqual(expect.arrayContaining(['Zo starého', 'Z ešte staršieho']))
+    await until(() => visible(folder('trash').id).some((m) => m.subject === 'Z ešte staršieho'))
+  })
+
+  it('premenovanie a presun priečinka: správy aj ID ostanú, podpriečinky idú s ním', async () => {
+    const parentId = await sync.createFolder(accountId, null, 'Klienti')
+    const childId = await sync.createFolder(accountId, parentId, 'Firma A')
+    await other.append('Klienti/Firma A', msg('Od firmy A'), [])
+    await sync.syncNow(accountId)
+    await until(() => visible(childId).some((m) => m.subject === 'Od firmy A'))
+    const msgId = visible(childId)[0]!.id
+
+    await sync.renameFolder(parentId, 'Zákazníci', null)
+    expect(byPath('Zákazníci')?.id).toBe(parentId)
+    expect(byPath('Zákazníci/Firma A')?.id).toBe(childId)
+    expect(byPath('Klienti')).toBeUndefined()
+    expect(visible(childId).map((m) => m.id)).toEqual([msgId])
+    expect(await serverSubjects('Zákazníci/Firma A')).toEqual(['Od firmy A'])
+
+    // Podpriečinok o úroveň vyššie (na najvyššiu úroveň) a späť pod iný priečinok.
+    await sync.renameFolder(childId, 'Firma A', null)
+    expect(byPath('Firma A')?.id).toBe(childId)
+    expect(store.listFolders(accountId).find((f) => f.id === childId)?.depth).toBe(0)
+    await sync.renameFolder(childId, 'Firma A', parentId)
+    expect(byPath('Zákazníci/Firma A')?.id).toBe(childId)
+    await sync.syncNow(accountId)
+    expect(visible(childId).map((m) => m.id)).toEqual([msgId])
+
+    await expect(sync.renameFolder(parentId, 'X', childId)).rejects.toMatchObject({ code: 'FOLDER_INTO_ITSELF' })
+    await expect(sync.renameFolder(folder('inbox').id, 'Iná', null)).rejects.toMatchObject({ code: 'FOLDER_PROTECTED' })
+    await expect(sync.renameFolder(folder('sent').id, 'Iná', null)).rejects.toMatchObject({ code: 'FOLDER_PROTECTED' })
+    await expect(sync.renameFolder(childId, 'a/b', parentId)).rejects.toMatchObject({ code: 'INVALID_FOLDER_NAME' })
+    await sync.createFolder(accountId, null, 'Obsadené')
+    await expect(sync.renameFolder(parentId, 'Obsadené', null)).rejects.toMatchObject({ code: 'FOLDER_EXISTS' })
+  })
+
   it('natrvalo vymazať: zmizne zo servera aj z Doaru', async () => {
     const id = idOf('Natrvalo')
     sync.deleteForever([id])

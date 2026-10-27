@@ -4,7 +4,7 @@
   import { mail, selectFolder } from '../lib/mail.svelte'
   import { closeArchive, archivePercent } from '../lib/archive.svelte'
   import type { MessageKey } from '../i18n/index.svelte'
-  import { ui, moveTo, openMenu, folderLabel } from '../lib/actions.svelte'
+  import { ui, moveTo, openMenu, folderLabel, deleteFolder, renameFolder, descendantIds, showToast, errorText } from '../lib/actions.svelte'
   import { openSettings } from '../lib/settings.svelte'
   import Icon, { type IconName } from './Icon.svelte'
   import type { SpecialUse } from '../../../shared/ipc'
@@ -48,6 +48,8 @@
 
   const label = folderLabel
   let dropTarget = $state<number | null>(null)
+  /** Konto, na ktorého hlavičku sa práve ťahá priečinok (presun na najvyššiu úroveň). */
+  let headDrop = $state<number | null>(null)
 
   /** Dajú sa ťahané správy pustiť na tento priečinok? (len v rámci konta, nie do toho istého priečinka) */
   function canDrop(f: FolderItem): boolean {
@@ -57,7 +59,55 @@
     return !(d.ids.length && mail.folderId === f.id)
   }
 
+  /** Bežný priečinok sa dá ťahať (presun pod iný priečinok). Doručená pošta a špeciálne priečinky nie. */
+  const movable = (f: FolderItem): boolean => !f.specialUse && f.path.toUpperCase() !== 'INBOX'
+
+  /** Dá sa ťahaný priečinok pustiť sem? (to isté konto, nie do seba, podpriečinka ani tam, kde už je) */
+  function canDropFolder(f: FolderItem | null, accountId: number): boolean {
+    const d = ui.draggingFolder
+    if (!d || d.accountId !== accountId) return false
+    const dragged = mail.folders.find((x) => x.id === d.id)
+    if (!dragged) return false
+    if (f === null) return dragged.parentPath !== null
+    if (f.id === dragged.id || descendantIds(dragged).has(f.id)) return false
+    return dragged.parentPath !== f.path
+  }
+
+  async function dropFolder(target: FolderItem | null, accountId: number): Promise<void> {
+    const d = ui.draggingFolder
+    const ok = canDropFolder(target, accountId)
+    ui.draggingFolder = null
+    dropTarget = null
+    if (!d || !ok) return
+    const dragged = mail.folders.find((x) => x.id === d.id)
+    if (!dragged) return
+    try {
+      await renameFolder(dragged.id, dragged.name, target?.id ?? null)
+    } catch (err) {
+      showToast(errorText(err), { tone: 'error' })
+    }
+  }
+
+  function onDragStartFolder(e: DragEvent, f: FolderItem): void {
+    if (!movable(f)) {
+      e.preventDefault()
+      return
+    }
+    ui.draggingFolder = { id: f.id, accountId: f.accountId }
+    if (e.dataTransfer) {
+      e.dataTransfer.effectAllowed = 'move'
+      e.dataTransfer.setData('text/plain', label(f))
+    }
+  }
+
   function onDragOver(e: DragEvent, f: FolderItem): void {
+    if (ui.draggingFolder) {
+      if (!canDropFolder(f, f.accountId)) return
+      e.preventDefault()
+      if (e.dataTransfer) e.dataTransfer.dropEffect = 'move'
+      dropTarget = f.id
+      return
+    }
     if (!canDrop(f)) return
     e.preventDefault()
     if (e.dataTransfer) e.dataTransfer.dropEffect = 'move'
@@ -65,6 +115,11 @@
   }
 
   function onDrop(e: DragEvent, f: FolderItem): void {
+    if (ui.draggingFolder) {
+      e.preventDefault()
+      void dropFolder(f, f.accountId)
+      return
+    }
     const d = ui.dragging
     dropTarget = null
     if (!d || !canDrop(f)) return
@@ -79,11 +134,70 @@
 
   function folderMenu(e: MouseEvent, f: FolderItem): void {
     e.preventDefault()
-    openMenu(e.clientX, e.clientY, [{ label: t('actions.newSubfolder'), run: () => newFolder(f.accountId, f.id) }], label(f))
+    const items = [{ label: t('actions.newSubfolder'), run: () => newFolder(f.accountId, f.id) }]
+    if (!f.specialUse && f.path.toUpperCase() !== 'INBOX') {
+      items.push({ label: t('actions.renameFolder'), run: () => (ui.newFolder = { accountId: f.accountId, parentId: null, editId: f.id }) })
+      items.push({ label: t('actions.deleteFolder'), run: () => void deleteFolder(f) })
+    }
+    openMenu(e.clientX, e.clientY, items, label(f))
+  }
+
+  // Zbalené priečinky s podpriečinkami (podľa id) – pamätá sa v tomto počítači.
+  const FOLDERS_KEY = 'doar.collapsedFolders'
+  let shut = $state<number[]>(loadShut())
+  function loadShut(): number[] {
+    try {
+      const v = JSON.parse(localStorage.getItem(FOLDERS_KEY) ?? '[]') as unknown
+      return Array.isArray(v) ? v.filter((x): x is number => Number.isInteger(x)) : []
+    } catch {
+      return []
+    }
+  }
+  function toggleFolder(id: number): void {
+    shut = shut.includes(id) ? shut.filter((x) => x !== id) : [...shut, id]
+    try {
+      localStorage.setItem(FOLDERS_KEY, JSON.stringify(shut))
+    } catch {
+      /* nezapamätá sa */
+    }
+  }
+
+  const key = (accountId: number, path: string): string => `${accountId}\u0000${path}`
+  const byPath = $derived(new Map(mail.folders.map((f) => [key(f.accountId, f.path), f])))
+  const parents = $derived(new Set(mail.folders.filter((f) => f.parentPath !== null).map((f) => key(f.accountId, f.parentPath!))))
+  const hasChildren = (f: FolderItem): boolean => parents.has(key(f.accountId, f.path))
+
+  /** Priečinok je skrytý, ak je niektorý z jeho nadradených priečinkov zbalený. */
+  function hiddenByParent(f: FolderItem): boolean {
+    let p = f.parentPath
+    for (let i = 0; p !== null && i < 64; i++) {
+      const parent = byPath.get(key(f.accountId, p))
+      if (!parent) return false
+      if (shut.includes(parent.id)) return true
+      p = parent.parentPath
+    }
+    return false
+  }
+
+  /** Neprečítané v skrytých podpriečinkoch zbaleného priečinka (aby sa nestratili z očí). */
+  function hiddenUnread(f: FolderItem): number {
+    const prefix = f.path
+    return mail.folders
+      .filter((x) => x.accountId === f.accountId && x.id !== f.id && x.parentPath !== null && isUnder(x, prefix))
+      .filter((x) => x.specialUse !== 'sent' && x.specialUse !== 'drafts' && x.specialUse !== 'trash')
+      .reduce((s, x) => s + x.unread, 0)
+  }
+  function isUnder(x: FolderItem, ancestorPath: string): boolean {
+    let p = x.parentPath
+    for (let i = 0; p !== null && i < 64; i++) {
+      if (p === ancestorPath) return true
+      p = byPath.get(key(x.accountId, p))?.parentPath ?? null
+    }
+    return false
   }
 
   function foldersOf(accountId: number): FolderItem[] {
-    return mail.folders.filter((f) => f.accountId === accountId)
+    return mail.folders.filter((f) => f.accountId === accountId && !hiddenByParent(f))
   }
 </script>
 
@@ -104,6 +218,19 @@
     <section class="account" style:--acc={acc.color}>
       <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
       <h2
+        class:drop={headDrop === acc.id}
+        ondragover={(e) => {
+          if (!canDropFolder(null, acc.id)) return
+          e.preventDefault()
+          headDrop = acc.id
+        }}
+        ondragleave={() => headDrop === acc.id && (headDrop = null)}
+        ondrop={(e) => {
+          if (!ui.draggingFolder) return
+          e.preventDefault()
+          headDrop = null
+          void dropFolder(null, acc.id)
+        }}
         oncontextmenu={(e) => {
           e.preventDefault()
           openMenu(e.clientX, e.clientY, [
@@ -114,6 +241,7 @@
       >
         <button class="toggle" aria-expanded={open} title={acc.email} onclick={() => toggle(acc.id)}>
           <span class="chev" class:shut={!open}><Icon name="chevron" size={14} /></span>
+          <span class="dot" aria-hidden="true"></span>
           <span class="acc-name">{!acc.name || acc.name === acc.email.split('@')[1] ? acc.email : acc.name}</span>
           {#if unread && !open}<span class="badge">{unread}</span>{/if}
         </button>
@@ -122,7 +250,20 @@
       </h2>
       <ul class="tree" hidden={!open}>
         {#each foldersOf(acc.id) as f (f.id)}
-          <li>
+          {@const parent = hasChildren(f)}
+          {@const closed = parent && shut.includes(f.id)}
+          {@const badge = (f.specialUse !== 'sent' && f.specialUse !== 'drafts' && f.specialUse !== 'trash' ? f.unread : 0) + (closed ? hiddenUnread(f) : 0)}
+          <li class="row">
+            {#if parent}
+              <button
+                class="fold"
+                aria-expanded={!closed}
+                aria-label={t('folders.subfolders', { name: label(f) })}
+                title={t('folders.subfolders', { name: label(f) })}
+                style:inset-inline-start={`${0.2 + f.depth * 0.9}rem`}
+                onclick={() => toggleFolder(f.id)}
+              ><span class="chev" class:shut={closed}><Icon name="chevron" size={13} /></span></button>
+            {/if}
             <button
               class="item"
               class:active={mail.folderId === f.id}
@@ -130,17 +271,20 @@
               class:drop={dropTarget === f.id}
               aria-current={mail.folderId === f.id ? 'page' : undefined}
               disabled={!f.selectable}
-              style:padding-inline-start={`${0.75 + f.depth * 0.9}rem`}
+              style:padding-inline-start={`${1.25 + f.depth * 0.9}rem`}
               onclick={() => selectFolder(f.id)}
               oncontextmenu={(e) => folderMenu(e, f)}
+              draggable={movable(f) ? 'true' : undefined}
+              ondragstart={(e) => onDragStartFolder(e, f)}
+              ondragend={() => ((ui.draggingFolder = null), (dropTarget = null), (headDrop = null))}
               ondragover={(e) => onDragOver(e, f)}
               ondragleave={() => dropTarget === f.id && (dropTarget = null)}
               ondrop={(e) => onDrop(e, f)}
             >
               <span class="ficon"><Icon name={f.specialUse ? ICON_OF[f.specialUse] : 'folder'} /></span>
               <span class="name">{label(f)}</span>
-              {#if f.unread && f.specialUse !== 'sent' && f.specialUse !== 'drafts' && f.specialUse !== 'trash'}
-                <span class="badge">{f.unread}</span>
+              {#if badge}
+                <span class="badge">{badge}</span>
               {/if}
             </button>
           </li>
@@ -220,8 +364,8 @@
     margin: 0 0 0.2rem;
     padding: 0.3rem 0.35rem 0.3rem 0;
     padding-inline: 0 0.35rem;
-    border-inline-start: 3px solid var(--acc, var(--text-muted));
-    background: var(--surface-3);
+    border-inline-start: 5px solid var(--acc, var(--text-muted));
+    background: color-mix(in srgb, var(--acc, transparent) 18%, var(--surface-3));
     font-size: 0.8rem;
     font-weight: 600;
     color: var(--text);
@@ -252,6 +396,13 @@
   :global([dir='rtl']) .chev.shut {
     transform: rotate(90deg);
   }
+  .dot {
+    flex: none;
+    width: 0.55rem;
+    height: 0.55rem;
+    border-radius: 2px;
+    background: var(--acc);
+  }
   .acc-name {
     flex: 1;
     min-width: 0;
@@ -277,6 +428,7 @@
     color: var(--accent);
     background: color-mix(in srgb, var(--text) 8%, transparent);
   }
+  h2.drop,
   .item.drop {
     background: var(--accent-soft);
     outline: 2px dashed var(--accent);
@@ -317,6 +469,24 @@
     font-weight: 600;
   }
   .icon,
+  .row {
+    position: relative;
+  }
+  .fold {
+    position: absolute;
+    top: 50%;
+    transform: translateY(-50%);
+    z-index: 1;
+    display: inline-flex;
+    padding: 0.15rem;
+    border: 0;
+    border-radius: var(--radius-sm);
+    background: none;
+    cursor: pointer;
+  }
+  .fold:hover {
+    background: color-mix(in srgb, var(--text) 8%, transparent);
+  }
   .ficon {
     display: inline-flex;
     color: var(--text-muted);

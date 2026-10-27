@@ -324,7 +324,4 @@
     font-size: 1.25rem;
     margin: 0.4em 0;
   }
-  .area :global(.doar-editor:focus-visible) {
-    box-shadow: inset 0 0 0 2px var(--focus);
-  }
 </style>

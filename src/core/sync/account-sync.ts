@@ -586,6 +586,100 @@ export class AccountSync {
     }).then(() => result)
   }
 
+  /**
+   * Premenuje priečinok alebo ho presunie pod iný (aj na najvyššiu úroveň) – IMAP RENAME, podpriečinky idú s ním.
+   * Doručenú poštu a špeciálne priečinky (Odoslané, Kôš…) nemení.
+   */
+  renameFolder(oldPath: string, parentPath: string | null, name: string): Promise<void> {
+    return this.enqueue(`rename:${oldPath}`, 1, async () => {
+      await this.processOperations()
+      const client = await this.ensureClient()
+      const list = await client.list()
+      const target = list.find((f) => f.path === oldPath)
+      if (!target) throw Object.assign(new Error('Priečinok na serveri neexistuje'), { code: 'NO_TARGET' })
+      const delimiter = target.delimiter || list.find((f) => f.delimiter)?.delimiter || '/'
+      if (name.includes(delimiter)) throw Object.assign(new Error('Názov obsahuje oddeľovač priečinkov'), { code: 'INVALID_FOLDER_NAME' })
+      const local = new Map(this.deps.store.folderRows(this.account.id).map((r) => [r.path, r]))
+      const subtree = list.filter((f) => f.path === oldPath || f.path.startsWith(`${oldPath}${delimiter}`))
+      if (subtree.some((f) => f.path.toUpperCase() === 'INBOX' || !!f.specialUse || !!local.get(f.path)?.special_use)) {
+        throw Object.assign(new Error('Tento priečinok sa nedá premenovať'), { code: 'FOLDER_PROTECTED' })
+      }
+      const newPath = parentPath ? `${parentPath}${delimiter}${name}` : name
+      if (newPath === oldPath) return
+      if (parentPath !== null && (parentPath === oldPath || parentPath.startsWith(`${oldPath}${delimiter}`))) {
+        throw Object.assign(new Error('Priečinok sa nedá presunúť do seba'), { code: 'FOLDER_INTO_ITSELF' })
+      }
+      if (list.some((f) => f.path !== oldPath && f.path.toLowerCase() === newPath.toLowerCase())) throw Object.assign(new Error('Priečinok už existuje'), { code: 'FOLDER_EXISTS' })
+      try {
+        await client.mailboxRename(oldPath, newPath)
+      } catch (e) {
+        if (!client.usable) throw e
+        throw Object.assign(new Error('Server priečinok nepremenoval'), { code: 'FOLDER_RENAME_FAILED', detail: (e as { responseText?: string }).responseText })
+      }
+      this.deps.store.renameFolderTree(this.account.id, oldPath, newPath, delimiter, parentPath, name)
+      this.deps.store.syncFolders(this.account.id, (await client.list()).map(toFolderInfo))
+      this.deps.emit('folders.changed', { accountId: this.account.id })
+    })
+  }
+
+  /**
+   * Odstráni priečinok aj s podpriečinkami. Správy z nich najprv presunie do Koša a až potom priečinky zmaže
+   * (od najhlbšieho). Gmail: priečinky sú štítky – zruší sa len štítok, správy ostanú vo Všetkej pošte.
+   * Doručenú poštu, špeciálne priečinky a priečinky, ktoré ich obsahujú, odmietne.
+   */
+  deleteFolder(path: string): Promise<{ moved: number; labelsOnly: boolean }> {
+    const result = { moved: 0, labelsOnly: false }
+    return this.enqueue(`delete:${path}`, 1, async () => {
+      // Rozpracované zmeny (presuny, príznaky) najprv na server, aby sa nestratili s priečinkom.
+      await this.processOperations()
+      const client = await this.ensureClient()
+      const list = await client.list()
+      const target = list.find((f) => f.path === path)
+      if (!target) throw Object.assign(new Error('Priečinok na serveri neexistuje'), { code: 'NO_TARGET' })
+      const delimiter = target.delimiter || '/'
+      const subtree = list.filter((f) => f.path === path || f.path.startsWith(`${path}${delimiter}`))
+      const local = new Map(this.deps.store.folderRows(this.account.id).map((r) => [r.path, r]))
+      const protectedFolder = subtree.some((f) => f.path.toUpperCase() === 'INBOX' || !!f.specialUse || !!local.get(f.path)?.special_use)
+      if (protectedFolder) throw Object.assign(new Error('Tento priečinok sa odstrániť nedá'), { code: 'FOLDER_PROTECTED' })
+
+      result.labelsOnly = client.capabilities.has('X-GM-EXT-1')
+      const trash = result.labelsOnly ? null : await this.ensureSpecialFolder(client, 'trash')
+      const deepest = [...subtree].sort((a, b) => b.path.split(delimiter).length - a.path.split(delimiter).length)
+      try {
+        for (const f of deepest) {
+          if (trash && !f.flags.has('\\Noselect') && !f.flags.has('\\NonExistent')) {
+            const lock = await client.getMailboxLock(f.path)
+            try {
+              const exists = client.mailbox ? client.mailbox.exists : 0
+              if (exists > 0) {
+                const res = await client.messageMove('1:*', trash.path)
+                if (!res) throw rejected('presun do Koša')
+                result.moved += exists
+              }
+            } finally {
+              lock.release()
+            }
+            await client.mailboxClose().catch(() => {})
+          }
+          try {
+            await client.mailboxDelete(f.path)
+          } catch (e) {
+            if (!client.usable) throw e
+            throw Object.assign(new Error('Server priečinok neodstránil'), { code: 'FOLDER_DELETE_FAILED', detail: (e as { responseText?: string }).responseText })
+          }
+        }
+      } finally {
+        if (client.usable) {
+          this.deps.store.syncFolders(this.account.id, (await client.list()).map(toFolderInfo))
+          this.deps.emit('folders.changed', { accountId: this.account.id })
+          if (trash) this.deps.emit('messages.changed', { folderIds: [trash.id] })
+        }
+      }
+      // Koš sa načíta pri ďalšej synchronizácii (presunuté správy).
+      if (result.moved) void this.requestSync().catch(() => {})
+    }).then(() => result)
+  }
+
   private async existsInFolder(client: ImapFlow, path: string, messageId: string): Promise<boolean> {
     const lock = await client.getMailboxLock(path)
     try {

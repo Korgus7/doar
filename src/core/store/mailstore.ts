@@ -105,6 +105,33 @@ export class MailStore {
     }
   }
 
+  /**
+   * Po premenovaní/presune priečinka na serveri: lokálne riadky (aj podpriečinkov) dostanú novú cestu, správy
+   * a ich ID ostanú (server pri RENAME zachováva UID). Bez toho by sa priečinok stiahol celý znova.
+   */
+  renameFolderTree(accountId: number, oldPath: string, newPath: string, delimiter: string, newParentPath: string | null, newName: string): void {
+    const db = this.db
+    const rows = db.prepare('SELECT id, path, parent_path FROM folders WHERE account_id = ?').all(accountId) as unknown as { id: number; path: string; parent_path: string | null }[]
+    const prefix = `${oldPath}${delimiter}`
+    const moved = rows.filter((r) => r.path === oldPath || r.path.startsWith(prefix))
+    const remap = (p: string): string => (p === oldPath ? newPath : `${newPath}${p.slice(oldPath.length)}`)
+    db.exec('BEGIN')
+    try {
+      const upd = db.prepare('UPDATE folders SET path = ?, parent_path = ?, name = CASE WHEN id = ? THEN ? ELSE name END WHERE id = ?')
+      // Dočasné cesty – aby sa nové a staré cesty pri presune pod súrodenca nezrazili na unikátnom indexe.
+      const tmp = db.prepare('UPDATE folders SET path = ? WHERE id = ?')
+      for (const r of moved) tmp.run(`\u0000doar-rename\u0000${r.id}`, r.id)
+      for (const r of moved) {
+        const parent = r.path === oldPath ? newParentPath : r.parent_path === null ? null : remap(r.parent_path)
+        upd.run(remap(r.path), parent, r.path === oldPath ? r.id : -1, newName, r.id)
+      }
+      db.exec('COMMIT')
+    } catch (e) {
+      db.exec('ROLLBACK')
+      throw e
+    }
+  }
+
   folderRows(accountId: number): FolderRow[] {
     return this.db
       .prepare('SELECT id, account_id, path, special_use, uidvalidity, uidnext, highestmodseq, total_count, selectable FROM folders WHERE account_id = ?')
@@ -513,6 +540,9 @@ export class MailStore {
     const words = (s: string): string[] => fold(s).split(/[\s.@_<>"',-]+/).filter(Boolean)
     const hit = (name: string, address: string): boolean => fold(address).startsWith(q) || [...words(name), ...words(address)].some((w) => w.startsWith(q)) || fold(name).startsWith(q)
     const out = new Map<string, { name: string; address: string }>()
+    // Adresár najprv – kontakty, ktoré si používateľ uložil.
+    const saved = this.db.prepare(`SELECT lower(email) AS address, name FROM contacts LIMIT 20000`).all() as { address: string; name: string }[]
+    for (const r of saved) if (hit(r.name, r.address) && !out.has(r.address)) out.set(r.address, r)
     const sent = this.db
       .prepare(`SELECT email AS address, name FROM addresses ORDER BY use_count DESC, last_used DESC LIMIT 5000`)
       .all() as { address: string; name: string }[]

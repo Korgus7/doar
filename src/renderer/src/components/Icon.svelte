@@ -25,7 +25,8 @@
     attachment: '<path d="m19.5 11.5-7.4 7.4a4.6 4.6 0 0 1-6.5-6.5l7.8-7.8a3.1 3.1 0 0 1 4.4 4.4l-7.8 7.8a1.5 1.5 0 0 1-2.2-2.2l7-7"/>',
     chevron: '<path d="m7 10 5 5 5-5"/>',
     plus: '<path d="M12 5v14M5 12h14"/>',
-    close: '<path d="m6 6 12 12M18 6 6 18"/>'
+    close: '<path d="m6 6 12 12M18 6 6 18"/>',
+    contacts: '<rect x="4.5" y="3.5" width="15" height="17"/><circle cx="12" cy="10" r="2.6"/><path d="M8 17c.6-2 2.1-3 4-3s3.4 1 4 3"/>'
   } as const
   export type IconName = keyof typeof ICONS
 </script>

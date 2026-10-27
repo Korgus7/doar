@@ -19,6 +19,17 @@ function imap(): ImapFlow {
   })
 }
 
+/** Cesty priečinkov na serveri. */
+async function serverFolders(): Promise<string[]> {
+  const c = imap()
+  await c.connect()
+  try {
+    return (await c.list()).map((f) => f.path)
+  } finally {
+    await c.logout().catch(() => {})
+  }
+}
+
 const plain = (subject: string) =>
   Buffer.from(`From: Ján Novák <jan@firma.sk>\r\nTo: ${USER}@doar.test\r\nSubject: =?UTF-8?B?${Buffer.from(subject).toString('base64')}?=\r\nDate: ${new Date().toUTCString()}\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nText\r\n`)
 
@@ -113,6 +124,36 @@ test('akcie: Kôš a Vrátiť späť, presun do nového priečinka, ťahanie, v�
   await expect(row('Tretia')).toHaveCount(0)
   await expect.poll(() => onServer('Projekty Ľubica'), { timeout: 30_000 }).toContain('Tretia')
 
+  // Podpriečinok cez pravý klik; priečinok s podpriečinkami sa dá zbaliť a rozbaliť.
+  await folders.getByRole('button', { name: /^Projekty Ľubica/ }).click({ button: 'right' })
+  await win.getByRole('menu').getByRole('menuitem', { name: 'Nový podpriečinok…' }).click()
+  const subDlg = win.getByRole('dialog', { name: 'Nový priečinok' })
+  await subDlg.getByLabel('Názov priečinka').fill('Podklady')
+  await subDlg.getByRole('button', { name: 'Vytvoriť' }).click()
+  await expect(folders.getByRole('button', { name: /^Podklady/ })).toBeVisible()
+  const fold = folders.getByRole('button', { name: 'Podpriečinky – Projekty Ľubica' })
+  await fold.click()
+  await expect(fold).toHaveAttribute('aria-expanded', 'false')
+  await expect(folders.getByRole('button', { name: /^Podklady/ })).toHaveCount(0)
+  await fold.click()
+  await expect(folders.getByRole('button', { name: /^Podklady/ })).toBeVisible()
+
+  // Premenovanie cez pravý klik; presun ťahaním na hlavičku konta (najvyššia úroveň) a späť pod priečinok.
+  await folders.getByRole('button', { name: /^Podklady/ }).click({ button: 'right' })
+  await win.getByRole('menu').getByRole('menuitem', { name: 'Premenovať alebo presunúť…' }).click()
+  const renDlg = win.getByRole('dialog', { name: 'Premenovať alebo presunúť priečinok' })
+  await expect(renDlg.getByLabel('Názov priečinka')).toHaveValue('Podklady')
+  await renDlg.getByLabel('Názov priečinka').fill('Podklady 2026')
+  await renDlg.getByRole('button', { name: 'Uložiť' }).click()
+  await expect(toast).toContainText('Priečinok „Podklady 2026“ je uložený.')
+  await expect.poll(async () => (await serverFolders()).includes('Projekty Ľubica/Podklady 2026'), { timeout: 30_000 }).toBe(true)
+  await folders.getByRole('button', { name: /^Podklady 2026/ }).dragTo(folders.locator('h2').first())
+  await expect.poll(async () => (await serverFolders()).includes('Podklady 2026'), { timeout: 30_000 }).toBe(true)
+  await expect(fold).toHaveCount(0)
+  await folders.getByRole('button', { name: /^Podklady 2026/ }).dragTo(folders.getByRole('button', { name: /^Projekty Ľubica/ }))
+  await expect.poll(async () => (await serverFolders()).includes('Projekty Ľubica/Podklady 2026'), { timeout: 30_000 }).toBe(true)
+  await expect(fold).toBeVisible()
+
   // Výber viacerých (Ctrl + klik) a Archív klávesom E.
   await row('Štvrtá').click()
   await row('Piata').click({ modifiers: ['Control'] })
@@ -131,6 +172,21 @@ test('akcie: Kôš a Vrátiť späť, presun do nového priečinka, ťahanie, v�
   await win.keyboard.press('Delete')
   await expect(row('Prvá')).toHaveCount(0)
   await expect.poll(() => onServer('Trash'), { timeout: 30_000 }).toEqual([])
+
+  // Odstránenie priečinka aj s podpriečinkom: správy idú do Koša, Doručenú poštu odstrániť nejde.
+  await folders.getByRole('button', { name: /^Doručená pošta/ }).click({ button: 'right' })
+  await expect(win.getByRole('menu').getByRole('menuitem', { name: 'Odstrániť priečinok…' })).toHaveCount(0)
+  await win.keyboard.press('Escape')
+  await folders.getByRole('button', { name: /^Projekty Ľubica/ }).click({ button: 'right' })
+  win.once('dialog', (d) => {
+    expect(d.message()).toContain('Projekty Ľubica')
+    void d.accept()
+  })
+  await win.getByRole('menu').getByRole('menuitem', { name: 'Odstrániť priečinok…' }).click()
+  await expect(toast).toContainText('Priečinok „Projekty Ľubica“ je odstránený, 2 správ je v Koši.')
+  await expect(folders.getByRole('button', { name: /^Projekty Ľubica/ })).toHaveCount(0)
+  await expect(folders.getByRole('button', { name: /^Podklady/ })).toHaveCount(0)
+  await expect.poll(() => onServer('Trash'), { timeout: 30_000 }).toEqual(['Druhá', 'Tretia'])
 
   await win.screenshot({ path: 'test-results/akcie-koniec.png' })
   await app.close()

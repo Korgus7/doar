@@ -101,6 +101,7 @@ messages_fts USING fts5(subject, from_text, to_text, body_text,
                         content='', tokenize='unicode61 remove_diacritics 2')
 
 addresses(email PK, name, use_count, last_used)    -- našepkávanie
+contacts(id, name, email UNIQUE NOCASE, phone, company, note, address)  -- adresár (0.7.1)
 
 operations(                                         -- trvalá fronta zmien (0.3, základ už v 0.1)
   id PK, account_id, kind, payload_json,           -- flags | move | expunge | draft | draftDelete | draftRemove

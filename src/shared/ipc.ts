@@ -28,6 +28,37 @@ export interface AccountDetails extends AccountSummary {
   pendingOutbox: number
 }
 
+/** Kontakt v adresári (jedna e-mailová adresa). */
+export interface Contact {
+  id: number
+  name: string
+  email: string
+  phone: string
+  company: string
+  note: string
+  /** Poštová adresa (viac riadkov). */
+  address: string
+}
+
+/** Nový kontakt (bez id) alebo úprava existujúceho. */
+export interface ContactInput {
+  id?: number
+  name: string
+  email: string
+  phone: string
+  company: string
+  note: string
+  /** Poštová adresa (viac riadkov). */
+  address: string
+}
+
+/** Adresa z pošty (adresát odoslanej správy), ktorá ešte nie je v adresári. */
+export interface MailAddressItem {
+  email: string
+  name: string
+  count: number
+}
+
 export interface AccountPatch {
   displayName?: string
   name?: string
@@ -46,8 +77,14 @@ export interface AppSettings {
   composeHtml: boolean
 }
 
-/** Tlmené farby kont (od 0.6; staré žiarivé prevedie migrácia 010). */
-export const ACCOUNT_COLORS = ['#2f6db5', '#d0682a', '#2f8f4e', '#8a4bb0', '#1f8f99', '#c43c3c', '#c99418', '#4f62c4'] as const
+/** Výrazné farby kont (od 0.7.1) – predvolené, nové kontá ich dostávajú postupne. Staré prevedie migrácia 012. */
+export const ACCOUNT_COLORS_VIVID = ['#18a4d5', '#ff7614', '#9ddd08', '#793cf2', '#00cea8', '#f03a47', '#f7dd12', '#ed0da6'] as const
+/** Tlmené farby na výber (paleta z 0.6). */
+export const ACCOUNT_COLORS_MUTED = ['#4a6b96', '#b5683a', '#4f7f5a', '#7d5b8f', '#3f7f84', '#a3504a', '#b08a3e', '#5f6f8f'] as const
+/** Neutrálna sivá – pre toho, kto farby kont nechce. */
+export const ACCOUNT_COLOR_NEUTRAL = '#8a8f98'
+/** Všetky farby, ktoré ponúkajú nastavenia. */
+export const ACCOUNT_COLORS = [...ACCOUNT_COLORS_VIVID, ...ACCOUNT_COLORS_MUTED, ACCOUNT_COLOR_NEUTRAL] as const
 
 export interface AppInfo {
   version: string
@@ -603,6 +640,19 @@ export interface CoreRequests {
   'messages.undo': [{ undo: number[] }, { undone: boolean }]
   'messages.listIds': [{ folderId: number | null }, number[]]
   'folders.create': [{ accountId: number; parentId: number | null; name: string }, { folderId: number }]
+  /** Odstráni priečinok aj s podpriečinkami; správy presunie do Koša (Gmail: zruší len štítok). */
+  'folders.delete': [{ folderId: number }, { moved: number; labelsOnly: boolean }]
+  /** Premenuje priečinok a/alebo ho presunie pod iný (parentId null = najvyššia úroveň); podpriečinky idú s ním. */
+  'folders.rename': [{ folderId: number; name: string; parentId: number | null }, void]
+  'contacts.list': [{ query?: string }, Contact[]]
+  'contacts.fromMail': [{ query?: string }, MailAddressItem[]]
+  'contacts.save': [ContactInput, Contact]
+  'contacts.delete': [{ ids: number[] }, void]
+  'contacts.addFromMail': [{ emails: string[] }, { added: number }]
+  /** Import zo súborov vCard (.vcf) alebo CSV vybraných v dialógu. */
+  'contacts.import': [{ paths: string[] }, { added: number; updated: number; skipped: number }]
+  /** Export do súboru vybraného v dialógu (.csv = CSV, inak vCard); ids = len vybrané kontakty. */
+  'contacts.export': [{ path: string; ids?: number[] }, { count: number }]
   /** Uloží prílohu do súboru zvoleného v dialógu (chooseSavePath). */
   'attachments.save': [{ messageId: number; index: number; path: string }, void]
   /** Uloží všetky prílohy do priečinka zvoleného v dialógu (chooseFolder). Vráti názvy uložených súborov. */
@@ -722,6 +772,15 @@ export const REQUEST_CHANNELS = [
   'messages.undo',
   'messages.listIds',
   'folders.create',
+  'folders.delete',
+  'folders.rename',
+  'contacts.list',
+  'contacts.fromMail',
+  'contacts.save',
+  'contacts.delete',
+  'contacts.addFromMail',
+  'contacts.import',
+  'contacts.export',
   'attachments.save',
   'attachments.saveAll',
   'attachments.prepareOpen',
@@ -827,7 +886,8 @@ export interface DoarApi {
   /** Otvorí odkaz (http, https, mailto) v systémovom prehliadači / poštovom programe. */
   openExternal(url: string): void
   /** Otvorí okno na písanie správy. */
-  openCompose(mode: ComposeMode, messageId?: number): void
+  /** to: adresát novej správy (napr. z adresára). */
+  openCompose(mode: ComposeMode, messageId?: number, to?: string): void
   /** Zavrie aktuálne okno (okno správy po odoslaní alebo po potvrdení zahodenia). */
   closeWindow(): void
   /** Hlavný proces žiada zavretie okna – rozhranie sa môže opýtať na neuložený text. */
@@ -838,6 +898,10 @@ export interface DoarApi {
   chooseImportFile(): Promise<string | null>
   /** Výber priečinka s poštou (Outlook Express, Windows Mail) na import. */
   chooseImportFolder(): Promise<string | null>
+  /** Skopíruje text do schránky. */
+  copyText(text: string): void
+  /** Súbory s kontaktmi (vCard, CSV) pre import do adresára. */
+  chooseContactsFiles(): Promise<string[]>
   /** Ukáže súbor zálohy v Prieskumníkovi (len súbor zvolený cez chooseExportFile). */
   showInFolder(path: string): void
   /** Dialóg „Priložiť súbory“ – vybrané súbory smie jadro čítať. */

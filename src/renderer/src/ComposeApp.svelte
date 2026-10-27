@@ -18,7 +18,7 @@
     source: ComposeAttachment
   }
 
-  let { mode, messageId }: { mode: ComposeMode; messageId?: number } = $props()
+  let { mode, messageId, to: presetTo }: { mode: ComposeMode; messageId?: number; to?: string } = $props()
 
   let accounts = $state<AccountSummary[]>([])
   let accountId = $state<number | null>(null)
@@ -221,7 +221,7 @@
         const settings = await window.doar.invoke('settings.get').catch(() => null)
         const pre = await window.doar.invoke('compose.prepare', { mode, messageId })
         accountId = pre.accountId
-        to = pre.draft ? pre.draft.to : fmt(pre.to)
+        to = pre.draft ? pre.draft.to : mode === 'new' && presetTo ? presetTo : fmt(pre.to)
         cc = pre.draft ? pre.draft.cc : fmt(pre.cc)
         bcc = pre.draft ? pre.draft.bcc : ''
         showCc = !!(cc || bcc)
@@ -604,7 +604,9 @@
     padding: 1rem 1.1rem;
     background: var(--surface);
     font: 15px/1.55 var(--font-ui);
-    outline-offset: -2px;
+    /* Plocha na text je zrejmá aj bez rámika pri písaní. */
+    outline: none;
+    box-shadow: none;
   }
   .attachments {
     padding: 0.5rem 1rem 0.3rem;
