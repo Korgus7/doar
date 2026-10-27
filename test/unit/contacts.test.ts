@@ -129,19 +129,35 @@ describe('import vCard a CSV', () => {
     expect(parseCsvContacts(sk)[0]!.address).toBe('Krátka 1\n900 01 Modra\nSlovensko')
   })
 
-  it('zlúčenie: nové pridá, existujúcemu len doplní prázdne polia, bez adresy preskočí', () => {
+  it('zlúčenie: nové pridá, existujúcemu len doplní prázdne polia; kontakt bez e-mailu sa pridá, prázdny preskočí', () => {
     saveContact(db, { ...empty, name: 'Moje meno', email: 'jan@firma.sk' })
     const r = mergeContacts(db, [
       { name: 'Ján Novák', emails: ['JAN@firma.sk', 'jan.novak@gmail.com'], phone: '0900', company: 'Firma', note: '', address: '' },
-      { name: 'Bez adresy', emails: [], phone: '0900', company: '', note: '', address: '' }
+      { name: 'Bez adresy', emails: [], phone: '0900', company: '', note: '', address: '' },
+      { name: '', emails: [], phone: '', company: '', note: 'len poznámka', address: '' }
     ])
-    expect(r).toEqual({ added: 1, updated: 1, skipped: 1 })
+    expect(r).toEqual({ added: 2, updated: 1, skipped: 1 })
     expect(listContacts(db)).toMatchObject([
+      { name: 'Bez adresy', email: '', phone: '0900' },
       { name: 'Ján Novák', email: 'jan.novak@gmail.com', phone: '0900' },
       { name: 'Moje meno', email: 'jan@firma.sk', phone: '0900', company: 'Firma' }
     ])
-    // Druhý import toho istého nič nezmení.
-    expect(mergeContacts(db, [{ name: 'Ján Novák', emails: ['jan@firma.sk'], phone: '0900', company: 'Firma', note: '', address: '' }])).toEqual({ added: 0, updated: 0, skipped: 0 })
+    // Druhý import toho istého nič nezmení (aj kontakt bez e-mailu – podľa mena a telefónu).
+    expect(
+      mergeContacts(db, [
+        { name: 'Ján Novák', emails: ['jan@firma.sk'], phone: '0900', company: 'Firma', note: '', address: '' },
+        { name: 'Bez adresy', emails: [], phone: '0900', company: '', note: '', address: 'Ulica 1' }
+      ])
+    ).toEqual({ added: 0, updated: 1, skipped: 0 })
+    expect(listContacts(db, 'bez adresy')[0]?.address).toBe('Ulica 1')
+  })
+
+  it('kontakt bez e-mailu: uloží sa, viac takých môže byť; prázdny kontakt nie; našepkávanie ich neponúka', () => {
+    saveContact(db, { ...empty, name: 'Mama', phone: '0905 111 111' })
+    saveContact(db, { ...empty, name: 'Otec', phone: '0905 222 222' })
+    expect(listContacts(db).map((c) => c.name)).toEqual(['Mama', 'Otec'])
+    expect(() => saveContact(db, { ...empty, note: 'nič' })).toThrow(expect.objectContaining({ code: 'CONTACT_EMPTY' }))
+    expect(new MailStore(db).suggestAddresses('mam', 5)).toEqual([])
   })
 })
 

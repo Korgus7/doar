@@ -42,9 +42,9 @@ test('adresár: nový kontakt, hľadanie, import vCard, export CSV, napísať sp
     dialog.showOpenDialog = (async () => ({ canceled: false, filePaths: [p] })) as typeof dialog.showOpenDialog
   }, vcf)
   await dlg.getByRole('button', { name: 'Importovať…' }).click()
-  await expect(dlg.getByRole('status')).toHaveText('Import: nové 1, doplnené 0, bez e-mailu preskočené 1.')
-  await expect(list.getByRole('button')).toHaveCount(2)
-  await expect(dlg.getByRole('tab', { name: /Kontakty/ })).toContainText('2')
+  await expect(dlg.getByRole('status')).toHaveText('Import: nové 2, doplnené 0, prázdne preskočené 0.')
+  await expect(list.getByRole('button')).toHaveCount(3)
+  await expect(dlg.getByRole('tab', { name: /Kontakty/ })).toContainText('3')
 
   // Hľadanie bez diakritiky.
   await dlg.getByLabel('Hľadať v adresári').fill('stastna')
@@ -73,7 +73,7 @@ test('adresár: nový kontakt, hľadanie, import vCard, export CSV, napísať sp
   }, csv)
   await dlg.getByRole('button', { name: 'Exportovať…' }).click()
   await win.getByRole('menuitem', { name: /Ako CSV/ }).click()
-  await expect(dlg.getByRole('status')).toHaveText('Exportované kontakty: 2.')
+  await expect(dlg.getByRole('status')).toHaveText('Exportované kontakty: 3.')
   const out = readFileSync(csv, 'utf8')
   expect(out).toContain('First Name,Last Name,E-mail Address,Mobile Phone,Company,Home Street,Notes')
   expect(out).toContain('Ján,Novák,jan@firma.sk,,Firma s.r.o.,,')
@@ -84,7 +84,7 @@ test('adresár: nový kontakt, hľadanie, import vCard, export CSV, napísať sp
   win.once('dialog', (d) => void d.accept())
   await dlg.getByRole('button', { name: 'Odstrániť' }).click()
   await expect(dlg.getByRole('status')).toHaveText('Kontakt je odstránený.')
-  await expect(list.getByRole('button')).toHaveCount(1)
+  await expect(list.getByRole('button')).toHaveCount(2)
 
   await win.keyboard.press('Escape')
   await expect(dlg).toHaveCount(0)

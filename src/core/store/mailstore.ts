@@ -541,7 +541,7 @@ export class MailStore {
     const hit = (name: string, address: string): boolean => fold(address).startsWith(q) || [...words(name), ...words(address)].some((w) => w.startsWith(q)) || fold(name).startsWith(q)
     const out = new Map<string, { name: string; address: string }>()
     // Adresár najprv – kontakty, ktoré si používateľ uložil.
-    const saved = this.db.prepare(`SELECT lower(email) AS address, name FROM contacts LIMIT 20000`).all() as { address: string; name: string }[]
+    const saved = this.db.prepare(`SELECT lower(email) AS address, name FROM contacts WHERE email != '' LIMIT 20000`).all() as { address: string; name: string }[]
     for (const r of saved) if (hit(r.name, r.address) && !out.has(r.address)) out.set(r.address, r)
     const sent = this.db
       .prepare(`SELECT email AS address, name FROM addresses ORDER BY use_count DESC, last_used DESC LIMIT 5000`)

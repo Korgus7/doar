@@ -1,9 +1,11 @@
 <script lang="ts">
   import { tick, untrack } from 'svelte'
-  import type { Contact, ContactInput, MailAddressItem } from '../../../shared/ipc'
+  import type { Contact, ContactInput, ContactSyncStatus, MailAddressItem } from '../../../shared/ipc'
   import { t } from '../i18n/index.svelte'
   import { ui, errorText, openMenu } from '../lib/actions.svelte'
   import Icon from './Icon.svelte'
+  import { listDate } from '../lib/format'
+  import { oauthSignIn } from '../lib/oauth.svelte'
 
   let dialogEl: HTMLDivElement | undefined = $state()
   let tab = $state<'saved' | 'mail'>('saved')
@@ -17,16 +19,21 @@
   let form = $state<ContactInput | null>(null)
   let busy = $state(false)
   let message = $state<{ text: string; tone: 'ok' | 'error' } | null>(null)
+  let syncState = $state<ContactSyncStatus | null>(null)
+  let syncAccount = $state<number | null>(null)
 
   const empty = (): ContactInput => ({ name: '', email: '', phone: '', company: '', note: '', address: '' })
   const mailItem = $derived(fromMail.find((m) => m.email === selectedMail) ?? null)
 
   async function load(): Promise<void> {
-    const [list, all, mail] = await Promise.all([
+    const [list, all, mail, st] = await Promise.all([
       window.doar.invoke('contacts.list', { query }),
       query ? window.doar.invoke('contacts.list', {}) : null,
-      window.doar.invoke('contacts.fromMail', { query })
+      window.doar.invoke('contacts.fromMail', { query }),
+      window.doar.invoke('contacts.syncStatus').catch(() => null)
     ])
+    syncState = st
+    if (st && (syncAccount === null || !st.candidates.some((c) => c.accountId === syncAccount))) syncAccount = st.candidates[0]?.accountId ?? null
     contacts = list
     total = (all ?? list).length
     fromMail = mail
@@ -45,6 +52,76 @@
       void load().then(() => tick()).then(() => dialogEl?.querySelector<HTMLInputElement>('input[type="search"]')?.focus())
     })
   })
+
+  // Zmeny z synchronizácie (aj na pozadí) sa hneď ukážu.
+  $effect(() => {
+    if (!ui.contacts) return
+    return window.doar.on('contacts.changed', () => void load())
+  })
+
+  /** Synchronizácia s kontaktmi Google: spustiť; pri chýbajúcom oprávnení sa raz opýta Google. */
+  async function runSync(askPermission = true): Promise<void> {
+    busy = true
+    message = null
+    try {
+      const r = await window.doar.invoke('contacts.syncNow')
+      message = {
+        text: t('contacts.sync.done', { downloaded: r.downloaded, uploaded: r.uploaded, removed: r.removed }) + (r.onServer !== null ? ` ${t('contacts.sync.serverInfo', { n: r.onServer, m: r.withoutEmail })}` : ''),
+        tone: 'ok'
+      }
+    } catch (err) {
+      const code = (err as { code?: string }).code
+      if (code === 'CONTACTS_PERMISSION' && askPermission) {
+        busy = false
+        await grant()
+        return
+      }
+      message = { text: errorText(err), tone: 'error' }
+    } finally {
+      busy = false
+      await load()
+    }
+  }
+
+  async function grant(): Promise<void> {
+    const st = syncState?.enabled
+    if (!st || busy) return
+    busy = true
+    message = null
+    try {
+      const r = await oauthSignIn('google', st.email, undefined, { contacts: true })
+      await window.doar.invoke('accounts.reauth', { id: st.accountId, flowId: r.flowId })
+    } catch (err) {
+      message = { text: errorText(err), tone: 'error' }
+      busy = false
+      return
+    }
+    busy = false
+    await runSync(false)
+  }
+
+  async function enableSync(): Promise<void> {
+    const acc = syncState?.candidates.find((c) => c.accountId === syncAccount)
+    if (!acc || busy) return
+    if (!confirm(t('contacts.sync.confirm', { email: acc.email, n: syncState?.localOnly ?? 0 }))) return
+    try {
+      await window.doar.invoke('contacts.syncEnable', { accountId: acc.accountId })
+    } catch (err) {
+      message = { text: errorText(err), tone: 'error' }
+      return
+    }
+    await load()
+    await runSync()
+  }
+
+  async function disableSync(): Promise<void> {
+    const st = syncState?.enabled
+    if (!st || busy) return
+    if (!confirm(t('contacts.sync.offConfirm', { email: st.email }))) return
+    await window.doar.invoke('contacts.syncDisable').catch(() => {})
+    message = null
+    await load()
+  }
 
   let searchTimer: ReturnType<typeof setTimeout> | null = null
   function onSearch(): void {
@@ -99,7 +176,7 @@
 
   async function remove(): Promise<void> {
     if (!form?.id || busy) return
-    const ok = confirm(t('contacts.deleteConfirm', { name: form.name || form.email }))
+    const ok = confirm(t('contacts.deleteConfirm', { name: form.name || form.email || form.phone }))
     // Po systémovom okne potvrdenia vrátiť fokus do adresára (Escape, Tab).
     dialogEl?.focus()
     if (!ok) return
@@ -222,6 +299,32 @@
         <button class="btn" onclick={importFiles} disabled={busy}>{t('contacts.import')}</button>
         <button class="btn" onclick={exportMenu} disabled={busy || !total} aria-haspopup="menu">{t('contacts.export')}</button>
       </div>
+      {#if syncState}
+        <div class="syncbar">
+          {#if syncState.enabled}
+            {@const st = syncState.enabled}
+            <span class="sync-text">
+              {#if st.running}{t('contacts.sync.running', { email: st.email })}
+              {:else if st.lastSync}{t('contacts.sync.status', { email: st.email, time: listDate(st.lastSync) })}
+              {:else}{t('contacts.sync.never', { email: st.email })}{/if}
+              {#if st.lastError && !st.running}<span class="sync-error"> · {errorText({ code: st.lastError })}</span>{/if}
+            </span>
+            <span class="spacer"></span>
+            {#if st.lastError === 'CONTACTS_PERMISSION'}<button class="btn btn-primary" onclick={() => void grant()} disabled={busy}>{t('contacts.sync.grant')}</button>{/if}
+            <button class="btn" onclick={() => void runSync()} disabled={busy || st.running}><Icon name="sync" />{t('contacts.sync.now')}</button>
+            <button class="btn" onclick={() => void disableSync()} disabled={busy}>{t('contacts.sync.off')}</button>
+          {:else if syncState.candidates.length}
+            {#if syncState.candidates.length > 1}
+              <select bind:value={syncAccount} aria-label={t('contacts.sync.account')}>
+                {#each syncState.candidates as c (c.accountId)}<option value={c.accountId}>{c.email}</option>{/each}
+              </select>
+            {/if}
+            <button class="btn" onclick={() => void enableSync()} disabled={busy}><Icon name="sync" />{t('contacts.sync.with')}</button>
+          {:else}
+            <span class="sync-text">{t('contacts.sync.hint')}</span>
+          {/if}
+        </div>
+      {/if}
       {#if message}<p class="message {message.tone}" role={message.tone === 'error' ? 'alert' : 'status'}>{message.text}</p>{/if}
 
       <div class="body" role="tabpanel">
@@ -230,8 +333,8 @@
             {#each contacts as c (c.id)}
               <li>
                 <button class:active={c.id === selectedId} aria-current={c.id === selectedId ? 'true' : undefined} onclick={() => pick(c)}>
-                  <strong>{c.name || c.email}</strong>
-                  {#if c.name}<small>{c.email}</small>{/if}
+                  <strong>{c.name || c.email || c.phone}</strong>
+                  {#if c.name && (c.email || c.phone)}<small>{c.email || c.phone}</small>{/if}
                 </button>
               </li>
             {:else}
@@ -242,14 +345,14 @@
             {#if form}
               <form onsubmit={save}>
                 <label class="field"><span>{t('contacts.name')}</span><input bind:value={form.name} maxlength="300" /></label>
-                <label class="field"><span>{t('contacts.email')}</span><input bind:value={form.email} type="email" maxlength="320" required /></label>
+                <label class="field"><span>{t('contacts.email')}</span><input bind:value={form.email} type="email" maxlength="320" /></label>
                 <label class="field"><span>{t('contacts.phone')}</span><input bind:value={form.phone} type="tel" maxlength="200" /></label>
                 <label class="field"><span>{t('contacts.company')}</span><input bind:value={form.company} maxlength="300" /></label>
                 <label class="field"><span>{t('contacts.address')}</span><textarea bind:value={form.address} rows="3" maxlength="1000"></textarea></label>
                 <label class="field"><span>{t('contacts.note')}</span><textarea bind:value={form.note} rows="4" maxlength="5000"></textarea></label>
                 <div class="row">
                   {#if form.id}
-                    <button type="button" class="btn" onclick={() => write(form!.name, form!.email)} disabled={busy}><Icon name="compose" />{t('contacts.write')}</button>
+                    {#if form.email.trim()}<button type="button" class="btn" onclick={() => write(form!.name, form!.email)} disabled={busy}><Icon name="compose" />{t('contacts.write')}</button>{/if}
                     {#if form.address.trim()}<button type="button" class="btn" onclick={copyAddress}>{t('contacts.copyAddress')}</button>{/if}
                     <button type="button" class="btn danger" onclick={remove} disabled={busy}>{t('contacts.delete')}</button>
                   {/if}
@@ -383,6 +486,25 @@
   }
   .spacer {
     flex: 1;
+  }
+  .syncbar {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.45rem 1rem;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface-2);
+    font-size: 0.85rem;
+    flex-wrap: wrap;
+  }
+  .sync-text {
+    color: var(--text-muted);
+  }
+  .sync-error {
+    color: var(--danger);
+  }
+  .syncbar .btn {
+    padding: 0.3em 0.8em;
   }
   .message {
     margin: 0;

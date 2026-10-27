@@ -26,6 +26,8 @@ export interface OAuthEndpoint {
   extraAuth: Record<string, string>
   /** Adresa spätného volania: Microsoft povoľuje „http://localhost“, Google 127.0.0.1. */
   redirectHost: 'localhost' | '127.0.0.1'
+  /** Rozsah pre prístup ku kontaktom (synchronizácia adresára); pýta sa až keď ju používateľ zapne. */
+  contactsScope?: string
 }
 
 export type OAuthConfig = Record<OAuthProvider, OAuthEndpoint | null>
@@ -35,7 +37,7 @@ export type OAuthConfig = Record<OAuthProvider, OAuthEndpoint | null>
  * premennými prostredia DOAR_OAUTH_MICROSOFT_CLIENT_ID, DOAR_OAUTH_GOOGLE_CLIENT_ID, DOAR_OAUTH_GOOGLE_CLIENT_SECRET.
  */
 const BUILT_IN = {
-  microsoftClientId: '',
+  microsoftClientId: 'b0ab1393-67c0-49a5-a6b2-f80dda999104',
   googleClientId: '803381359560-mijesmem5l7in3v0338qaq0jpfamfv0s.apps.googleusercontent.com',
   // Uložené pospiatky, aby ho automatické skenery nepovažovali za uniknuté heslo (pri desktopovej aplikácii nie je tajné).
   googleClientSecretReversed: 'ryZlKLOEd2IrQAWeFm-RTRwgH4vl-XPSCOG'
@@ -55,7 +57,7 @@ export function oauthConfig(env: Record<string, string | undefined> = process.en
       extraAuth: {},
       redirectHost: '127.0.0.1'
     })
-    return { microsoft: ep('offline_access imap smtp'), google: ep('https://mail.google.com/') }
+    return { microsoft: ep('offline_access imap smtp'), google: { ...ep('https://mail.google.com/'), contactsScope: 'carddav' } }
   }
   const ms = env['DOAR_OAUTH_MICROSOFT_CLIENT_ID'] || BUILT_IN.microsoftClientId
   const g = env['DOAR_OAUTH_GOOGLE_CLIENT_ID'] || BUILT_IN.googleClientId
@@ -82,7 +84,8 @@ export function oauthConfig(env: Record<string, string | undefined> = process.en
             clientSecret: gs,
             scopeOnToken: false,
             extraAuth: { access_type: 'offline', prompt: 'consent' },
-            redirectHost: '127.0.0.1'
+            redirectHost: '127.0.0.1',
+            contactsScope: 'https://www.googleapis.com/auth/carddav'
           }
         : null
   }
@@ -213,7 +216,7 @@ export class OAuthService {
   }
 
   /** Začne prihlásenie: spustí spätné volanie a vráti adresu, ktorú rozhranie otvorí v prehliadači. */
-  async start(input: { provider: OAuthProvider; loginHint?: string; lang?: string; text?: OAuthPageText }): Promise<{ flowId: string; url: string }> {
+  async start(input: { provider: OAuthProvider; loginHint?: string; lang?: string; text?: OAuthPageText; contacts?: boolean }): Promise<{ flowId: string; url: string }> {
     const ep = this.config[input.provider]
     if (!ep) throw oerr('OAUTH_NOT_CONFIGURED', 'Prihlásenie cez tohto poskytovateľa nie je v tejto zostave nastavené')
     const flowId = b64url(randomBytes(16))
@@ -253,7 +256,9 @@ export class OAuthService {
       client_id: ep.clientId,
       response_type: 'code',
       redirect_uri: redirectUri,
-      scope: ep.scope,
+      // Kontakty: rozsah navyše; doterajšie povolenia (pošta) ostanú.
+      scope: input.contacts && ep.contactsScope ? `${ep.scope} ${ep.contactsScope}` : ep.scope,
+      ...(input.contacts && ep.contactsScope ? { include_granted_scopes: 'true' } : {}),
       state,
       code_challenge: challenge,
       code_challenge_method: 'S256',

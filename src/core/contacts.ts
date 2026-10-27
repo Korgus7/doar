@@ -3,8 +3,8 @@ import type { Contact, ContactInput, MailAddressItem } from '../shared/ipc'
 
 /**
  * Adresár: kontakty uložené používateľom alebo importované (vCard .vcf, CSV z Outlooku, Gmailu, Excelu).
- * Jeden kontakt = jedna e-mailová adresa. Ďalšie adresy toho istého človeka z importu sú samostatné kontakty
- * s rovnakým menom (nič sa nestratí).
+ * Kontakt má najviac jednu e-mailovú adresu (aj žiadnu – len telefón či adresu). Ďalšie adresy toho istého
+ * človeka z importu sú samostatné kontakty s rovnakým menom (nič sa nestratí).
  */
 
 const MAX = { name: 300, email: 320, phone: 200, company: 300, note: 5000, address: 1000 }
@@ -21,7 +21,7 @@ export const isEmail = (s: string): boolean => s.length <= MAX.email && EMAIL.te
 type Row = { id: number; name: string; email: string; phone: string; company: string; note: string; address: string }
 const COLS = 'id, name, email, phone, company, note, address'
 
-const sortKey = (c: Row): string => fold(c.name || c.email)
+const sortKey = (c: Row): string => fold(c.name || c.email || c.phone)
 
 export function listContacts(db: Db, query = ''): Contact[] {
   const rows = db.prepare(`SELECT ${COLS} FROM contacts`).all() as unknown as Row[]
@@ -45,8 +45,8 @@ export function mailAddresses(db: Db, query = '', limit = 500): MailAddressItem[
 
 function validate(input: ContactInput | null | undefined): Omit<Row, 'id'> {
   const email = clip(input?.email, MAX.email).replace(/^mailto:/i, '')
-  if (!isEmail(email)) throw err('INVALID_EMAIL', 'Neplatná e-mailová adresa')
-  return {
+  if (email && !isEmail(email)) throw err('INVALID_EMAIL', 'Neplatná e-mailová adresa')
+  const c = {
     name: clip(input?.name, MAX.name).replace(/\s+/g, ' '),
     email,
     phone: clip(input?.phone, MAX.phone).replace(/\s+/g, ' '),
@@ -54,16 +54,21 @@ function validate(input: ContactInput | null | undefined): Omit<Row, 'id'> {
     note: clip(input?.note, MAX.note),
     address: clip(input?.address, MAX.address)
   }
+  if (!c.name && !c.email && !c.phone && !c.company) throw err('CONTACT_EMPTY', 'Vyplňte aspoň meno, e-mail alebo telefón')
+  return c
 }
 
 export function saveContact(db: Db, input: ContactInput): Contact {
   const c = validate(input)
   const id = Number.isInteger(input?.id) ? (input.id as number) : null
-  const clash = db.prepare('SELECT id FROM contacts WHERE email = ?').get(c.email) as { id: number } | undefined
+  const clash = c.email ? (db.prepare('SELECT id FROM contacts WHERE email = ?').get(c.email) as { id: number } | undefined) : undefined
   if (clash && clash.id !== id) throw err('CONTACT_EXISTS', 'Kontakt s touto adresou už v adresári je')
   if (id !== null) {
     const r = db
-      .prepare(`UPDATE contacts SET name = ?, email = ?, phone = ?, company = ?, note = ?, address = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?`)
+      .prepare(
+        `UPDATE contacts SET name = ?, email = ?, phone = ?, company = ?, note = ?, address = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now'),
+           dirty = CASE WHEN remote_href IS NOT NULL THEN 1 ELSE dirty END WHERE id = ?`
+      )
       .run(c.name, c.email, c.phone, c.company, c.note, c.address, id)
     if (!r.changes) throw err('NOT_FOUND', 'Kontakt neexistuje')
     return { id, ...c }
@@ -72,9 +77,23 @@ export function saveContact(db: Db, input: ContactInput): Contact {
   return { id: Number(r.lastInsertRowid), ...c }
 }
 
+/** Zmaže kontakty; prepojené so serverom (synchronizácia) sa zmažú aj tam pri ďalšej synchronizácii. */
 export function deleteContacts(db: Db, ids: number[]): void {
+  const get = db.prepare('SELECT sync_account, remote_href, remote_etag FROM contacts WHERE id = ?')
+  const tomb = db.prepare('INSERT INTO contact_tombstones (account_id, href, etag) VALUES (?, ?, ?)')
   const del = db.prepare('DELETE FROM contacts WHERE id = ?')
-  for (const id of ids) del.run(id)
+  db.exec('BEGIN')
+  try {
+    for (const id of ids) {
+      const r = get.get(id) as { sync_account: number | null; remote_href: string | null; remote_etag: string | null } | undefined
+      if (r?.sync_account && r.remote_href) tomb.run(r.sync_account, r.remote_href, r.remote_etag)
+      del.run(id)
+    }
+    db.exec('COMMIT')
+  } catch (e) {
+    db.exec('ROLLBACK')
+    throw e
+  }
 }
 
 /** Uloží adresy z pošty do adresára (s menom, ktoré Doar pozná). Existujúce kontakty nemení. */
@@ -385,18 +404,24 @@ export function mergeContacts(db: Db, items: ParsedContact[]): { added: number; 
   let updated = 0
   let skipped = 0
   const get = db.prepare(`SELECT ${COLS} FROM contacts WHERE email = ?`)
+  // Bez e-mailu: rovnaký kontakt = rovnaké meno a telefón (opakovaný import nič nezdvojí).
+  const getNoEmail = db.prepare(`SELECT ${COLS} FROM contacts WHERE email = '' AND name = ? AND phone = ?`)
   const ins = db.prepare('INSERT INTO contacts (name, email, phone, company, note, address) VALUES (?, ?, ?, ?, ?, ?)')
-  const upd = db.prepare(`UPDATE contacts SET name = ?, phone = ?, company = ?, note = ?, address = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?`)
+  const upd = db.prepare(
+    `UPDATE contacts SET name = ?, phone = ?, company = ?, note = ?, address = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now'),
+       dirty = CASE WHEN remote_href IS NOT NULL THEN 1 ELSE dirty END WHERE id = ?`
+  )
   db.exec('BEGIN')
   try {
     for (const it of items.slice(0, 100_000)) {
-      if (!it.emails.length) {
+      const base = { name: clip(it.name, MAX.name).replace(/\s+/g, ' '), phone: clip(it.phone, MAX.phone), company: clip(it.company, MAX.company), note: clip(it.note, MAX.note), address: clip(it.address, MAX.address) }
+      if (!it.emails.length && !base.name && !base.phone && !base.company) {
         skipped++
         continue
       }
-      for (const email of it.emails) {
-        const c = { name: clip(it.name, MAX.name), phone: clip(it.phone, MAX.phone), company: clip(it.company, MAX.company), note: clip(it.note, MAX.note), address: clip(it.address, MAX.address) }
-        const ex = get.get(email) as Row | undefined
+      for (const email of it.emails.length ? it.emails : ['']) {
+        const c = base
+        const ex = (email ? get.get(email) : getNoEmail.get(c.name, c.phone)) as Row | undefined
         if (!ex) {
           ins.run(c.name, email.slice(0, MAX.email), c.phone, c.company, c.note, c.address)
           added++
@@ -419,10 +444,10 @@ export function mergeContacts(db: Db, items: ParsedContact[]): { added: number; 
 
 /* ---------------- export ---------------- */
 
-const escapeV = (s: string): string => s.replace(/\\/g, '\\\\').replace(/\n/g, '\\n').replace(/([,;])/g, '\\$1')
+export const escapeV = (s: string): string => s.replace(/\\/g, '\\\\').replace(/\n/g, '\\n').replace(/([,;])/g, '\\$1')
 
 /** Riadok vCard zložený po 75 bajtoch (UTF-8 znak sa nerozdelí). */
-function foldLine(line: string): string {
+export function foldLine(line: string): string {
   const out: string[] = []
   let cur = ''
   let bytes = 0
@@ -440,7 +465,7 @@ function foldLine(line: string): string {
   return out.join('\r\n ')
 }
 
-function splitName(name: string): { given: string; family: string } {
+export function splitName(name: string): { given: string; family: string } {
   const parts = name.trim().split(/\s+/).filter(Boolean)
   if (parts.length < 2) return { given: parts[0] ?? '', family: '' }
   return { given: parts.slice(0, -1).join(' '), family: parts.at(-1)! }
@@ -450,7 +475,8 @@ export function toVcards(list: Contact[]): string {
   return list
     .map((c) => {
       const { given, family } = splitName(c.name)
-      const lines = ['BEGIN:VCARD', 'VERSION:3.0', `FN:${escapeV(c.name || c.email)}`, `N:${escapeV(family)};${escapeV(given)};;;`, `EMAIL;TYPE=INTERNET:${c.email}`]
+      const lines = ['BEGIN:VCARD', 'VERSION:3.0', `FN:${escapeV(c.name || c.email || c.phone)}`, `N:${escapeV(family)};${escapeV(given)};;;`]
+      if (c.email) lines.push(`EMAIL;TYPE=INTERNET:${c.email}`)
       if (c.phone) lines.push(`TEL:${escapeV(c.phone)}`)
       if (c.company) lines.push(`ORG:${escapeV(c.company)}`)
       if (c.address) lines.push(`ADR;TYPE=HOME:;;${escapeV(c.address)};;;;`)

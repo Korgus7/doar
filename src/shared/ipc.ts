@@ -28,6 +28,15 @@ export interface AccountDetails extends AccountSummary {
   pendingOutbox: number
 }
 
+/** Stav synchronizácie adresára (kontakty Google cez CardDAV). */
+export interface ContactSyncStatus {
+  /** Kontá Google prihlásené cez Google – s nimi sa dá synchronizovať. */
+  candidates: { accountId: number; email: string }[]
+  enabled: null | { accountId: number; email: string; lastSync: string | null; lastError: string | null; running: boolean }
+  /** Kontakty v Doare, ktoré ešte nie sú na serveri (pri zapnutí sa nahrajú). */
+  localOnly: number
+}
+
 /** Kontakt v adresári (jedna e-mailová adresa). */
 export interface Contact {
   id: number
@@ -653,6 +662,10 @@ export interface CoreRequests {
   'contacts.import': [{ paths: string[] }, { added: number; updated: number; skipped: number }]
   /** Export do súboru vybraného v dialógu (.csv = CSV, inak vCard); ids = len vybrané kontakty. */
   'contacts.export': [{ path: string; ids?: number[] }, { count: number }]
+  'contacts.syncStatus': [void, ContactSyncStatus]
+  'contacts.syncEnable': [{ accountId: number }, void]
+  'contacts.syncDisable': [void, void]
+  'contacts.syncNow': [void, { downloaded: number; uploaded: number; removed: number; onServer: number | null; withoutEmail: number }]
   /** Uloží prílohu do súboru zvoleného v dialógu (chooseSavePath). */
   'attachments.save': [{ messageId: number; index: number; path: string }, void]
   /** Uloží všetky prílohy do priečinka zvoleného v dialógu (chooseFolder). Vráti názvy uložených súborov. */
@@ -699,7 +712,8 @@ export interface CoreRequests {
   /** Zatvorí archív (zmaže len jeho zoznam v Doare, súbor zostane). */
   'archives.close': [{ archiveId: number }, void]
   /** Prihlásenie cez Microsoft/Google: adresa pre prehliadač (otvorí ju rozhranie cez openExternal). */
-  'oauth.start': [{ provider: OAuthProvider; loginHint?: string; lang?: string; text?: { title: string; done: string; failed: string } }, { flowId: string; url: string }]
+  /** contacts: pýtať aj prístup ku kontaktom (synchronizácia adresára). */
+  'oauth.start': [{ provider: OAuthProvider; loginHint?: string; lang?: string; text?: { title: string; done: string; failed: string }; contacts?: boolean }, { flowId: string; url: string }]
   /** Počká na dokončenie prihlásenia v prehliadači (najviac 10 minút). */
   'oauth.finish': [{ flowId: string }, { email: string | null; provider: OAuthProvider }]
   'oauth.cancel': [{ flowId: string }, void]
@@ -738,6 +752,8 @@ export interface CoreEvents {
   'import.finished': ImportSummary
   'import.changed': null
   'archives.changed': null
+  /** Adresár sa zmenil (synchronizácia, stav synchronizácie). */
+  'contacts.changed': null
   'archives.progress': { archiveId: number; bytesRead: number; fileSize: number; messages: number }
   /** Priebežný text odpovede AI. */
   'ai.chunk': { requestId: string; text: string }
@@ -781,6 +797,10 @@ export const REQUEST_CHANNELS = [
   'contacts.addFromMail',
   'contacts.import',
   'contacts.export',
+  'contacts.syncStatus',
+  'contacts.syncEnable',
+  'contacts.syncDisable',
+  'contacts.syncNow',
   'attachments.save',
   'attachments.saveAll',
   'attachments.prepareOpen',

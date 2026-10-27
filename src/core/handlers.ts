@@ -25,6 +25,7 @@ import { oauthProviderOf } from './accounts'
 import type { FetchFn } from './ai/providers'
 import { isArchiveId, isComposeMode } from '../shared/ipc'
 import { readFile, rename, stat, writeFile } from 'node:fs/promises'
+import { ContactSync } from './contact-sync'
 import { addFromMail, deleteContacts, listContacts, mailAddresses, mergeContacts, parseContactsFile, saveContact, toCsv, toVcards, type ParsedContact } from './contacts'
 
 export interface CoreContext {
@@ -50,6 +51,8 @@ export interface CoreContext {
   aiFetch?: FetchFn
   /** Prihlásenie cez Microsoft/Google – rovnaký objekt používa synchronizácia. */
   oauth?: OAuthService
+  /** Synchronizácia adresára (v testoch sa dá nahradiť). */
+  contactSync?: ContactSync
 }
 
 export type Handlers = {
@@ -84,6 +87,16 @@ function searchScope(data: { folderId?: unknown; accountId?: unknown; archiveId?
 export function createHandlers(ctx: CoreContext): Handlers {
   const oauth = ctx.oauth ?? new OAuthService({ secrets: ctx.secrets, sessionSecrets: ctx.sessionSecrets })
   ctx.oauth = oauth
+  const contactSync =
+    ctx.contactSync ??
+    new ContactSync({
+      db: ctx.db,
+      emit: ctx.emit,
+      token: (id) => oauth.accessToken(id, getAccount(ctx.db, id).passwordStorage),
+      invalidate: (id) => oauth.invalidate(id),
+      discoveryUrl: process.env['DOAR_CARDDAV_TEST_URL'] ? () => process.env['DOAR_CARDDAV_TEST_URL']! : undefined
+    })
+  ctx.contactSync = contactSync
   const ai = new AiService({
     db: ctx.db,
     secrets: ctx.secrets,
@@ -292,9 +305,20 @@ export function createHandlers(ctx: CoreContext): Handlers {
 
     'contacts.list': (data) => listContacts(ctx.db, str(data?.query, 200)),
     'contacts.fromMail': (data) => mailAddresses(ctx.db, str(data?.query, 200)),
-    'contacts.save': (data) => saveContact(ctx.db, data),
-    'contacts.delete': (data) => deleteContacts(ctx.db, ids(data?.ids)),
-    'contacts.addFromMail': (data) => addFromMail(ctx.db, Array.isArray(data?.emails) ? data.emails.filter((e): e is string => typeof e === 'string') : []),
+    'contacts.save': (data) => {
+      const c = saveContact(ctx.db, data)
+      contactSync.changed()
+      return c
+    },
+    'contacts.delete': (data) => {
+      deleteContacts(ctx.db, ids(data?.ids))
+      contactSync.changed()
+    },
+    'contacts.addFromMail': (data) => {
+      const r = addFromMail(ctx.db, Array.isArray(data?.emails) ? data.emails.filter((e): e is string => typeof e === 'string') : [])
+      contactSync.changed()
+      return r
+    },
     'contacts.import': async (data) => {
       const paths = Array.isArray(data?.paths) ? data.paths.filter((p): p is string => typeof p === 'string').slice(0, 50) : []
       const items: ParsedContact[] = []
@@ -305,8 +329,14 @@ export function createHandlers(ctx: CoreContext): Handlers {
         items.push(...parseContactsFile(path, await readFile(path)))
       }
       if (!items.some((i) => i.emails.length)) throw err('NO_CONTACTS', 'V súbore sa nenašli žiadne kontakty s e-mailovou adresou')
-      return mergeContacts(ctx.db, items)
+      const r = mergeContacts(ctx.db, items)
+      contactSync.changed()
+      return r
     },
+    'contacts.syncStatus': () => contactSync.status(),
+    'contacts.syncEnable': (data) => contactSync.enable(Number(data?.accountId)),
+    'contacts.syncDisable': () => contactSync.disable(),
+    'contacts.syncNow': () => contactSync.syncNow(),
     'contacts.export': async (data) => {
       const path = await ctx.files.require(str(data?.path, 4096), 'write')
       const all = listContacts(ctx.db)
@@ -328,7 +358,7 @@ export function createHandlers(ctx: CoreContext): Handlers {
     'oauth.start': (data) => {
       if (data?.provider !== 'microsoft' && data?.provider !== 'google') throw err('OAUTH_NOT_CONFIGURED', 'Neznámy poskytovateľ')
       const text = data.text && typeof data.text === 'object' ? { title: str(data.text.title, 200), done: str(data.text.done, 500), failed: str(data.text.failed, 500) } : undefined
-      return oauth.start({ provider: data.provider, loginHint: str(data.loginHint, 320) || undefined, lang: str(data.lang, 10), text })
+      return oauth.start({ provider: data.provider, loginHint: str(data.loginHint, 320) || undefined, lang: str(data.lang, 10), text, contacts: data.contacts === true })
     },
     'oauth.finish': (data) => oauth.finish(str(data?.flowId, 100)),
     'oauth.cancel': (data) => oauth.cancel(str(data?.flowId, 100)),

@@ -101,7 +101,10 @@ messages_fts USING fts5(subject, from_text, to_text, body_text,
                         content='', tokenize='unicode61 remove_diacritics 2')
 
 addresses(email PK, name, use_count, last_used)    -- našepkávanie
-contacts(id, name, email UNIQUE NOCASE, phone, company, note, address)  -- adresár (0.7.1)
+contacts(id, name, email UNIQUE NOCASE, phone, company, note, address,  -- adresár (0.7.1)
+         sync_account, remote_href, remote_etag, remote_vcard, dirty)   -- synchronizácia CardDAV
+contact_sync(account_id, collection_url, sync_token, last_sync, last_error)
+contact_tombstones(account_id, href, etag)                     -- zmazané v Doare, čakajú na odoslanie
 
 operations(                                         -- trvalá fronta zmien (0.3, základ už v 0.1)
   id PK, account_id, kind, payload_json,           -- flags | move | expunge | draft | draftDelete | draftRemove

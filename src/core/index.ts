@@ -18,6 +18,8 @@ import { FileGrants, cleanOpenDir } from './files'
 import { collectBlobs } from './account-admin'
 import { getSettings } from './settings'
 import { OAuthService } from './oauth/oauth'
+import { ContactSync } from './contact-sync'
+import { getAccount } from './accounts'
 import type { CoreToMain, MainToCore, PortMessage } from '../shared/ipc'
 import { isRequestChannel } from '../shared/ipc'
 
@@ -127,7 +129,16 @@ function init(dataDir: string, appVersion: string): void {
   cleanOpenDir(dataDir)
   archives = new ArchiveManager({ db, files, emit })
   void archives.init().catch((e) => log.warn('kontrola archívov zlyhala', { error: e }))
+  // Adresár: synchronizácia s kontaktmi Google (ak ju používateľ zapol).
+  const contactSync = new ContactSync({
+    db,
+    emit,
+    token: (id) => oauth.accessToken(id, getAccount(db, id).passwordStorage),
+    invalidate: (id) => oauth.invalidate(id),
+    discoveryUrl: process.env['DOAR_CARDDAV_TEST_URL'] ? () => process.env['DOAR_CARDDAV_TEST_URL']! : undefined
+  })
   handlers = createHandlers({
+    contactSync,
     exports,
     imports,
     archives,
@@ -149,6 +160,7 @@ function init(dataDir: string, appVersion: string): void {
   parentPort!.postMessage({ kind: 'ready' } satisfies CoreToMain)
   syncManager = sync
   sync.startAll()
+  contactSync.schedule()
   // Upratanie úložiska originálov chvíľu po štarte (nič neblokuje).
   setTimeout(() => collectBlobs({ store, blobs }), 60_000).unref?.()
 }

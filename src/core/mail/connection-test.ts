@@ -31,7 +31,9 @@ export function classifyError(e: unknown): ProtocolTestResult {
   const codes = errs.map((x) => String(x.code ?? '')).filter(Boolean)
   const text = errs.map((x) => `${x.message ?? ''} ${x.reason ?? ''}`).join(' ')
   const has = (...c: string[]): boolean => codes.some((x) => c.includes(x))
-  const detail = (errs[0]?.message ?? String(e)).slice(0, 300)
+  // Presná odpoveď servera (IMAP: responseText, napr. „AUTHENTICATE failed.“) pomôže pri hľadaní príčiny.
+  const server = errs.map((x) => (x as { responseText?: unknown }).responseText).find((v): v is string => typeof v === 'string' && !!v)
+  const detail = [errs[0]?.message ?? String(e), server && !(errs[0]?.message ?? '').includes(server) ? server : ''].filter(Boolean).join(' – ').slice(0, 300)
   const r = (code: ConnectionErrorCode, extra: Partial<ProtocolTestResult> = {}): ProtocolTestResult => ({ ok: false, code, detail, ...extra })
 
   if (has('ERR_TLS_CERT_ALTNAME_INVALID') || /does not match certificate|altnames/i.test(text)) {

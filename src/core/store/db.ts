@@ -15,6 +15,8 @@ import m011 from './migrations/011_account_colors'
 import m012 from './migrations/012_vivid_colors'
 import m013 from './migrations/013_contacts'
 import m014 from './migrations/014_contact_address'
+import m015 from './migrations/015_contact_sync'
+import m016 from './migrations/016_contact_no_email'
 
 /** Zoznam migrácií v poradí. Pridávaj len na koniec. */
 export const MIGRATIONS: readonly { version: number; name: string; sql: string }[] = [
@@ -31,7 +33,9 @@ export const MIGRATIONS: readonly { version: number; name: string; sql: string }
   { version: 11, name: 'account_colors', sql: m011 },
   { version: 12, name: 'vivid_colors', sql: m012 },
   { version: 13, name: 'contacts', sql: m013 },
-  { version: 14, name: 'contact_address', sql: m014 }
+  { version: 14, name: 'contact_address', sql: m014 },
+  { version: 15, name: 'contact_sync', sql: m015 },
+  { version: 16, name: 'contact_no_email', sql: m016 }
 ]
 
 export type Db = DatabaseSync

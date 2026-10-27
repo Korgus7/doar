@@ -291,6 +291,23 @@ Záznam dohodnutých rozhodnutí. Nové rozhodnutia pridávaj na koniec s dátum
 - **Microsoft Store:** pripravené (`npm run dist:store`, obrázky dlaždíc, verzia zo Store sa neaktualizuje sama a nevytvára odkazy). Registráciu v Partner Center aj aplikáciu v Azure (prihlásenie cez Microsoft) používateľ odložil na verziu 1.0.
 - Overené: unit 163, integračné 121, e2e 23; používateľ vyskúšal nové funkcie u seba.
 
+## 2026-10-27 – registrácia u Microsoftu (Azure)
+
+- Bezplatný účet Azure (osobné použitie) → adresár; aplikácia **Doar Mail** v Entra ID: kontá z ľubovoľnej organizácie aj osobné (Outlook.com, Hotmail), platforma „Mobile and desktop“, presmerovanie `http://localhost/callback` (port Microsoft ignoruje, cestu nie – samotné `http://localhost` nestačilo). Client ID `b0ab1393-67c0-49a5-a6b2-f80dda999104` (verejný identifikátor) v `src/core/oauth/oauth.ts`. Bez tajomstva (verejný klient, PKCE) – nič neexpiruje.
+- Bez overenia vydavateľa: pri prihlásení „unverified“; osobné kontá to nebráni, firemný správca môže neoverené aplikácie blokovať.
+- **Overené naostro (testovacie konto Outlook.com):** prihlásenie, súhlas, výmena kódu za token, server IMAP prijal token („User is authenticated“). **Nefunguje:** IMAP ďalej odpovedá „User is authenticated but not connected“ – známy problém Microsoftu pri niektorých kontách Outlook.com (hlásia ho aj Thunderbird a iné programy, bez riešenia). SMTP: „SmtpClientAuthentication is disabled for the Mailbox“ – novým bezplatným kontám ho Microsoft vypína a používateľ ho zapnúť nemôže. Riešenie do budúcna: Microsoft Graph (čítanie aj odosielanie) pre kontá Outlook.com – kandidát na 1.0. Test zopakovať neskôr (nové konto sa môže rozbehnúť) a s kontom Microsoft 365.
+- Technické detaily pri overení spojenia ukazujú aj presnú odpoveď servera IMAP.
+
+## 2026-10-27 – synchronizácia adresára s kontaktmi Google
+
+- **Spôsob:** CardDAV (RFC 6352) + sync-collection (RFC 6578), vlastný malý klient (`core/carddav.ts`, bez knižnice), tá istá cesta pôjde neskôr aj pre iCloud či Nextcloud. Google: `https://www.googleapis.com/.well-known/carddav`, len OAuth; v projekte Google Cloud zapnuté „Google Contacts CardDAV API“ a pridaný rozsah `https://www.googleapis.com/auth/carddav`.
+- **Oprávnenie až na požiadanie:** rozsah kontaktov sa pýta až keď používateľ synchronizáciu zapne (`include_granted_scopes`), prihlásenie konta Gmail ostáva bez neho. Chýbajúce oprávnenie (401/403) → tlačidlo „Povoliť prístup ku kontaktom“ → opätovné prihlásenie toho istého konta.
+- **Pravidlá:** synchronizuje sa s jedným kontom Google prihláseným cez Google. Pri zapnutí sa kontakty prepoja podľa e-mailu (prázdne polia sa doplnia), kontakty z Google s e-mailom sa stiahnu, kontakty z Doaru, ktoré v Google nie sú, sa nahrajú (používateľ to potvrdí s počtom). Kontakty bez e-mailu (len telefón, adresa – typické v mobile) sa synchronizujú tiež; párujú sa podľa mena a telefónu (migrácia 016: e-mail nepovinný, jedinečný len keď je vyplnený; pri písaní správy sa ponúkajú len kontakty s e-mailom). Overené naostro: Google účet používateľa (31 kontaktov) – prihlásenie s rozsahom kontaktov, načítanie zoznamu. Prepojený kontakt si pamätá pôvodný vCard – pri odoslaní sa prepíšu len polia zmenené v Doare (fotky, narodeniny, ďalšie čísla a adresy na serveri ostanú). Súbežná zmena v Doare aj v mobile: trojcestné zlúčenie – polia zmenené v Doare ostanú, ostatné sa prevezmú zo servera. Zmazanie v Doare sa zmaže aj na serveri; zmazané v mobile sa zmaže v Doare (ak ho medzitým v Doare nezmenili – vtedy sa nahrá znova). Synchronizácia beží na pozadí každých 15 minút, 5 s po zmene v adresári a na tlačidlo „Synchronizovať“.
+- Migrácia 015 (prepojenie kontaktu so serverom, stav synchronizácie, zmazané čakajúce na odoslanie).
+- Overené: unit testy proti testovaciemu serveru CardDAV napodobňujúcemu Google (`test/fixtures/carddav-server.ts`: .well-known, PROPFIND, sync-collection, multiget, ETagy, 412, 403). **Neoverené naostro s Google** – overí používateľ.
+
+- **Vydanie `v0.8.0` (2026-10-27):** synchronizácia adresára s Google kontaktmi (overil používateľ naostro oboma smermi), kontakty bez e-mailu, registrácia Microsoft (client ID v aplikácii; IMAP/SMTP pri novom testovacom konte Outlook.com blokuje Microsoft – pozri vyššie). Overené: unit 172, integračné 121, e2e 23.
+
 ## Licencie závislostí (overené 2026-10-21 cez `npm view`)
 
 Všetky sú kompatibilné s MIT.

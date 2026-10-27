@@ -7,14 +7,14 @@ Jednoduchý, rýchly a bezplatný e-mailový klient pre desktop – v duchu Outl
 - IMAP a SMTP, viac kont, spoločná doručená pošta
 - záloha konta do jedného súboru `.mbox` a obnova
 - import pošty z Outlooku (.pst, .ost), Outlook Expressu (.dbx) a Windows Mail / Windows Live Mail (.eml)
-- adresár: kontakty s poštovou adresou, import a export vCard a CSV (Outlook, Gmail, Excel), adresy z odoslanej pošty
+- adresár: kontakty s telefónom a poštovou adresou, synchronizácia s Google kontaktmi (mobil s Androidom) oboma smermi, import a export vCard a CSV (Outlook, Gmail, Excel), adresy z odoslanej pošty
 - priečinky: vytvorenie, premenovanie, presun ťahaním, odstránenie (správy do Koša), zbaľovanie podpriečinkov
 - voliteľné AI funkcie s vlastným kľúčom (Anthropic, OpenRouter) alebo lokálnym modelom: zhrnutie, návrh odpovede, úprava textu
 - slovenčina, angličtina, čeština, nemčina, maďarčina, francúzština, španielčina, ruština a hebrejčina (sprava doľava)
-- Gmail aj prihlásením cez Google (bez hesla v programe); prihlásenie cez Microsoft je pripravené, čaká na registráciu aplikácie
+- Gmail, Outlook.com a Microsoft 365 aj prihlásením cez Google / Microsoft (bez hesla v programe; pri niektorých nových kontách Outlook.com Microsoft zatiaľ nepustí IMAP ani SMTP)
 - bez telemetrie
 
-**Stav:** vo vývoji – verzia 0.7.1: adresár, správa priečinkov (premenovanie, presun, odstránenie, zbaľovanie), výraznejšie farby kont, zadanie hesla priamo pri importe. Z 0.7: import z Outlooku, Outlook Expressu a Windows Mail. Z 0.6: nový vzhľad, svetlý a tmavý režim. Z 0.5: prihlásenie cez Google (Gmail bez hesla v programe; Microsoft pripravený, čaká na registráciu), jazyky rozhrania vrátane hebrejčiny sprava doľava. Z 0.4: balík pre Windows (zip, bez inštalátora), automatické aktualizácie z GitHubu a voliteľná AI (Anthropic, OpenRouter, lokálny model). Z 0.3: viac kont a spoločná doručená pošta, čítanie a písanie (aj formátované), odpoveď a preposlanie, prílohy, koncepty, Kôš, Archív a presuny, vyhľadávanie, podpis, upozornenia na novú poštu, tlač, práca bez pripojenia, záloha do mbox, obnova zo zálohy do konta (bez duplicít, s pokračovaním po prerušení) a lokálny archív mbox len na čítanie.
+**Stav:** vo vývoji – verzia 0.8: synchronizácia adresára s Google kontaktmi, kontakty aj bez e-mailu, prihlásenie cez Microsoft. Z 0.7.1: adresár, správa priečinkov (premenovanie, presun, odstránenie, zbaľovanie), výraznejšie farby kont, zadanie hesla priamo pri importe. Z 0.7: import z Outlooku, Outlook Expressu a Windows Mail. Z 0.6: nový vzhľad, svetlý a tmavý režim. Z 0.5: prihlásenie cez Google (Gmail bez hesla v programe; Microsoft pripravený, čaká na registráciu), jazyky rozhrania vrátane hebrejčiny sprava doľava. Z 0.4: balík pre Windows (zip, bez inštalátora), automatické aktualizácie z GitHubu a voliteľná AI (Anthropic, OpenRouter, lokálny model). Z 0.3: viac kont a spoločná doručená pošta, čítanie a písanie (aj formátované), odpoveď a preposlanie, prílohy, koncepty, Kôš, Archív a presuny, vyhľadávanie, podpis, upozornenia na novú poštu, tlač, práca bez pripojenia, záloha do mbox, obnova zo zálohy do konta (bez duplicít, s pokračovaním po prerušení) a lokálny archív mbox len na čítanie.
 
 Zadanie: [docs/ZADANIE.md](docs/ZADANIE.md) · Architektúra: [docs/ARCHITEKTURA.md](docs/ARCHITEKTURA.md)
 
