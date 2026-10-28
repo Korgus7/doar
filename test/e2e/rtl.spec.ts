@@ -89,7 +89,7 @@ test('hebrejčina: rozhranie sprava doľava, hebrejská správa, písanie odpove
   // Odpoveď po hebrejsky: odsek dostane smer sprava doľava a dir="auto" ide aj do odosielaného HTML.
   const [c] = await Promise.all([app.waitForEvent('window'), reader.getByRole('button', { name: /^השב$/ }).click()])
   await c.waitForLoadState('domcontentloaded')
-  await expect(c.getByRole('button', { name: /שליחה/ })).toBeEnabled()
+  await expect(c.getByRole('button', { name: /^שליחה ➤/ })).toBeEnabled()
   expect(await c.evaluate(() => document.documentElement.dir)).toBe('rtl')
   const editor = c.getByRole('textbox', { name: 'תוכן ההודעה' })
   await editor.click()

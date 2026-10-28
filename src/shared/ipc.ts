@@ -10,9 +10,24 @@ export interface AccountSummary {
   color: string
   /** Meno odosielateľa (From). */
   displayName: string
-  /** Podpis (čistý text), vkladá sa do nových správ a odpovedí. */
+  /** Predvolený podpis ako čistý text (správa bez formátovania). */
   signature: string
+  /** Podpisy konta (0.9): formátované, jeden môže byť predvolený. */
+  signatures: Signature[]
 }
+
+export interface Signature {
+  id: number
+  accountId: number
+  /** Názov na výber (prázdny = „Podpis 1“…). */
+  name: string
+  /** Formátovaný podpis (prečistené HTML, aj s logom). */
+  html: string
+  /** Čistý text podpisu. */
+  text: string
+  isDefault: boolean
+}
+export type SignatureInput = { id?: number; accountId: number; name: string; html: string; isDefault?: boolean }
 
 /** Podrobnosti konta pre nastavenia (bez hesla). */
 export interface AccountDetails extends AccountSummary {
@@ -47,6 +62,23 @@ export interface Contact {
   note: string
   /** Poštová adresa (viac riadkov). */
   address: string
+  /** Skupiny, v ktorých kontakt je (ID). */
+  groups?: number[]
+}
+
+/** Skupina v adresári (napr. „Rodina“) – správa všetkým jedným klikom. */
+export interface ContactGroup {
+  id: number
+  name: string
+  /** Počet kontaktov v skupine. */
+  count: number
+  /** Z toho s e-mailom (komu sa dá napísať). */
+  withEmail: number
+}
+
+/** Návrh adresáta: adresa, alebo celá skupina (vloží všetky adresy). */
+export interface AddressSuggestion extends Address {
+  group?: { id: number; members: Address[] }
 }
 
 /** Nový kontakt (bez id) alebo úprava existujúceho. */
@@ -59,6 +91,8 @@ export interface ContactInput {
   note: string
   /** Poštová adresa (viac riadkov). */
   address: string
+  /** Skupiny (ID); bez poľa = nemeniť. */
+  groups?: number[]
 }
 
 /** Adresa z pošty (adresát odoslanej správy), ktorá ešte nie je v adresári. */
@@ -84,6 +118,8 @@ export interface AppSettings {
   notifyShowContent: boolean
   /** Nové správy písať formátované (HTML); inak čistý text. */
   composeHtml: boolean
+  /** Zoznam správ zoskupiť do konverzácií. */
+  threads: boolean
 }
 
 /** Výrazné farby kont (od 0.7.1) – predvolené, nové kontá ich dostávajú postupne. Staré prevedie migrácia 012. */
@@ -215,11 +251,40 @@ export interface MessageListItem {
   downloaded: boolean
   accountColor: string
   accountName: string
+  /** Zobrazenie po konverzáciách: všetky správy konverzácie v tomto priečinku (táto je najnovšia). */
+  threadIds?: number[]
+  /** Mená odosielateľov v konverzácii (v poradí od najstaršieho, bez opakovania). */
+  threadFrom?: string[]
+}
+
+/** Správa v konverzácii (pre čítanie – zo všetkých priečinkov konta okrem Koša a Spamu). */
+export interface ThreadMessage {
+  id: number
+  folderId: number
+  fromName: string
+  fromAddr: string
+  date: string | null
+  snippet: string
+  seen: boolean
+  flagged: boolean
+  hasAttachments: boolean
 }
 
 export interface Address {
   name: string
   address: string
+}
+
+export type AttachmentPreview = { kind: 'image'; dataUrl: string } | { kind: 'text'; text: string } | { kind: 'pdf'; path: string }
+
+/** Druh náhľadu prílohy podľa typu a prípony (null = náhľad nie je). */
+export function previewKind(filename: string, contentType: string): 'image' | 'text' | 'pdf' | null {
+  const ext = (filename.split('.').pop() ?? '').toLowerCase()
+  const type = (contentType ?? '').toLowerCase()
+  if (/^image\/(png|jpe?g|gif|webp|bmp)$/.test(type) || ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp'].includes(ext)) return 'image'
+  if (type === 'application/pdf' || ext === 'pdf') return 'pdf'
+  if (/^text\/(plain|csv)$/.test(type) || ['txt', 'csv', 'log'].includes(ext)) return 'text'
+  return null
 }
 
 export interface AttachmentInfo {
@@ -248,6 +313,8 @@ export interface MessageView {
   remoteShown: boolean
   /** Odosielateľ má trvalo povolený vzdialený obsah. */
   senderAllowed: boolean
+  /** Správa ponúka odhlásenie z odberu (hlavička List-Unsubscribe): ako sa vykoná. */
+  unsubscribe: 'oneClick' | 'mailto' | 'url' | null
 }
 
 export type SyncState = 'idle' | 'syncing' | 'offline' | 'error'
@@ -280,6 +347,8 @@ export interface OutboxItem {
   /** Kód chyby (napr. REJECTED, AUTH_FAILED, INTERRUPTED). */
   error: string | null
   createdAt: string
+  /** Odoslať neskôr: kedy (ISO 8601); null = hneď. */
+  sendAt: string | null
 }
 
 export type ComposeMode = 'new' | 'reply' | 'replyAll' | 'forward' | 'draft'
@@ -374,6 +443,36 @@ export interface ComposeSendInput {
   html?: string | null
   /** Odoslaný koncept sa po zaradení do fronty zmaže (aj na serveri). */
   draftId?: number | null
+  /** Odoslať neskôr: čas (ISO 8601). Správa čaká vo fronte; Doar ju odošle, keď beží. */
+  sendAt?: string | null
+}
+
+/** Pravidlá pre novú poštu. */
+export type RuleField = 'from' | 'to' | 'subject' | 'any'
+export type RuleAction = 'move' | 'read' | 'flag' | 'archive' | 'trash'
+export interface MailRule {
+  id: number
+  name: string
+  enabled: boolean
+  /** null = všetky kontá. */
+  accountId: number | null
+  field: RuleField
+  /** Text, ktorý má pole obsahovať (bez ohľadu na veľké písmená a diakritiku). */
+  value: string
+  action: RuleAction
+  /** Cieľ pri action = 'move'. */
+  folderId: number | null
+}
+export type MailRuleInput = Omit<MailRule, 'id'> & { id?: number }
+
+/** Šablóna správy (predmet a text na opakované použitie). */
+export interface MailTemplate {
+  id: number
+  name: string
+  subject: string
+  /** Formátovaný text; null = čistý text. */
+  html: string | null
+  text: string
 }
 
 export type ExportPhase = 'scan' | 'check' | 'download' | 'write'
@@ -569,6 +668,12 @@ export function isArchiveId(id: number | null | undefined): boolean {
   return typeof id === 'number' && id < 0
 }
 
+/** Samostatné správy zo súborov .eml majú ID od tejto hodnoty nižšie (archívy sú −1, −2, …). */
+export const EML_ID_BASE = -1_500_000_000
+export function isEmlId(id: number | null | undefined): boolean {
+  return typeof id === 'number' && id <= EML_ID_BASE
+}
+
 /** Požiadavky (invoke): kanál → [vstup, výstup]. */
 /** AI (voliteľné): poskytovateľ, model, kľúč v bezpečnom úložisku. */
 export type AiProvider = 'anthropic' | 'openrouter' | 'local'
@@ -632,28 +737,60 @@ export interface CoreRequests {
   'accounts.test': [{ settings: AccountSettings; password: string; oauth?: { flowId: string } }, ConnectionTestResult]
   'accounts.add': [AddAccountInput, AccountSummary]
   'folders.list': [void, FolderItem[]]
-  'messages.list': [{ folderId: number | null; offset: number; limit: number }, { total: number; items: MessageListItem[] }]
+  /** threads = zoskupiť do konverzácií (jeden riadok = najnovšia správa konverzácie v priečinku). */
+  'messages.list': [{ folderId: number | null; offset: number; limit: number; threads?: boolean }, { total: number; items: MessageListItem[] }]
+  /** Konverzácia, do ktorej správa patrí (zoradená od najstaršej). */
+  'messages.thread': [{ id: number }, ThreadMessage[]]
   'messages.get': [{ id: number; showRemote?: boolean; alwaysForSender?: boolean }, MessageView]
   'messages.setFlags': [{ ids: number[]; seen?: boolean; flagged?: boolean }, void]
+  /** Všetky správy v priečinku (null = spoločná doručená pošta) označí ako prečítané. */
+  /** Uloží originál správy (.eml) do súboru zvoleného v dialógu „Uložiť ako“. */
+  'messages.saveEml': [{ id: number; path: string }, void]
+  /** Riadok zoznamu pre jednu správu (okno správy). null = správa už neexistuje. */
+  'messages.item': [{ id: number }, MessageListItem | null]
+  'messages.markFolderRead': [{ folderId: number | null }, { count: number }]
   'sync.now': [{ accountId?: number }, void]
   'sync.status': [void, SyncStatus[]]
   'compose.prepare': [{ mode: ComposeMode; messageId?: number }, ComposePrefill]
   'compose.send': [ComposeSendInput, { outboxId: number }]
   'outbox.list': [void, OutboxItem[]]
   'outbox.resolve': [{ id: number; action: 'resend' | 'discard' }, void]
+  /** Naplánovaná správa: odoslať hneď, alebo zrušiť odoslanie (správa sa vráti medzi koncepty). */
+  'outbox.scheduled': [{ id: number; action: 'sendNow' | 'cancel' }, { draftId: number | null }]
+  'rules.list': [void, MailRule[]]
+  'rules.save': [MailRuleInput, MailRule]
+  'rules.delete': [{ id: number }, void]
+  'rules.reorder': [{ ids: number[] }, void]
+  /** Použije pravidlá (všetky zapnuté, alebo jedno) na správy v priečinku. */
+  'rules.run': [{ folderId: number; ruleId?: number }, { applied: number }]
+  'signatures.save': [SignatureInput, Signature]
+  'signatures.delete': [{ id: number }, void]
+  'signatures.setDefault': [{ accountId: number; id: number | null }, void]
+  /** Logo do podpisu: obrázok vybraný v dialógu → data: URI. */
+  'signatures.readImage': [{ path: string }, { dataUrl: string }]
+  'templates.list': [void, MailTemplate[]]
+  'templates.save': [Omit<MailTemplate, 'id'> & { id?: number }, MailTemplate]
+  'templates.delete': [{ id: number }, void]
   'export.start': [{ accountId: number; path: string }, { jobId: number }]
   'export.cancel': [{ jobId: number }, void]
   'export.state': [void, ExportState]
   'messages.move': [{ ids: number[]; folderId?: number; special?: 'trash' | 'archive' | 'junk' | 'inbox' }, { undo: number[]; count: number }]
   'messages.deleteForever': [{ ids: number[] }, void]
   'messages.undo': [{ undo: number[] }, { undone: boolean }]
-  'messages.listIds': [{ folderId: number | null }, number[]]
+  'messages.listIds': [{ folderId: number | null; threads?: boolean }, number[]]
   'folders.create': [{ accountId: number; parentId: number | null; name: string }, { folderId: number }]
   /** Odstráni priečinok aj s podpriečinkami; správy presunie do Koša (Gmail: zruší len štítok). */
   'folders.delete': [{ folderId: number }, { moved: number; labelsOnly: boolean }]
   /** Premenuje priečinok a/alebo ho presunie pod iný (parentId null = najvyššia úroveň); podpriečinky idú s ním. */
   'folders.rename': [{ folderId: number; name: string; parentId: number | null }, void]
-  'contacts.list': [{ query?: string }, Contact[]]
+  'contacts.list': [{ query?: string; groupId?: number }, Contact[]]
+  'contacts.groups': [void, ContactGroup[]]
+  'contacts.groupSave': [{ id?: number; name: string }, ContactGroup]
+  'contacts.groupDelete': [{ id: number }, void]
+  /** Pridá / odoberie kontakty zo skupiny. */
+  'contacts.groupMembers': [{ groupId: number; add?: number[]; remove?: number[] }, void]
+  /** Adresy kontaktov skupiny (napísať skupine). */
+  'contacts.groupAddresses': [{ groupId: number }, Address[]]
   'contacts.fromMail': [{ query?: string }, MailAddressItem[]]
   'contacts.save': [ContactInput, Contact]
   'contacts.delete': [{ ids: number[] }, void]
@@ -665,6 +802,8 @@ export interface CoreRequests {
   'contacts.syncStatus': [void, ContactSyncStatus]
   'contacts.syncEnable': [{ accountId: number }, void]
   'contacts.syncDisable': [void, void]
+  /** Odhlásenie z odberu: jedným klikom alebo e-mailom za používateľa; 'url' = stránku otvorí rozhranie v prehliadači. */
+  'messages.unsubscribe': [{ id: number }, { done: 'oneClick' | 'mailto' } | { open: string }]
   'contacts.syncNow': [void, { downloaded: number; uploaded: number; removed: number; onServer: number | null; withoutEmail: number }]
   /** Uloží prílohu do súboru zvoleného v dialógu (chooseSavePath). */
   'attachments.save': [{ messageId: number; index: number; path: string }, void]
@@ -672,6 +811,8 @@ export interface CoreRequests {
   'attachments.saveAll': [{ messageId: number; dir: string }, { saved: string[] }]
   /** Pripraví prílohu na otvorenie (dočasný súbor). Spustiteľné súbory odmietne. */
   'attachments.prepareOpen': [{ messageId: number; index: number }, { path: string }]
+  /** Náhľad prílohy v Doare: obrázok (data: URI), text, alebo PDF (dočasná kópia na zobrazenie v okne náhľadu). */
+  'attachments.preview': [{ messageId: number; index: number }, AttachmentPreview]
   /** Uloží koncept lokálne a naplánuje nahratie na server. Prílohy vráti ako uložené (kind 'blob') v rovnakom poradí. */
   'drafts.save': [DraftSaveInput, { draftId: number; attachments: ComposeAttachment[] }]
   /** Zahodí koncept (aj kópiu na serveri). */
@@ -690,10 +831,11 @@ export interface CoreRequests {
   ]
   /** Odstráni konto z Doaru (aj jeho lokálnu kópiu pošty). Pošta na serveri zostane. */
   'accounts.remove': [{ id: number }, void]
+  'accounts.reorder': [{ ids: number[] }, void]
   'settings.get': [void, AppSettings]
   'settings.set': [Partial<AppSettings>, AppSettings]
   /** Návrhy adries pri písaní (komu ste písali, od koho ste dostali poštu). */
-  'addresses.suggest': [{ query: string; limit?: number }, Address[]]
+  'addresses.suggest': [{ query: string; limit?: number }, AddressSuggestion[]]
   /** Systém hlási pripojenie k sieti / prebudenie – skúsiť sa pripojiť hneď. */
   'sync.reconnect': [void, void]
   /** Náhľad súboru zvoleného cez chooseImportFile (záloha Doar alebo cudzí mbox). */
@@ -710,6 +852,8 @@ export interface CoreRequests {
   /** Otvorí súbor zvolený cez chooseImportFile ako archív len na čítanie. */
   'archives.open': [{ path: string }, { archiveId: number }]
   /** Zatvorí archív (zmaže len jeho zoznam v Doare, súbor zostane). */
+  /** Otvorí samostatnú správu zo súboru .eml (len na čítanie, do zatvorenia aplikácie). */
+  'archives.openEml': [{ path: string }, { id: number }]
   'archives.close': [{ archiveId: number }, void]
   /** Prihlásenie cez Microsoft/Google: adresa pre prehliadač (otvorí ju rozhranie cez openExternal). */
   /** contacts: pýtať aj prístup ku kontaktom (synchronizácia adresára). */
@@ -730,8 +874,21 @@ export interface CoreRequests {
   'ai.cancel': [{ requestId: string }, void]
 }
 
+/** Rozšírené hľadanie (formulár): text do konkrétnych polí a filtre. Dátumy RRRR-MM-DD (vrátane). */
+export interface SearchFilters {
+  from?: string
+  to?: string
+  subject?: string
+  after?: string
+  before?: string
+  attachment?: boolean
+  unread?: boolean
+  flagged?: boolean
+}
+
 export interface SearchInput {
   query: string
+  filters?: SearchFilters
   /** Záporné ID = priečinok archívu. */
   folderId?: number | null
   accountId?: number | null
@@ -772,14 +929,31 @@ export const REQUEST_CHANNELS = [
   'accounts.add',
   'folders.list',
   'messages.list',
+  'messages.thread',
   'messages.get',
   'messages.setFlags',
+  'messages.markFolderRead',
+  'messages.item',
+  'messages.saveEml',
   'sync.now',
   'sync.status',
   'compose.prepare',
   'compose.send',
   'outbox.list',
   'outbox.resolve',
+  'outbox.scheduled',
+  'rules.list',
+  'rules.save',
+  'rules.delete',
+  'rules.reorder',
+  'rules.run',
+  'signatures.save',
+  'signatures.delete',
+  'signatures.setDefault',
+  'signatures.readImage',
+  'templates.list',
+  'templates.save',
+  'templates.delete',
   'export.start',
   'export.cancel',
   'export.state',
@@ -791,6 +965,11 @@ export const REQUEST_CHANNELS = [
   'folders.delete',
   'folders.rename',
   'contacts.list',
+  'contacts.groups',
+  'contacts.groupSave',
+  'contacts.groupDelete',
+  'contacts.groupMembers',
+  'contacts.groupAddresses',
   'contacts.fromMail',
   'contacts.save',
   'contacts.delete',
@@ -801,9 +980,11 @@ export const REQUEST_CHANNELS = [
   'contacts.syncEnable',
   'contacts.syncDisable',
   'contacts.syncNow',
+  'messages.unsubscribe',
   'attachments.save',
   'attachments.saveAll',
   'attachments.prepareOpen',
+  'attachments.preview',
   'drafts.save',
   'drafts.discard',
   'drafts.flush',
@@ -813,6 +994,7 @@ export const REQUEST_CHANNELS = [
   'accounts.update',
   'accounts.updateServer',
   'accounts.remove',
+  'accounts.reorder',
   'settings.get',
   'settings.set',
   'addresses.suggest',
@@ -826,6 +1008,7 @@ export const REQUEST_CHANNELS = [
   'archives.list',
   'archives.open',
   'archives.close',
+  'archives.openEml',
   'oauth.start',
   'oauth.finish',
   'oauth.cancel',
@@ -908,6 +1091,12 @@ export interface DoarApi {
   /** Otvorí okno na písanie správy. */
   /** to: adresát novej správy (napr. z adresára). */
   openCompose(mode: ComposeMode, messageId?: number, to?: string): void
+  /** Otvorí správu v samostatnom okne. */
+  openMessage(id: number): void
+  /** Otvorí náhľad PDF prílohy (dočasná kópia z attachments.preview) v okne so vstavaným prehliadačom PDF. */
+  previewPdf(path: string, title: string): Promise<boolean>
+  /** Uloží pripravený dokument (správu) ako PDF – súbor vyberie používateľ. Vráti true po uložení. */
+  savePdf(html: string, title: string): Promise<boolean>
   /** Zavrie aktuálne okno (okno správy po odoslaní alebo po potvrdení zahodenia). */
   closeWindow(): void
   /** Hlavný proces žiada zavretie okna – rozhranie sa môže opýtať na neuložený text. */
@@ -918,6 +1107,8 @@ export interface DoarApi {
   chooseImportFile(): Promise<string | null>
   /** Výber priečinka s poštou (Outlook Express, Windows Mail) na import. */
   chooseImportFolder(): Promise<string | null>
+  /** Vytvorí znova odkaz na ploche a v ponuke Štart (len zostava pre Windows). */
+  recreateShortcuts(): Promise<boolean>
   /** Skopíruje text do schránky. */
   copyText(text: string): void
   /** Súbory s kontaktmi (vCard, CSV) pre import do adresára. */
@@ -961,6 +1152,8 @@ export type CoreToMain =
   | { kind: 'secret.delete'; id: number; key: string }
   | { kind: 'secret.status'; id: number }
   | { kind: 'ready' }
+  /** Jadro sa nedokázalo spustiť (DB_TOO_NEW = databáza z novšej verzie Doar Mail) – main to povie a nereštartuje ho. */
+  | { kind: 'fatal'; code: 'DB_TOO_NEW' | 'INIT_FAILED' }
   /** Nová pošta v doručenej pošte (main ukáže systémové oznámenie). Bez obsahu, ak to používateľ vypol. */
   | { kind: 'newMail'; accountEmail: string; count: number; messageId: number; from: string | null; subject: string | null }
 

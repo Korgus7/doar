@@ -1,5 +1,7 @@
 import type { Db } from './db'
-import type { FolderItem, MessageListItem, OutboxItem, OutboxState, SpecialUse } from '../../shared/ipc'
+import { firstMessageId, isReplySubject, threadSubject } from '../mail/thread'
+import { asQuery, flagsWhere, type SearchQuery } from '../search'
+import type { FolderItem, MessageListItem, OutboxItem, OutboxState, SpecialUse, ThreadMessage } from '../../shared/ipc'
 
 /**
  * Prístup k priečinkom a správam v lokálnej databáze. Žiadna sieť – to rieši `sync`.
@@ -209,6 +211,80 @@ export class MailStore {
     return (this.db.prepare('SELECT COALESCE(MAX(uid), 0) AS m FROM messages WHERE folder_id = ?').get(folderId) as { m: number }).m
   }
 
+  // ---------- konverzácie ----------
+
+  /**
+   * Zaradí správu do konverzácie: k predchodcovi podľa In-Reply-To, inak k inej kópii tej istej správy
+   * (rovnaké Message-ID, napr. v Odoslaných aj v doručenej pošte), inak (len pri zjavnej odpovedi) k poslednej
+   * správe s rovnakým predmetom za posledných 60 dní. Neskôr prijatý predchodca si pripojí už prijaté odpovede.
+   */
+  assignThread(id: number): void {
+    const m = this.db
+      .prepare('SELECT id, account_id, message_id, in_reply_to, subject, COALESCE(internal_date, date_header) AS d FROM messages WHERE id = ?')
+      .get(id) as { id: number; account_id: number; message_id: string | null; in_reply_to: string | null; subject: string; d: string | null } | undefined
+    if (!m) return
+    const acc = m.account_id
+    const own = firstMessageId(m.message_id)
+    const parent = firstMessageId(m.in_reply_to)
+    const tsubj = threadSubject(m.subject)
+    const keyOf = (msgid: string): string | null =>
+      (this.db.prepare('SELECT thread_key FROM messages WHERE account_id = ? AND message_id = ? AND thread_key IS NOT NULL AND id != ? LIMIT 1').get(acc, msgid, id) as
+        | { thread_key: string }
+        | undefined)?.thread_key ?? null
+    let key = (parent && keyOf(parent)) || (own && keyOf(own)) || null
+    if (!key && tsubj && (parent || isReplySubject(m.subject))) {
+      const since = new Date((m.d ? Date.parse(m.d) : Date.now()) - 60 * 86_400_000).toISOString()
+      key =
+        (this.db
+          .prepare(
+            `SELECT thread_key FROM messages WHERE account_id = ? AND thread_subject = ? AND thread_key IS NOT NULL AND id != ?
+               AND COALESCE(internal_date, date_header) >= ? ORDER BY COALESCE(internal_date, date_header) DESC LIMIT 1`
+          )
+          .get(acc, tsubj, id, since) as { thread_key: string } | undefined)?.thread_key ?? null
+    }
+    key ??= own ? `m:${own}` : `i:${id}`
+    this.db.prepare('UPDATE messages SET thread_key = ?, thread_subject = ? WHERE id = ?').run(key, tsubj, id)
+    // Odpovede, ktoré prišli skôr než táto správa, sa pripoja (aj s ich ďalšími odpoveďami).
+    if (own) this.mergeThreads(acc, key, this.db.prepare('SELECT DISTINCT thread_key AS k FROM messages WHERE account_id = ? AND in_reply_to = ? AND thread_key != ?').all(acc, own, key) as { k: string }[])
+  }
+
+  /** Predkovia zo stiahnutej správy (References) – ak je niektorý v Doare, celá konverzácia sa k nemu pripojí. */
+  linkReferences(id: number, refs: string[]): void {
+    if (!refs.length) return
+    const m = this.db.prepare('SELECT account_id, thread_key FROM messages WHERE id = ?').get(id) as { account_id: number; thread_key: string | null } | undefined
+    if (!m?.thread_key) return
+    for (const ref of [...refs].reverse()) {
+      const r = this.db
+        .prepare('SELECT thread_key FROM messages WHERE account_id = ? AND message_id = ? AND thread_key IS NOT NULL LIMIT 1')
+        .get(m.account_id, ref) as { thread_key: string } | undefined
+      if (!r) continue
+      if (r.thread_key !== m.thread_key) this.mergeThreads(m.account_id, r.thread_key, [{ k: m.thread_key }])
+      return
+    }
+  }
+
+  private mergeThreads(accountId: number, into: string, from: { k: string }[]): void {
+    const st = this.db.prepare('UPDATE messages SET thread_key = ? WHERE account_id = ? AND thread_key = ?')
+    for (const f of from) if (f.k && f.k !== into) st.run(into, accountId, f.k)
+  }
+
+  /** Doplní konverzácie staršej pošte (po aktualizácii). Vráti počet spracovaných správ; 0 = hotovo. */
+  backfillThreads(limit = 2000): number {
+    const rows = this.db
+      .prepare('SELECT id FROM messages WHERE thread_key IS NULL ORDER BY COALESCE(internal_date, date_header), id LIMIT ?')
+      .all(limit) as { id: number }[]
+    if (!rows.length) return 0
+    this.db.exec('BEGIN')
+    try {
+      for (const r of rows) this.assignThread(r.id)
+      this.db.exec('COMMIT')
+    } catch (e) {
+      this.db.exec('ROLLBACK')
+      throw e
+    }
+    return rows.length
+  }
+
   /** Vloží hlavičky nových správ (existujúce preskočí) a zaindexuje ich pre vyhľadávanie. */
   insertHeaders(accountId: number, folderId: number, list: HeaderInput[]): number {
     if (!list.length) return 0
@@ -245,6 +321,7 @@ export class MailStore {
         ) as { id: number } | undefined
         if (!row) continue
         added++
+        this.assignThread(row.id)
         fts.run(row.id, h.subject, `${h.fromName} ${h.fromAddr}`, [...h.to, ...h.cc].map((a) => `${a.name} ${a.address}`).join(' '), '')
       }
       this.db.exec('COMMIT')
@@ -310,7 +387,10 @@ export class MailStore {
     const ops = (this.db
       .prepare(`SELECT COUNT(*) AS c FROM operations WHERE account_id = ? AND state IN ('pending','running','failed') AND attempts < 3`)
       .get(accountId) as { c: number }).c
-    const out = (this.db.prepare(`SELECT COUNT(*) AS c FROM outbox WHERE account_id = ? AND state IN ('queued','sending')`).get(accountId) as { c: number }).c
+    // Naplánované na neskôr sa nerátajú – nečakajú na server, ale na svoj čas.
+    const out = (this.db
+      .prepare(`SELECT COUNT(*) AS c FROM outbox WHERE account_id = ? AND state IN ('queued','sending') AND (send_at IS NULL OR send_at <= strftime('%Y-%m-%dT%H:%M:%fZ','now'))`)
+      .get(accountId) as { c: number }).c
     return ops + out
   }
 
@@ -319,7 +399,7 @@ export class MailStore {
   }
 
   /** Uloží odkaz na stiahnutý originál a doplní fulltext. */
-  setBody(id: number, sha: string, info: { snippet: string; hasAttachments: boolean; bodyText: string }): void {
+  setBody(id: number, sha: string, info: { snippet: string; hasAttachments: boolean; bodyText: string; references?: string[] }): void {
     const m = this.db.prepare('SELECT subject, from_name, from_addr, to_json, cc_json FROM messages WHERE id = ?').get(id) as
       | { subject: string; from_name: string; from_addr: string; to_json: string; cc_json: string }
       | undefined
@@ -328,6 +408,7 @@ export class MailStore {
     this.db.exec('BEGIN')
     try {
       this.db.prepare('UPDATE messages SET blob_sha256 = ?, snippet = ?, has_attachments = ? WHERE id = ?').run(sha, info.snippet, info.hasAttachments ? 1 : 0, id)
+      if (info.references?.length) this.linkReferences(id, info.references)
       this.db.prepare('DELETE FROM messages_fts WHERE rowid = ?').run(id)
       this.db
         .prepare('INSERT INTO messages_fts(rowid, subject, from_text, to_text, body_text) VALUES (?, ?, ?, ?, ?)')
@@ -354,12 +435,120 @@ export class MailStore {
     return this.queryList(v.where, v.args, offset, limit)
   }
 
+  /** Riadky zoznamu po konverzáciách: z každej konverzácie v priečinku len najnovšia správa. */
+  private threadBase(folderId: number | null): { sql: string; args: number[] } {
+    const v = visibleIn(folderId)
+    const part = `m.account_id || ':' || COALESCE(m.thread_key, 'i:' || m.id)`
+    return {
+      sql: `SELECT m.id, ${part} AS tk, COALESCE(m.internal_date, m.date_header) AS d, m.from_name, m.from_addr,
+              ROW_NUMBER() OVER (PARTITION BY ${part} ORDER BY COALESCE(m.internal_date, m.date_header) DESC, m.id DESC) AS rn,
+              COUNT(*) OVER w AS cnt, MIN(m.seen) OVER w AS all_seen, MAX(m.flagged) OVER w AS any_flag, MAX(m.has_attachments) OVER w AS any_att
+            FROM messages m JOIN folders f ON f.id = m.folder_id WHERE ${v.where}
+            WINDOW w AS (PARTITION BY ${part})`,
+      args: v.args
+    }
+  }
+
+  listThreads(folderId: number | null, offset: number, limit: number): { total: number; items: MessageListItem[] } {
+    const b = this.threadBase(folderId)
+    const total = (this.db.prepare(`SELECT COUNT(*) AS c FROM (${b.sql}) WHERE rn = 1`).get(...b.args) as { c: number }).c
+    const reps = this.db
+      .prepare(`SELECT id, tk, cnt, all_seen, any_flag, any_att FROM (${b.sql}) WHERE rn = 1 ORDER BY d DESC, id DESC LIMIT ? OFFSET ?`)
+      .all(...b.args, limit, offset) as { id: number; tk: string; cnt: number; all_seen: number; any_flag: number; any_att: number }[]
+    if (!reps.length) return { total, items: [] }
+    const items = this.queryList(`m.id IN (${reps.map(() => '?').join(',')})`, reps.map((r) => r.id), 0, reps.length).items
+    const multi = reps.filter((r) => r.cnt > 1)
+    const members = new Map<string, { id: number; from: string }[]>()
+    if (multi.length) {
+      const rows = this.db
+        .prepare(`SELECT id, tk, from_name, from_addr FROM (${b.sql}) WHERE tk IN (${multi.map(() => '?').join(',')}) ORDER BY d, id`)
+        .all(...b.args, ...multi.map((r) => r.tk)) as { id: number; tk: string; from_name: string; from_addr: string }[]
+      for (const r of rows) {
+        const list = members.get(r.tk) ?? []
+        list.push({ id: r.id, from: r.from_name || r.from_addr })
+        members.set(r.tk, list)
+      }
+    }
+    const byId = new Map(reps.map((r) => [r.id, r]))
+    return {
+      total,
+      items: items.map((it) => {
+        const r = byId.get(it.id)!
+        if (r.cnt <= 1) return it
+        const list = members.get(r.tk) ?? []
+        return {
+          ...it,
+          seen: !!r.all_seen,
+          flagged: !!r.any_flag,
+          hasAttachments: !!r.any_att,
+          threadIds: list.map((x) => x.id),
+          threadFrom: [...new Set(list.map((x) => x.from).filter(Boolean))]
+        }
+      })
+    }
+  }
+
+  /** ID riadkov zoznamu po konverzáciách (pre „Vybrať všetko“). */
+  listThreadIds(folderId: number | null): number[] {
+    const b = this.threadBase(folderId)
+    return (this.db.prepare(`SELECT id FROM (${b.sql}) WHERE rn = 1 ORDER BY d DESC, id DESC`).all(...b.args) as { id: number }[]).map((r) => r.id)
+  }
+
+  /**
+   * Celá konverzácia správy zo všetkých priečinkov konta (aj vlastné odpovede v Odoslaných), od najstaršej.
+   * Kôš a Spam len ak je tam aj otvorená správa. Kópie tej istej správy (napr. Gmail „Všetka pošta“) len raz.
+   */
+  threadMessages(id: number): ThreadMessage[] {
+    const m = this.db
+      .prepare('SELECT m.account_id, m.thread_key, f.special_use FROM messages m JOIN folders f ON f.id = COALESCE(m.moving_to, m.folder_id) WHERE m.id = ?')
+      .get(id) as { account_id: number; thread_key: string | null; special_use: string | null } | undefined
+    if (!m?.thread_key) return []
+    const rows = this.db
+      .prepare(
+        `SELECT m.id, COALESCE(m.moving_to, m.folder_id) AS folderId, m.message_id, f.special_use, m.from_name AS fromName, m.from_addr AS fromAddr,
+                COALESCE(m.internal_date, m.date_header) AS date, m.snippet, m.seen, m.flagged, m.has_attachments AS hasAttachments
+         FROM messages m JOIN folders f ON f.id = COALESCE(m.moving_to, m.folder_id)
+         WHERE m.account_id = ? AND m.thread_key = ? AND (m.hidden = 0 OR m.moving_to IS NOT NULL)
+           AND (COALESCE(f.special_use, '') NOT IN ('trash', 'junk') OR f.special_use = ? OR m.id = ?)
+         ORDER BY date, m.id`
+      )
+      .all(m.account_id, m.thread_key, m.special_use ?? '', id) as unknown as (Omit<ThreadMessage, 'seen' | 'flagged' | 'hasAttachments'> & {
+      message_id: string | null
+      special_use: string | null
+      seen: number
+      flagged: number
+      hasAttachments: number
+    })[]
+    // Kópie tej istej správy: ponechať otvorenú, inak tú mimo „Všetkej pošty“.
+    const best = new Map<string, (typeof rows)[number]>()
+    const rank = (r: (typeof rows)[number]): number => (r.id === id ? 0 : r.special_use === 'all' ? 2 : 1)
+    for (const r of rows) {
+      const k = r.message_id ? `m:${r.message_id}` : `i:${r.id}`
+      const cur = best.get(k)
+      if (!cur || rank(r) < rank(cur)) best.set(k, r)
+    }
+    const keep = new Set([...best.values()].map((r) => r.id))
+    return rows
+      .filter((r) => keep.has(r.id))
+      .map((r) => ({
+        id: r.id,
+        folderId: r.folderId,
+        fromName: r.fromName,
+        fromAddr: r.fromAddr,
+        date: r.date,
+        snippet: r.snippet,
+        seen: !!r.seen,
+        flagged: !!r.flagged,
+        hasAttachments: !!r.hasAttachments
+      }))
+  }
+
   /**
    * Vyhľadávanie vo fulltexte (dotaz FTS5 zo `search.ts`). Rozsah: priečinok, konto alebo všetko.
    * Vráti aj počet správ v rozsahu, ktorých text ešte nie je stiahnutý (hľadá sa v nich len v hlavičkách).
    */
   searchMessages(
-    fts: string,
+    fts: string | SearchQuery,
     scope: { folderId?: number | null; accountId?: number | null },
     offset: number,
     limit: number
@@ -373,7 +562,7 @@ export class MailStore {
     return { ...r, notDownloaded }
   }
 
-  searchIds(fts: string, scope: { folderId?: number | null; accountId?: number | null }): number[] {
+  searchIds(fts: string | SearchQuery, scope: { folderId?: number | null; accountId?: number | null }): number[] {
     const { where, args } = this.searchWhere(fts, scope)
     return (this.db
       .prepare(`SELECT m.id FROM messages m JOIN folders f ON f.id = m.folder_id WHERE ${where} ORDER BY COALESCE(m.internal_date, m.date_header) DESC, m.id DESC`)
@@ -394,9 +583,12 @@ export class MailStore {
     return { where: parts.join(' AND '), args }
   }
 
-  private searchWhere(fts: string, scope: { folderId?: number | null; accountId?: number | null }): { where: string; args: (string | number)[] } {
+  private searchWhere(query: string | SearchQuery, scope: { folderId?: number | null; accountId?: number | null }): { where: string; args: (string | number)[] } {
+    const q = asQuery(query)
     const s = this.scopeWhere(scope)
-    return { where: `${s.where} AND m.id IN (SELECT rowid FROM messages_fts WHERE messages_fts MATCH ?)`, args: [...s.args, fts] }
+    const f = flagsWhere(q.flags, 'COALESCE(m.internal_date, m.date_header)')
+    const where = `${s.where} AND ${f.where}${q.fts ? ' AND m.id IN (SELECT rowid FROM messages_fts WHERE messages_fts MATCH ?)' : ''}`
+    return { where, args: [...s.args, ...f.args, ...(q.fts ? [q.fts] : [])] }
   }
 
   private queryList(where: string, args: (string | number)[], offset: number, limit: number): { total: number; items: MessageListItem[] } {
@@ -467,13 +659,36 @@ export class MailStore {
 
   // ---------- odosielacia fronta ----------
 
-  addOutbox(o: { accountId: number; sha: string; messageId: string; subject: string; recipients: string[]; replyTo: number | null; saveCopy: boolean }): number {
+  addOutbox(o: {
+    accountId: number
+    sha: string
+    messageId: string
+    subject: string
+    recipients: string[]
+    replyTo: number | null
+    saveCopy: boolean
+    sendAt?: string | null
+  }): number {
     return (this.db
       .prepare(
-        `INSERT INTO outbox (account_id, blob_sha256, message_id, state, sent_copy_state, subject, recipients_json, reply_to_message)
-         VALUES (?, ?, ?, 'queued', ?, ?, ?, ?) RETURNING id`
+        `INSERT INTO outbox (account_id, blob_sha256, message_id, state, sent_copy_state, subject, recipients_json, reply_to_message, send_at)
+         VALUES (?, ?, ?, 'queued', ?, ?, ?, ?, ?) RETURNING id`
       )
-      .get(o.accountId, o.sha, o.messageId, o.saveCopy ? 'pending' : 'not_needed', o.subject, JSON.stringify(o.recipients), o.replyTo) as { id: number }).id
+      .get(
+        o.accountId,
+        o.sha,
+        o.messageId,
+        o.saveCopy ? 'pending' : 'not_needed',
+        o.subject,
+        JSON.stringify(o.recipients),
+        o.replyTo,
+        o.sendAt ?? null
+      ) as { id: number }).id
+  }
+
+  /** Naplánovaná správa: zmena času (null = odoslať hneď). */
+  setOutboxSendAt(id: number, sendAt: string | null): void {
+    this.db.prepare('UPDATE outbox SET send_at = ? WHERE id = ?').run(sendAt, id)
   }
 
   outboxRows(accountId?: number): OutboxRow[] {
@@ -518,7 +733,8 @@ export class MailStore {
       state: r.state,
       sentCopyState: r.sent_copy_state,
       error: r.error,
-      createdAt: r.created_at
+      createdAt: r.created_at,
+      sendAt: r.send_at
     }))
   }
 
@@ -781,6 +997,17 @@ export class MailStore {
       .all(...v.args) as { id: number }[]).map((r) => r.id)
   }
 
+  /** Jedna správa ako riadok zoznamu (aj skrytá pri presune) – pre samostatné okno správy. */
+  messageItem(id: number): MessageListItem | null {
+    return this.queryList('m.id = ?', [id], 0, 1).items[0] ?? null
+  }
+
+  /** Neprečítané správy v priečinku (alebo spoločnej doručenej pošte) – „Označiť všetko ako prečítané“. */
+  unreadIds(folderId: number | null): number[] {
+    const v = visibleIn(folderId)
+    return (this.db.prepare(`SELECT m.id FROM messages m JOIN folders f ON f.id = m.folder_id WHERE ${v.where} AND m.seen = 0`).all(...v.args) as { id: number }[]).map((r) => r.id)
+  }
+
   specialFolder(accountId: number, use: SpecialUse): FolderRow | null {
     return this.folderRows(accountId).find((f) => f.special_use === use) ?? null
   }
@@ -843,4 +1070,5 @@ export interface OutboxRow {
   reply_to_message: number | null
   attempts: number
   created_at: string
+  send_at: string | null
 }

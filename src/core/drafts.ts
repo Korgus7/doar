@@ -3,7 +3,7 @@ import type { DraftRow, MailStore } from './store/mailstore'
 import type { Address, ComposeAttachment, ComposePrefill, DraftSaveInput } from '../shared/ipc'
 import { composeMessage, newMessageId, parseAddressList, replySource } from './mail/compose'
 import { extractAttachments } from './mail/parse'
-import { htmlToText, outgoingHtml, sanitizeComposeHtml } from './mail/outgoing-html'
+import { htmlToText, inlineImages, outgoingHtml, sanitizeComposeHtml } from './mail/outgoing-html'
 import { account, originalRaw, resolveAttachments, type Ctx } from './compose-service'
 
 /**
@@ -167,11 +167,37 @@ export async function prepareDraft(ctx: Ctx, messageId: number): Promise<Compose
   return prefillFromRow(ctx.store.draft(id)!)
 }
 
+/** Nový koncept z hotovej správy (zrušené naplánované odoslanie): adresáti, text aj prílohy. */
+export async function draftFromRaw(ctx: Ctx, accountId: number, raw: Buffer, replyToMessage: number | null): Promise<number> {
+  const acc = account(ctx.db, accountId)
+  if (!acc) throw err('NO_ACCOUNT', 'Konto neexistuje')
+  const src = await replySource(raw)
+  const atts: DraftAttachment[] = (await extractAttachments(raw)).map((a) => ({
+    name: a.filename,
+    sha: ctx.blobs.put(a.content),
+    size: a.content.length,
+    contentType: a.contentType
+  }))
+  const data: DraftData = {
+    to: addressLine(src.to),
+    cc: addressLine(src.cc),
+    bcc: addressLine(src.bcc),
+    subject: src.subject,
+    text: src.text,
+    html: src.html ? sanitizeComposeHtml(src.html) || null : null,
+    replyToMessage
+  }
+  const id = ctx.store.insertDraft({ accountId: acc.id, messageId: newMessageId(acc.email), data, attachments: atts })
+  schedulePush(ctx, id, acc.id, true)
+  return id
+}
+
 /** MIME podoba konceptu na nahratie do Konceptov na serveri. */
 export async function buildDraftRaw(store: MailStore, blobs: BlobStore, row: DraftRow, from: Address): Promise<Buffer> {
   const d = JSON.parse(row.data_json) as DraftData
   const atts = JSON.parse(row.attachments_json) as DraftAttachment[]
   const original = d.replyToMessage ? store.message(d.replyToMessage) : null
+  const inlined = d.html ? inlineImages(outgoingHtml(d.html), from.address.split('@')[1]) : null
   const { raw } = await composeMessage({
     from,
     to: parseAddressList(d.to).valid,
@@ -179,11 +205,11 @@ export async function buildDraftRaw(store: MailStore, blobs: BlobStore, row: Dra
     bcc: parseAddressList(d.bcc).valid,
     subject: d.subject,
     text: d.html ? htmlToText(d.html) : d.text,
-    html: d.html ? outgoingHtml(d.html) : null,
+    html: inlined?.html ?? null,
     messageId: row.message_id,
     inReplyTo: original?.message_id ?? null,
     references: original?.message_id ? [original.message_id] : [],
-    attachments: atts.filter((a) => blobs.has(a.sha)).map((a) => ({ filename: a.name, content: blobs.read(a.sha), contentType: a.contentType }))
+    attachments: [...atts.filter((a) => blobs.has(a.sha)).map((a) => ({ filename: a.name, content: blobs.read(a.sha), contentType: a.contentType })), ...(inlined?.images ?? [])]
   })
   return raw
 }

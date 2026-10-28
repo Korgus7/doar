@@ -5,16 +5,19 @@
   import type { AccountDetails, AppSettings, ConnectionTestResult, ServerSettings } from '../../../shared/ipc'
   import { ACCOUNT_COLORS_MUTED, ACCOUNT_COLORS_VIVID, ACCOUNT_COLOR_NEUTRAL, LOCALE_NAMES } from '../../../shared/ipc'
   import { t, setLocale, localeChoice, AVAILABLE_LOCALES, type Locale, type MessageKey } from '../i18n/index.svelte'
-  import { mail, loadAccounts, selectFolder } from '../lib/mail.svelte'
+  import { mail, loadAccounts, selectFolder, setThreads } from '../lib/mail.svelte'
   import { errorText, showToast } from '../lib/actions.svelte'
   import { settingsUi } from '../lib/settings.svelte'
+  import RulesSettings from './RulesSettings.svelte'
+  import SignaturesEditor from './SignaturesEditor.svelte'
   import AiSettings from './AiSettings.svelte'
   import { oauthProviderName, oauthSignIn } from '../lib/oauth.svelte'
   import { setTheme, themeChoice, type ThemeChoice } from '../lib/theme'
 
   let dialogEl: HTMLDivElement | undefined = $state()
+  let shortcutsDone = $state<'ok' | 'failed' | null>(null)
   let details = $state<AccountDetails | null>(null)
-  let form = $state({ displayName: '', name: '', color: '', signature: '', saveSentCopy: true })
+  let form = $state({ displayName: '', name: '', color: '', saveSentCopy: true })
   let server = $state({ username: '', imap: { host: '', port: 993, security: 'tls' } as ServerSettings, smtp: { host: '', port: 465, security: 'tls' } as ServerSettings, password: '' })
   let serverOpen = $state(false)
   let busy = $state(false)
@@ -47,7 +50,7 @@
     try {
       const d = await window.doar.invoke('accounts.get', { id })
       details = d
-      form = { displayName: d.displayName, name: d.name, color: d.color, signature: d.signature, saveSentCopy: d.saveSentCopy }
+      form = { displayName: d.displayName, name: d.name, color: d.color, saveSentCopy: d.saveSentCopy }
       server = { username: d.username, imap: { ...d.imap }, smtp: { ...d.smtp }, password: '' }
     } catch (e) {
       details = null
@@ -87,7 +90,7 @@
     busy = true
     serverResult = null
     try {
-      const r = await oauthSignIn(details.oauthProvider, details.email)
+      const r = await oauthSignIn(details.oauthProvider, details.email, undefined, { contacts: details.oauthProvider === 'google' })
       await window.doar.invoke('accounts.reauth', { id: details.id, flowId: r.flowId })
       serverResult = { ok: true, test: null, text: t('account.reauthDone') }
     } catch (err) {
@@ -154,11 +157,21 @@
   function tabKey(e: KeyboardEvent): void {
     if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return
     e.preventDefault()
-    const tabs = ['accounts', 'general', 'ai'] as const
+    const tabs = ['accounts', 'general', 'rules', 'ai'] as const
     settingsUi.tab = tabs[(tabs.indexOf(settingsUi.tab) + (e.key === 'ArrowRight' ? 1 : tabs.length - 1)) % tabs.length]!
     void tick().then(() => dialogEl?.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]')?.focus())
   }
 </script>
+
+<svelte:window
+  onkeydown={(e) => {
+    // Escape aj keď fokus nie je v okne (napr. tlačidlo sa počas práce vyplo alebo po systémovom potvrdení).
+    if (settingsUi.open && e.key === 'Escape' && !dialogEl?.contains(e.target as Node)) {
+      e.preventDefault()
+      close()
+    }
+  }}
+/>
 
 {#if settingsUi.open}
   <div class="overlay" role="presentation">
@@ -168,6 +181,7 @@
         <div class="tabs" role="tablist">
           <button role="tab" aria-selected={settingsUi.tab === 'accounts'} tabindex={settingsUi.tab === 'accounts' ? 0 : -1} onclick={() => (settingsUi.tab = 'accounts')} onkeydown={tabKey}>{t('settings.tabAccounts')}</button>
           <button role="tab" aria-selected={settingsUi.tab === 'general'} tabindex={settingsUi.tab === 'general' ? 0 : -1} onclick={() => (settingsUi.tab = 'general')} onkeydown={tabKey}>{t('settings.tabGeneral')}</button>
+          <button role="tab" aria-selected={settingsUi.tab === 'rules'} tabindex={settingsUi.tab === 'rules' ? 0 : -1} onclick={() => (settingsUi.tab = 'rules')} onkeydown={tabKey}>{t('settings.tabRules')}</button>
           <button role="tab" aria-selected={settingsUi.tab === 'ai'} tabindex={settingsUi.tab === 'ai' ? 0 : -1} onclick={() => (settingsUi.tab = 'ai')} onkeydown={tabKey}>{t('settings.tabAi')}</button>
         </div>
         <button class="x" aria-label={t('settings.close')} title={t('settings.close')} onclick={close}>×</button>
@@ -214,11 +228,6 @@
                     </div>
                   {/each}
                 </fieldset>
-                <label class="field">
-                  <span>{t('account.signature')}</span>
-                  <textarea bind:value={form.signature} rows="4" maxlength="10000"></textarea>
-                  <small>{t('account.signatureHint')}</small>
-                </label>
                 <label class="check">
                   <input type="checkbox" bind:checked={form.saveSentCopy} />
                   <span>{t('wizard.saveSentCopy')}<small>{t('wizard.saveSentCopy.hint')}</small></span>
@@ -228,6 +237,8 @@
                   {#if message}<span class="msg" class:error={message.tone === 'error'} role="status">{message.text}</span>{/if}
                 </div>
               </form>
+
+              <SignaturesEditor accountId={details.id} />
 
               <details class="server" bind:open={serverOpen}>
                 <summary>{t('account.server')}</summary>
@@ -291,6 +302,10 @@
         <div class="general" role="tabpanel">
           <AiSettings />
         </div>
+      {:else if settingsUi.tab === 'rules'}
+        <div class="general" role="tabpanel">
+          <RulesSettings />
+        </div>
       {:else}
         <div class="general" role="tabpanel">
           <label class="field">
@@ -321,6 +336,20 @@
             </select>
           </label>
           {#if app}
+            <fieldset class="field">
+              <legend>{t('general.list')}</legend>
+              <label class="check">
+                <input
+                  type="checkbox"
+                  checked={app.threads}
+                  onchange={async (e) => {
+                    await setThreads((e.currentTarget as HTMLInputElement).checked)
+                    app = await window.doar.invoke('settings.get')
+                  }}
+                />
+                <span>{t('general.threads')}<small>{t('general.threadsHint')}</small></span>
+              </label>
+            </fieldset>
             <fieldset class="field">
               <legend>{t('general.compose')}</legend>
               <label class="check">
@@ -357,6 +386,20 @@
               <div>
                 <button class="btn" disabled={u.phase === 'checking' || u.phase === 'downloading' || u.phase === 'installing'} onclick={checkUpdates}>{t('general.updatesCheck')}</button>
               </div>
+            </fieldset>
+          {/if}
+          {#if upd.s?.canInstall}
+            <fieldset class="field">
+              <legend>{t('general.shortcuts')}</legend>
+              <div>
+                <button
+                  class="btn"
+                  onclick={async () => {
+                    shortcutsDone = (await window.doar.recreateShortcuts().catch(() => false)) ? 'ok' : 'failed'
+                  }}>{t('general.shortcutsCreate')}</button
+                >
+              </div>
+              {#if shortcutsDone}<p class="note">{shortcutsDone === 'ok' ? t('general.shortcutsDone') : t('general.shortcutsFailed')}</p>{/if}
             </fieldset>
           {/if}
         </div>
@@ -508,17 +551,13 @@
     font-size: 0.8rem;
   }
   input:not([type='checkbox']):not([type='radio']),
-  select,
-  textarea {
+  select {
     padding: 0.42em 0.55em;
     border: 1px solid var(--border);
     border-radius: var(--radius-sm);
     background: var(--bg);
     color: var(--text);
     font: inherit;
-  }
-  textarea {
-    resize: vertical;
   }
   .swatches {
     display: flex;

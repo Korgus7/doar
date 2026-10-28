@@ -1,3 +1,4 @@
+import { messageIds } from './thread'
 import { simpleParser, type AddressObject, type ParsedMail } from 'mailparser'
 import type { Address, AttachmentInfo } from '../../shared/ipc'
 import { sanitizeEmailHtml, textToHtml } from './sanitize'
@@ -7,6 +8,8 @@ export interface IndexInfo {
   snippet: string
   hasAttachments: boolean
   bodyText: string
+  /** Message-ID predchodcov (References + In-Reply-To) – spájanie do konverzácií. */
+  references?: string[]
 }
 
 const MAX_INLINE_IMAGE = 2 * 1024 * 1024
@@ -79,10 +82,12 @@ export async function extractAttachments(raw: Buffer): Promise<AttachmentContent
 export async function indexInfo(raw: Buffer): Promise<IndexInfo> {
   const p = await parse(raw)
   const text = plainText(p).replace(/\s+/g, ' ').trim()
+  const refs = [...(Array.isArray(p.references) ? p.references : p.references ? [p.references] : []), ...(p.inReplyTo ? [p.inReplyTo] : [])]
   return {
     snippet: text.slice(0, 200),
     hasAttachments: realAttachments(p).length > 0,
-    bodyText: text
+    bodyText: text,
+    references: [...new Set(refs.flatMap((r) => messageIds(r)))].slice(-50)
   }
 }
 
@@ -111,6 +116,36 @@ export async function archiveInfo(raw: Buffer): Promise<ArchiveInfo> {
   }
 }
 
+/** Odhlásenie z odberu (hlavička List-Unsubscribe, RFC 2369 a RFC 8058). */
+export interface Unsubscribe {
+  /** https adresa na odhlásenie jedným klikom (POST „List-Unsubscribe=One-Click“). */
+  oneClick: string | null
+  /** mailto: adresa, kam poslať odhlasovaciu správu. */
+  mailto: string | null
+  /** Stránka na odhlásenie v prehliadači. */
+  url: string | null
+}
+
+export function unsubscribeInfo(p: Pick<ParsedMail, 'headerLines'>): Unsubscribe | null {
+  const value = (key: string): string => {
+    const l = p.headerLines.find((h) => h.key.toLowerCase() === key)
+    return l ? l.line.slice(l.line.indexOf(':') + 1).replace(/\r?\n[ \t]+/g, ' ').trim() : ''
+  }
+  const list = value('list-unsubscribe')
+  if (!list) return null
+  const links = [...list.matchAll(/<\s*([^>\s]+)\s*>/g)].map((m) => m[1]!)
+  const https = links.find((l) => /^https:\/\//i.test(l)) ?? null
+  const http = https ?? links.find((l) => /^http:\/\//i.test(l)) ?? null
+  const mailto = links.find((l) => /^mailto:[^@\s]+@[^@\s]+/i.test(l)) ?? null
+  const oneClick = https && /List-Unsubscribe\s*=\s*One-Click/i.test(value('list-unsubscribe-post')) ? https : null
+  if (!oneClick && !mailto && !http) return null
+  return { oneClick, mailto, url: http }
+}
+
+export async function unsubscribeOf(raw: Buffer): Promise<Unsubscribe | null> {
+  return unsubscribeInfo(await parse(raw))
+}
+
 export interface Rendered {
   subject: string
   from: Address[]
@@ -123,6 +158,7 @@ export interface Rendered {
   attachments: AttachmentInfo[]
   remoteBlocked: number
   remoteUrls: string[]
+  unsubscribe: Unsubscribe | null
 }
 
 /**
@@ -164,6 +200,7 @@ export async function renderMessage(raw: Buffer, remote: Map<string, string> | n
       size: a.size ?? a.content.length
     })),
     remoteBlocked: blocked,
-    remoteUrls
+    remoteUrls,
+    unsubscribe: unsubscribeInfo(p)
   }
 }

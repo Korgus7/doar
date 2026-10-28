@@ -99,15 +99,16 @@ test('prílohy: uložiť, otvoriť (program nie), preposlať s prílohami a pril
   await expect(reader.getByText('Prílohy (2)')).toBeVisible({ timeout: 20_000 })
   await win.screenshot({ path: 'test-results/prilohy-citanie.png' })
 
-  // Uložiť ako…
-  await reader.getByRole('button', { name: /faktura\.pdf/ }).click()
+  // Uložiť ako… (PDF má na klik náhľad – ponuka je na pravom tlačidle).
+  await reader.getByRole('button', { name: /faktura\.pdf/ }).click({ button: 'right' })
   const menu = win.getByRole('menu')
+  await expect(menu.getByRole('menuitem', { name: 'Náhľad' })).toBeVisible()
   await menu.getByRole('menuitem', { name: 'Uložiť ako…' }).click()
   await expect(win.getByRole('status').filter({ hasText: 'Príloha je uložená' })).toBeVisible()
   expect(readFileSync(saved).equals(PDF)).toBe(true)
 
   // Otvoriť: dočasná kópia v dátovom priečinku Doaru.
-  await reader.getByRole('button', { name: /faktura\.pdf/ }).click()
+  await reader.getByRole('button', { name: /faktura\.pdf/ }).click({ button: 'right' })
   await menu.getByRole('menuitem', { name: 'Otvoriť' }).click()
   await expect.poll(() => app.evaluate(() => (globalThis as { opened?: string }).opened ?? '')).toMatch(/otvorene-prilohy[\\/].+[\\/]faktura\.pdf$/)
   const opened = await app.evaluate(() => (globalThis as { opened?: string }).opened!)

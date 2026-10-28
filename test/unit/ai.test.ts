@@ -233,7 +233,8 @@ describe('AI – služba v jadre', () => {
     attachments: [{ index: 0, filename: 'tajne.pdf', contentType: 'application/pdf', size: 10 }],
     remoteBlocked: 0,
     remoteShown: false,
-    senderAllowed: false
+    senderAllowed: false,
+    unsubscribe: null
   })
 
   function setup(secure = true, respond?: (c: Call, signal?: AbortSignal) => Response | Promise<Response>) {

@@ -7,13 +7,30 @@ import sanitizeHtml from 'sanitize-html'
  * vie vytvoriť. Textová podoba (multipart/alternative) zachová štruktúru – odseky, zoznamy, citácie, odkazy.
  */
 
-const TAGS = ['p', 'br', 'strong', 'b', 'em', 'i', 'u', 's', 'a', 'ul', 'ol', 'li', 'blockquote', 'h1', 'h2', 'h3', 'hr', 'code', 'pre']
+const TAGS = ['p', 'br', 'strong', 'b', 'em', 'i', 'u', 's', 'a', 'ul', 'ol', 'li', 'blockquote', 'h1', 'h2', 'h3', 'hr', 'code', 'pre', 'img']
+
+/** Obrázok v správe (logo v podpise): len vložený obrázok data: (PNG, JPEG, GIF, WebP), nie odkaz na internet. */
+const IMG_SRC = /^data:image\/(png|jpe?g|gif|webp);base64,[a-z0-9+/=\s]+$/i
+/** Najväčší vložený obrázok (bajty base64). */
+const MAX_IMG = 700_000
+const imgFilter = (frame: { tag: string; attribs: Record<string, string> }): boolean =>
+  frame.tag === 'img' && !(IMG_SRC.test(frame.attribs['src'] ?? '') && (frame.attribs['src'] ?? '').length <= MAX_IMG)
+/** Šírka a výška obrázka: len čísla (pixely), najviac 2000. */
+function cleanImg(attribs: Record<string, string>): Record<string, string> {
+  const out: Record<string, string> = { src: attribs['src'] ?? '' }
+  if (attribs['alt']) out['alt'] = attribs['alt'].slice(0, 200)
+  for (const k of ['width', 'height']) {
+    const n = Number.parseInt(attribs[k] ?? '', 10)
+    if (Number.isFinite(n) && n > 0 && n <= 2000) out[k] = String(n)
+  }
+  return out
+}
 
 /** Smer textu (dir) – editor ho dáva každému odseku, aby sa hebrejčina zobrazila sprava doľava aj u príjemcu. */
 const DIR_TAGS = ['p', 'li', 'ul', 'ol', 'blockquote', 'h1', 'h2', 'h3', 'pre']
 const DIR_VALUES = ['ltr', 'rtl', 'auto']
 const withDir = (extra: Record<string, string[]> = {}): Record<string, string[]> => {
-  const out: Record<string, string[]> = { a: ['href'] }
+  const out: Record<string, string[]> = { a: ['href'], img: ['src', 'alt', 'width', 'height'] }
   for (const t of DIR_TAGS) out[t] = ['dir', ...(extra[t] ?? [])]
   return out
 }
@@ -22,7 +39,10 @@ function cleanDir(attribs: Record<string, string>): Record<string, string> {
   const { dir, ...rest } = attribs
   return dir && DIR_VALUES.includes(dir.toLowerCase()) ? { ...rest, dir: dir.toLowerCase() } : rest
 }
-const dirTransforms = Object.fromEntries(DIR_TAGS.map((t) => [t, (tagName: string, attribs: Record<string, string>) => ({ tagName, attribs: cleanDir(attribs) })]))
+const dirTransforms: Record<string, (tagName: string, attribs: Record<string, string>) => { tagName: string; attribs: Record<string, string> }> = {
+  ...Object.fromEntries(DIR_TAGS.map((t) => [t, (tagName: string, attribs: Record<string, string>) => ({ tagName, attribs: cleanDir(attribs) })])),
+  img: (tagName, attribs) => ({ tagName, attribs: cleanImg(attribs) })
+}
 
 const QUOTE_STYLE = 'margin:0 0 0 0.8ex;border-left:2px solid #c9d1dc;padding-left:1ex;color:#4a5361'
 
@@ -33,7 +53,9 @@ export function sanitizeComposeHtml(html: string): string {
     allowedAttributes: withDir(),
     transformTags: dirTransforms,
     allowedSchemes: ['http', 'https', 'mailto'],
+    allowedSchemesByTag: { img: ['data'] },
     allowProtocolRelative: false,
+    exclusiveFilter: imgFilter,
     disallowedTagsMode: 'discard',
     nonTextTags: ['script', 'style', 'textarea', 'option', 'noscript', 'title', 'head', 'template', 'iframe', 'object', 'embed', 'svg', 'math']
   }).trim()
@@ -45,6 +67,7 @@ export function outgoingHtml(html: string): string {
     allowedTags: TAGS,
     allowedAttributes: withDir({ blockquote: ['style'], p: ['style'] }),
     allowedSchemes: ['http', 'https', 'mailto'],
+    allowedSchemesByTag: { img: ['data'] },
     transformTags: {
       ...dirTransforms,
       blockquote: (tagName, attribs) => ({ tagName, attribs: { ...cleanDir(attribs), style: QUOTE_STYLE } }),
@@ -175,4 +198,24 @@ export function htmlToText(html: string): string {
   while (lines.length && /^[>\s]*$/.test(lines[lines.length - 1]!)) lines.pop()
   // Najviac jeden prázdny riadok za sebou.
   return lines.filter((l, i) => !(l.trim() === '' && (lines[i - 1] ?? '').trim() === '')).join('\n')
+}
+
+/**
+ * Vložené obrázky (data:) → prílohy s Content-ID (multipart/related): logo v podpise uvidí príjemca aj v Gmaile
+ * a Outlooku, ktoré obrázky data: v pošte nezobrazujú. Rovnaký obrázok sa priloží len raz.
+ */
+export function inlineImages(html: string, domain = 'doar.local'): { html: string; images: { filename: string; content: Buffer; contentType: string; cid: string }[] } {
+  const images: { filename: string; content: Buffer; contentType: string; cid: string }[] = []
+  const seen = new Map<string, string>()
+  const out = html.replace(/(<img\b[^>]*?\bsrc=")(data:image\/(png|jpe?g|gif|webp);base64,([^"]+))(")/gi, (_m, pre: string, uri: string, kind: string, b64: string, post: string) => {
+    let cid = seen.get(uri)
+    if (!cid) {
+      cid = `obrazok${images.length + 1}.${Date.now().toString(36)}@${domain}`
+      const ext = kind.toLowerCase() === 'jpg' ? 'jpeg' : kind.toLowerCase()
+      images.push({ filename: `obrazok${images.length + 1}.${ext === 'jpeg' ? 'jpg' : ext}`, content: Buffer.from(b64.replace(/\s+/g, ''), 'base64'), contentType: `image/${ext}`, cid })
+      seen.set(uri, cid)
+    }
+    return `${pre}cid:${cid}${post}`
+  })
+  return { html: out, images }
 }

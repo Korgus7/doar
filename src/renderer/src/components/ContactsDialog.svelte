@@ -1,6 +1,6 @@
 <script lang="ts">
   import { tick, untrack } from 'svelte'
-  import type { Contact, ContactInput, ContactSyncStatus, MailAddressItem } from '../../../shared/ipc'
+  import type { Contact, ContactGroup, ContactInput, ContactSyncStatus, MailAddressItem } from '../../../shared/ipc'
   import { t } from '../i18n/index.svelte'
   import { ui, errorText, openMenu } from '../lib/actions.svelte'
   import Icon from './Icon.svelte'
@@ -21,17 +21,25 @@
   let message = $state<{ text: string; tone: 'ok' | 'error' } | null>(null)
   let syncState = $state<ContactSyncStatus | null>(null)
   let syncAccount = $state<number | null>(null)
+  /** Skupiny: zobrazená skupina (null = všetky kontakty) a pole na nový názov / premenovanie. */
+  let groups = $state<ContactGroup[]>([])
+  let groupId = $state<number | null>(null)
+  let groupEdit = $state<{ id?: number; name: string } | null>(null)
+  const currentGroup = $derived(groups.find((g) => g.id === groupId) ?? null)
 
   const empty = (): ContactInput => ({ name: '', email: '', phone: '', company: '', note: '', address: '' })
   const mailItem = $derived(fromMail.find((m) => m.email === selectedMail) ?? null)
 
   async function load(): Promise<void> {
-    const [list, all, mail, st] = await Promise.all([
-      window.doar.invoke('contacts.list', { query }),
-      query ? window.doar.invoke('contacts.list', {}) : null,
+    const [list, all, mail, st, gs] = await Promise.all([
+      window.doar.invoke('contacts.list', { query, ...(groupId !== null ? { groupId } : {}) }),
+      query || groupId !== null ? window.doar.invoke('contacts.list', {}) : null,
       window.doar.invoke('contacts.fromMail', { query }),
-      window.doar.invoke('contacts.syncStatus').catch(() => null)
+      window.doar.invoke('contacts.syncStatus').catch(() => null),
+      window.doar.invoke('contacts.groups')
     ])
+    groups = gs
+    if (groupId !== null && !gs.some((g) => g.id === groupId)) groupId = null
     syncState = st
     if (st && (syncAccount === null || !st.candidates.some((c) => c.accountId === syncAccount))) syncAccount = st.candidates[0]?.accountId ?? null
     contacts = list
@@ -45,6 +53,8 @@
     untrack(() => {
       tab = 'saved'
       query = ''
+      groupId = null
+      groupEdit = null
       form = null
       selectedId = null
       selectedMail = null
@@ -143,14 +153,15 @@
 
   function pick(c: Contact): void {
     selectedId = c.id
-    form = { id: c.id, name: c.name, email: c.email, phone: c.phone, company: c.company, note: c.note, address: c.address }
+    form = { id: c.id, name: c.name, email: c.email, phone: c.phone, company: c.company, note: c.note, address: c.address, groups: [...(c.groups ?? [])] }
     message = null
   }
 
   async function newContact(): Promise<void> {
     tab = 'saved'
     selectedId = null
-    form = empty()
+    // Nový kontakt v zobrazenej skupine sa do nej rovno zaradí.
+    form = { ...empty(), groups: groupId !== null ? [groupId] : [] }
     message = null
     await tick()
     dialogEl?.querySelector<HTMLInputElement>('.editor input')?.focus()
@@ -192,6 +203,45 @@
     } finally {
       busy = false
     }
+  }
+
+  async function saveGroup(): Promise<void> {
+    if (!groupEdit || busy) return
+    busy = true
+    message = null
+    try {
+      const g = await window.doar.invoke('contacts.groupSave', { ...(groupEdit.id ? { id: groupEdit.id } : {}), name: groupEdit.name })
+      groupEdit = null
+      groupId = g.id
+      await load()
+      message = { text: t('contacts.groupSaved', { name: g.name }), tone: 'ok' }
+    } catch (err) {
+      message = { text: errorText(err), tone: 'error' }
+    } finally {
+      busy = false
+    }
+  }
+
+  async function deleteGroup(): Promise<void> {
+    const g = currentGroup
+    if (!g || busy) return
+    const ok = confirm(t('contacts.groupDeleteConfirm', { name: g.name }))
+    dialogEl?.focus()
+    if (!ok) return
+    await window.doar.invoke('contacts.groupDelete', { id: g.id }).catch((err) => (message = { text: errorText(err), tone: 'error' }))
+    groupId = null
+    await load()
+  }
+
+  /** Napísať správu všetkým v skupine (kontakty s e-mailom). */
+  async function writeGroup(): Promise<void> {
+    if (!currentGroup) return
+    const list = await window.doar.invoke('contacts.groupAddresses', { groupId: currentGroup.id })
+    const to = list.map((a) => {
+      const n = a.name.replace(/["\\]/g, '').trim()
+      return n ? `${/[,;<>@()]/.test(n) ? `"${n}"` : n} <${a.address}>` : a.address
+    })
+    if (to.length) window.doar.openCompose('new', undefined, to.join(', '))
   }
 
   function write(name: string, email: string): void {
@@ -295,7 +345,7 @@
       <div class="actions-bar">
         <input type="search" bind:value={query} oninput={onSearch} placeholder={t('contacts.search')} aria-label={t('contacts.search')} spellcheck="false" />
         <span class="spacer"></span>
-        <button class="btn btn-primary" onclick={newContact} disabled={busy}><Icon name="plus" />{t('contacts.new')}</button>
+        <button class="btn btn-primary" onclick={newContact} disabled={busy}><Icon name="plus" size={14} />{t('contacts.new')}</button>
         <button class="btn" onclick={importFiles} disabled={busy}>{t('contacts.import')}</button>
         <button class="btn" onclick={exportMenu} disabled={busy || !total} aria-haspopup="menu">{t('contacts.export')}</button>
       </div>
@@ -311,7 +361,7 @@
             </span>
             <span class="spacer"></span>
             {#if st.lastError === 'CONTACTS_PERMISSION'}<button class="btn btn-primary" onclick={() => void grant()} disabled={busy}>{t('contacts.sync.grant')}</button>{/if}
-            <button class="btn" onclick={() => void runSync()} disabled={busy || st.running}><Icon name="sync" />{t('contacts.sync.now')}</button>
+            <button class="btn" onclick={() => void runSync()} disabled={busy || st.running}><Icon name="sync" size={14} />{t('contacts.sync.now')}</button>
             <button class="btn" onclick={() => void disableSync()} disabled={busy}>{t('contacts.sync.off')}</button>
           {:else if syncState.candidates.length}
             {#if syncState.candidates.length > 1}
@@ -319,9 +369,47 @@
                 {#each syncState.candidates as c (c.accountId)}<option value={c.accountId}>{c.email}</option>{/each}
               </select>
             {/if}
-            <button class="btn" onclick={() => void enableSync()} disabled={busy}><Icon name="sync" />{t('contacts.sync.with')}</button>
+            <button class="btn" onclick={() => void enableSync()} disabled={busy}><Icon name="sync" size={14} />{t('contacts.sync.with')}</button>
           {:else}
             <span class="sync-text">{t('contacts.sync.hint')}</span>
+          {/if}
+        </div>
+      {/if}
+      {#if tab === 'saved'}
+        <div class="groupbar">
+          {#if groupEdit}
+            <form
+              class="group-form"
+              onsubmit={(e) => {
+                e.preventDefault()
+                void saveGroup()
+              }}
+            >
+              <input bind:value={groupEdit.name} placeholder={t('contacts.groupName')} aria-label={t('contacts.groupName')} maxlength="100" />
+              <button class="btn btn-primary" type="submit" disabled={busy || !groupEdit.name.trim()}>{t('contacts.groupSave')}</button>
+              <button class="btn" type="button" onclick={() => (groupEdit = null)}>{t('contacts.groupCancel')}</button>
+            </form>
+          {:else}
+            <select
+              aria-label={t('contacts.group')}
+              value={groupId === null ? '' : String(groupId)}
+              onchange={(e) => {
+                groupId = e.currentTarget.value ? Number(e.currentTarget.value) : null
+                form = null
+                selectedId = null
+                void load()
+              }}
+            >
+              <option value="">{t('contacts.allContacts')}</option>
+              {#each groups as g (g.id)}<option value={String(g.id)}>{g.name} ({g.count})</option>{/each}
+            </select>
+            {#if currentGroup}
+              <button class="btn" onclick={() => void writeGroup()} disabled={!currentGroup.withEmail}><Icon name="compose" size={14} />{t('contacts.writeGroup')}</button>
+              <button class="btn" onclick={() => (groupEdit = { id: currentGroup!.id, name: currentGroup!.name })}>{t('contacts.groupRename')}</button>
+              <button class="btn danger" onclick={() => void deleteGroup()}>{t('contacts.groupDelete')}</button>
+            {/if}
+            <span class="spacer"></span>
+            <button class="btn" onclick={() => (groupEdit = { name: '' })}><Icon name="plus" size={14} />{t('contacts.groupNew')}</button>
           {/if}
         </div>
       {/if}
@@ -343,16 +431,39 @@
           </ul>
           <div class="editor">
             {#if form}
-              <form onsubmit={save}>
-                <label class="field"><span>{t('contacts.name')}</span><input bind:value={form.name} maxlength="300" /></label>
-                <label class="field"><span>{t('contacts.email')}</span><input bind:value={form.email} type="email" maxlength="320" /></label>
-                <label class="field"><span>{t('contacts.phone')}</span><input bind:value={form.phone} type="tel" maxlength="200" /></label>
-                <label class="field"><span>{t('contacts.company')}</span><input bind:value={form.company} maxlength="300" /></label>
-                <label class="field"><span>{t('contacts.address')}</span><textarea bind:value={form.address} rows="3" maxlength="1000"></textarea></label>
-                <label class="field"><span>{t('contacts.note')}</span><textarea bind:value={form.note} rows="4" maxlength="5000"></textarea></label>
-                <div class="row">
+              <form class="contact-form" onsubmit={save}>
+                <div class="pair">
+                  <label class="field"><span>{t('contacts.name')}</span><input bind:value={form.name} maxlength="300" /></label>
+                  <label class="field"><span>{t('contacts.email')}</span><input bind:value={form.email} type="email" maxlength="320" /></label>
+                </div>
+                <div class="pair">
+                  <label class="field"><span>{t('contacts.phone')}</span><input bind:value={form.phone} type="tel" maxlength="200" /></label>
+                  <label class="field"><span>{t('contacts.company')}</span><input bind:value={form.company} maxlength="300" /></label>
+                </div>
+                <label class="field"><span>{t('contacts.address')}</span><textarea bind:value={form.address} rows="2" maxlength="1000"></textarea></label>
+                <label class="field"><span>{t('contacts.note')}</span><textarea bind:value={form.note} rows="3" maxlength="5000"></textarea></label>
+                {#if groups.length}
+                  <fieldset class="field groups">
+                    <legend>{t('contacts.groups')}</legend>
+                    {#each groups as g (g.id)}
+                      <label class="check">
+                        <input
+                          type="checkbox"
+                          checked={form.groups?.includes(g.id) ?? false}
+                          onchange={(e) => {
+                            const on = e.currentTarget.checked
+                            const cur = form!.groups ?? []
+                            form!.groups = on ? [...cur, g.id] : cur.filter((x) => x !== g.id)
+                          }}
+                        />
+                        {g.name}
+                      </label>
+                    {/each}
+                  </fieldset>
+                {/if}
+                <div class="row form-buttons">
                   {#if form.id}
-                    {#if form.email.trim()}<button type="button" class="btn" onclick={() => write(form!.name, form!.email)} disabled={busy}><Icon name="compose" />{t('contacts.write')}</button>{/if}
+                    {#if form.email.trim()}<button type="button" class="btn" onclick={() => write(form!.name, form!.email)} disabled={busy}><Icon name="compose" size={14} />{t('contacts.write')}</button>{/if}
                     {#if form.address.trim()}<button type="button" class="btn" onclick={copyAddress}>{t('contacts.copyAddress')}</button>{/if}
                     <button type="button" class="btn danger" onclick={remove} disabled={busy}>{t('contacts.delete')}</button>
                   {/if}
@@ -388,7 +499,7 @@
                 {#if mailItem.name}<div>{mailItem.email}</div>{/if}
                 <small>{t('contacts.sentCount', { n: mailItem.count })}</small>
                 <div class="row">
-                  <button class="btn" onclick={() => write(mailItem!.name, mailItem!.email)}><Icon name="compose" />{t('contacts.write')}</button>
+                  <button class="btn" onclick={() => write(mailItem!.name, mailItem!.email)}><Icon name="compose" size={14} />{t('contacts.write')}</button>
                   <span class="spacer"></span>
                   <button class="btn btn-primary" onclick={() => addFromMail([mailItem!.email])} disabled={busy}>{t('contacts.addOne')}</button>
                 </div>
@@ -402,6 +513,46 @@
 {/if}
 
 <style>
+  .groupbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.5rem 1rem;
+    border-bottom: 1px solid var(--border);
+  }
+  .groupbar select,
+  .group-form input {
+    padding: 0.35em 0.5em;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--bg);
+    color: var(--text);
+    min-width: 12rem;
+  }
+  .group-form {
+    display: flex;
+    gap: 0.4rem;
+    flex: 1;
+  }
+  .groups {
+    border: 0;
+    padding: 0;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.25rem 0.9rem;
+  }
+  .groups legend {
+    width: 100%;
+    padding: 0;
+    margin-bottom: 0.2rem;
+  }
+  .check {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    font-size: 0.9rem;
+  }
   .overlay {
     position: fixed;
     inset: 0;
@@ -413,7 +564,7 @@
   }
   .dialog {
     width: min(860px, 100%);
-    height: min(640px, calc(100vh - 2rem));
+    height: min(720px, calc(100vh - 2rem));
     display: flex;
     flex-direction: column;
     background: var(--surface);
@@ -503,9 +654,6 @@
   .sync-error {
     color: var(--danger);
   }
-  .syncbar .btn {
-    padding: 0.3em 0.8em;
-  }
   .message {
     margin: 0;
     padding: 0.45rem 1rem;
@@ -569,18 +717,56 @@
     font-size: 0.9rem;
   }
   .editor {
-    padding: 1rem 1.4rem;
+    padding: 0.8rem 1.2rem 0;
     overflow: auto;
   }
   .field {
     display: flex;
     flex-direction: column;
-    gap: 0.25rem;
-    margin-bottom: 0.75rem;
+    gap: 0.15rem;
+    min-width: 0;
+    margin-bottom: 0.55rem;
   }
-  .field span {
+  .field span,
+  .groups legend {
     font-weight: 600;
+    font-size: 0.8rem;
+  }
+  /* Kompaktný formulár: dve polia vedľa seba, menšie vstupy – karta aj s tlačidlami bez posúvania. */
+  .pair {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0 0.8rem;
+  }
+  .contact-form input:not([type='checkbox']),
+  .contact-form textarea {
+    padding: 0.28em 0.5em;
+    font-size: 0.9rem;
+  }
+  /* Tlačidlá karty ostanú vždy viditeľné dole, aj keď je karta dlhšia než okno. */
+  .form-buttons {
+    position: sticky;
+    bottom: 0;
+    margin-top: 0.2rem;
+    padding: 0.55rem 0;
+    background: var(--surface);
+    border-top: 1px solid var(--border);
+  }
+  /* Menšie tlačidlá v lištách nad zoznamom. */
+  .actions-bar .btn,
+  .groupbar .btn,
+  .syncbar .btn,
+  .form-buttons .btn,
+  .card .btn {
+    padding: 0.3em 0.75em;
     font-size: 0.85rem;
+    gap: 0.35em;
+  }
+  .actions-bar input,
+  .groupbar select,
+  .group-form input {
+    padding: 0.28em 0.5em;
+    font-size: 0.9rem;
   }
   textarea {
     resize: vertical;

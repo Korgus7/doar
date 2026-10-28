@@ -2,8 +2,12 @@
   import { onMount } from 'svelte'
   import type { OutboxItem } from '../../../shared/ipc'
   import { t, type MessageKey } from '../i18n/index.svelte'
+  import { fullDate } from '../lib/format'
+  import { showToast, errorText } from '../lib/actions.svelte'
 
   let items = $state<OutboxItem[]>([])
+  /** Naplánované správy: prechod „čaká“ → „odosiela sa“ podľa času. */
+  let now = $state(Date.now())
 
   async function load(): Promise<void> {
     items = await window.doar.invoke('outbox.list')
@@ -11,8 +15,25 @@
 
   onMount(() => {
     void load()
-    return window.doar.on('outbox.changed', () => void load())
+    const timer = setInterval(() => (now = Date.now()), 30_000)
+    const off = window.doar.on('outbox.changed', () => void load())
+    return () => {
+      clearInterval(timer)
+      off()
+    }
   })
+
+  const scheduled = (i: OutboxItem): boolean => i.state === 'queued' && !!i.sendAt && Date.parse(i.sendAt) > now
+
+  async function scheduledAction(i: OutboxItem, action: 'sendNow' | 'cancel'): Promise<void> {
+    if (action === 'cancel' && !confirm(t('outbox.cancelScheduledConfirm', { subject: subj(i) }))) return
+    try {
+      await window.doar.invoke('outbox.scheduled', { id: i.id, action })
+      if (action === 'cancel') showToast(t('outbox.backToDrafts', { subject: subj(i) }))
+    } catch (e) {
+      showToast(errorText(e), { tone: 'error' })
+    }
+  }
 
   function reason(code: string | null): string {
     const key = `errors.${code ?? 'UNKNOWN'}` as MessageKey
@@ -33,7 +54,14 @@
   <section class="outbox" aria-label={t('outbox.label')} aria-live="polite">
     {#each visible as i (i.id)}
       <div class="item {i.state}" role={i.state === 'uncertain' || i.state === 'error' ? 'alert' : undefined}>
-        {#if i.state === 'queued' && i.error === 'OFFLINE'}
+        {#if scheduled(i)}
+          <span class="icon" aria-hidden="true">🕓</span>
+          <span class="text">{t('outbox.scheduled', { subject: subj(i), when: fullDate(i.sendAt) })}</span>
+          <span class="actions">
+            <button class="btn small" onclick={() => void scheduledAction(i, 'sendNow')}>{t('outbox.sendNow')}</button>
+            <button class="btn small" onclick={() => void scheduledAction(i, 'cancel')}>{t('outbox.cancelScheduled')}</button>
+          </span>
+        {:else if i.state === 'queued' && i.error === 'OFFLINE'}
           <span class="icon" aria-hidden="true">⏸</span>
           <span class="text">{t('outbox.waitingNetwork', { subject: subj(i) })}</span>
           <span class="actions">

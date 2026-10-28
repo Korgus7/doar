@@ -1,12 +1,14 @@
-import { stat } from 'node:fs/promises'
+import { readFile, stat } from 'node:fs/promises'
 import { basename } from 'node:path'
 import type { Db } from '../store/db'
 import type { FileGrants } from '../files'
+import { EML_ID_BASE } from '../../shared/ipc'
 import type { ArchiveState, ArchiveSummary, CoreEvents, EventChannel, FolderItem, MessageListItem, MessageView, SpecialUse } from '../../shared/ipc'
 import { encodeFolderPath, decodeFolderPath } from '../export/mboxrd'
 import { parseEntry, readEntryAt, readMbox, NotMboxError } from '../import/mbox-reader'
 import { archiveInfo } from '../mail/parse'
 import { buildView } from '../view'
+import { asQuery, flagsWhere, type SearchQuery } from '../search'
 import { logger } from '../log'
 
 const log = logger('archive')
@@ -16,6 +18,7 @@ function err(code: string, message: string): Error {
 }
 
 const BATCH = 200
+const EML_MAX_BYTES = 200 * 1024 * 1024
 const ARCHIVE_COLOR = '#868e96'
 
 const SPECIAL: Record<string, SpecialUse> = {
@@ -71,7 +74,31 @@ export interface ArchiveDeps {
 export class ArchiveManager {
   private indexing = new Map<number, { controller: AbortController; progress: ArchiveSummary['progress']; promise: Promise<void> }>()
 
+  /** Otvorené samostatné správy (.eml) – len do zatvorenia aplikácie, nič sa neukladá do databázy. */
+  private emls = new Map<number, { path: string; raw: Buffer }>()
+  private nextEml = EML_ID_BASE
+
   constructor(private readonly deps: ArchiveDeps) {}
+
+  /** Otvorí súbor .eml na čítanie (súbor vybral používateľ). Rovnaký súbor dostane rovnaké ID. */
+  async openEml(path: string): Promise<{ id: number }> {
+    const p = await this.deps.files.require(typeof path === 'string' ? path : '', 'read')
+    const st = await stat(p).catch(() => null)
+    if (!st?.isFile()) throw err('FILE_MISSING', 'Súbor sa nenašiel')
+    if (st.size === 0 || st.size > EML_MAX_BYTES) throw err('NOT_EML', 'Súbor nie je e-mailová správa')
+    const raw = await readFile(p)
+    // Aspoň jedna hlavička na začiatku („Meno: hodnota“) – inak to nie je správa.
+    if (!/^[\x21-\x39\x3b-\x7e]+:/.test(raw.subarray(0, 1000).toString('latin1').replace(/^\uFEFF?(From [^\n]*\n)?/, ''))) throw err('NOT_EML', 'Súbor nie je e-mailová správa')
+    for (const [id, e] of this.emls) {
+      if (e.path === p) {
+        e.raw = raw
+        return { id }
+      }
+    }
+    const id = this.nextEml--
+    this.emls.set(id, { path: p, raw })
+    return { id }
+  }
 
   /** Po štarte: rozpracované načítanie zopakovať, chýbajúci alebo zmenený súbor zistiť. */
   async init(): Promise<void> {
@@ -380,16 +407,22 @@ export class ArchiveManager {
     return (this.deps.db.prepare(`SELECT m.id FROM archive_messages m WHERE ${s.where} ORDER BY m.date DESC, m.id DESC`).all(...s.args) as { id: number }[]).map((r) => -r.id)
   }
 
-  search(fts: string, scope: { folderId?: number | null; archiveId?: number | null }, offset: number, limit: number): { total: number; items: MessageListItem[]; notDownloaded: number } {
+  private searchWhere(query: string | SearchQuery, scope: { folderId?: number | null; archiveId?: number | null }): { where: string; args: (string | number)[] } {
+    const q = asQuery(query)
     const s = this.scope(scope)
-    return { ...this.query(`${s.where} AND m.id IN (SELECT rowid FROM archive_fts WHERE archive_fts MATCH ?)`, [...s.args, fts], offset, limit), notDownloaded: 0 }
+    const f = flagsWhere(q.flags, 'm.date')
+    const where = `${s.where} AND ${f.where}${q.fts ? ' AND m.id IN (SELECT rowid FROM archive_fts WHERE archive_fts MATCH ?)' : ''}`
+    return { where, args: [...s.args, ...f.args, ...(q.fts ? [q.fts] : [])] }
   }
 
-  searchIds(fts: string, scope: { folderId?: number | null; archiveId?: number | null }): number[] {
-    const s = this.scope(scope)
-    return (this.deps.db
-      .prepare(`SELECT m.id FROM archive_messages m WHERE ${s.where} AND m.id IN (SELECT rowid FROM archive_fts WHERE archive_fts MATCH ?) ORDER BY m.date DESC, m.id DESC`)
-      .all(...s.args, fts) as { id: number }[]).map((r) => -r.id)
+  search(query: string | SearchQuery, scope: { folderId?: number | null; archiveId?: number | null }, offset: number, limit: number): { total: number; items: MessageListItem[]; notDownloaded: number } {
+    const w = this.searchWhere(query, scope)
+    return { ...this.query(w.where, w.args, offset, limit), notDownloaded: 0 }
+  }
+
+  searchIds(query: string | SearchQuery, scope: { folderId?: number | null; archiveId?: number | null }): number[] {
+    const w = this.searchWhere(query, scope)
+    return (this.deps.db.prepare(`SELECT m.id FROM archive_messages m WHERE ${w.where} ORDER BY m.date DESC, m.id DESC`).all(...w.args) as { id: number }[]).map((r) => -r.id)
   }
 
   private message(uiId: number): MessageRow {
@@ -405,12 +438,15 @@ export class ArchiveManager {
 
   /** Zdroj zálohy (konto) a dátum správy – pre odpoveď z archívu. */
   meta(uiId: number): { source: string | null; date: string | null } {
+    if (this.emls.has(uiId)) return { source: null, date: null }
     const m = this.message(uiId)
     return { source: this.row(m.archive_id)?.source ?? null, date: m.date }
   }
 
   /** Pôvodná správa zo súboru archívu (overená odtlačkom). */
   async raw(uiId: number): Promise<Buffer> {
+    const eml = this.emls.get(uiId)
+    if (eml) return eml.raw
     const m = this.message(uiId)
     const buf = await readEntryAt(m.path, m.mbox_offset, m.mbox_length).catch(() => null)
     if (!buf) {
@@ -428,6 +464,11 @@ export class ArchiveManager {
   }
 
   async view(uiId: number, opts: { showRemote?: boolean; alwaysForSender?: boolean }): Promise<MessageView> {
+    const eml = this.emls.get(uiId)
+    if (eml) {
+      const info = await archiveInfo(eml.raw)
+      return buildView(this.deps, eml.raw, { id: uiId, accountId: 0, subject: info.subject, date: info.date, sender: info.from[0]?.address ?? '' }, opts)
+    }
     const m = this.message(uiId)
     const raw = await this.raw(uiId)
     return buildView(this.deps, raw, { id: uiId, accountId: -m.archive_id, subject: m.subject, date: m.date, sender: m.from_addr }, opts)

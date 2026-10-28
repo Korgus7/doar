@@ -109,7 +109,8 @@
     secureMissing = false
     oauthFlow = null
     try {
-      const r = await oauthSignIn(discovery.oauth, email.trim(), (id) => (oauthWaiting = id))
+      // Google: rovno aj kontakty (synchronizácia adresára bez druhého prihlásenia; na stránke Google sa dá odškrtnúť).
+      const r = await oauthSignIn(discovery.oauth, email.trim(), (id) => (oauthWaiting = id), { contacts: discovery.oauth === 'google' })
       oauthWaiting = null
       oauthFlow = r.flowId
       if (r.email && r.email !== settings.email.toLowerCase()) {

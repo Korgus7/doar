@@ -11,13 +11,17 @@ import type { ArchiveManager } from './archive/archive'
 import { buildView } from './view'
 import { discover } from './providers/discover'
 import { testConnection } from './mail/connection-test'
-import { addAccount, getAccount, listAccounts, updateAccount, validateSettings } from './accounts'
+import { addAccount, getAccount, listAccounts, reorderAccounts, updateAccount, validateSettings } from './accounts'
 import { removeAccount, updateServer } from './account-admin'
 import { getSettings, setSettings } from './settings'
-import { prepareCompose, resolveOutbox, sendCompose } from './compose-service'
-import { prepareOpen, saveAllAttachments, saveAttachment } from './attachments'
+import { prepareCompose, resolveOutbox, scheduledOutbox, sendCompose } from './compose-service'
+import { applyRules, deleteRule, listRules, reorderRules, saveRule, type RuleActions } from './rules'
+import { deleteTemplate, listTemplates, saveTemplate } from './templates'
+import { deleteSignature, readSignatureImage, saveSignature, setDefaultSignature } from './signatures'
+import { messageRaw, prepareOpen, previewAttachment, saveAllAttachments, saveAttachment } from './attachments'
+import { writeFileAtomic } from './files'
 import { discardDraft, flushDraft, saveDraft } from './drafts'
-import { buildFtsQuery } from './search'
+import { buildSearch } from './search'
 import type { FileGrants } from './files'
 import { AiService } from './ai/service'
 import { OAuthService } from './oauth/oauth'
@@ -26,7 +30,8 @@ import type { FetchFn } from './ai/providers'
 import { isArchiveId, isComposeMode } from '../shared/ipc'
 import { readFile, rename, stat, writeFile } from 'node:fs/promises'
 import { ContactSync } from './contact-sync'
-import { addFromMail, deleteContacts, listContacts, mailAddresses, mergeContacts, parseContactsFile, saveContact, toCsv, toVcards, type ParsedContact } from './contacts'
+import { unsubscribe } from './unsubscribe'
+import { addFromMail, deleteContacts, deleteGroup, groupAddresses, listContacts, listContactsWithGroups, listGroups, mailAddresses, saveGroup, setGroupMembers, suggestGroups, mergeContacts, parseContactsFile, saveContact, toCsv, toVcards, type ParsedContact } from './contacts'
 
 export interface CoreContext {
   db: Db
@@ -68,6 +73,14 @@ function err(code: string, message: string): Error {
 }
 
 /** ID správ kont (archív je len na čítanie – jeho záporné ID sa pri zmenách ignorujú). */
+/** Akcie pravidiel cez synchronizáciu (rovnako ako ručný presun a príznaky). */
+export function ruleActions(ctx: Pick<CoreContext, 'sync'>): RuleActions {
+  return {
+    move: (list, target) => void ctx.sync.moveMessages(list, target),
+    setFlags: (list, change) => ctx.sync.setFlags(list, change)
+  }
+}
+
 function ids(v: unknown): number[] {
   return Array.isArray(v) ? v.filter((x): x is number => Number.isInteger(x) && x > 0).slice(0, 10_000) : []
 }
@@ -133,9 +146,19 @@ export function createHandlers(ctx: CoreContext): Handlers {
     },
 
     'accounts.add': async (data) => {
+      const contacts = oauth.flowHasContacts(data?.oauth?.flowId)
       const acc = await addAccount(ctx.db, ctx.secrets, ctx.sessionSecrets, data, oauth)
       ctx.emit('accounts.changed', null)
       ctx.sync.start(acc.id)
+      // Gmail cez Google s povolenými kontaktmi: adresár sa začne synchronizovať hneď – ak ešte nie je
+      // zapnutá iná synchronizácia a v Doare nie sú vlastné kontakty (tie by sa nahrali do Google bez opýtania).
+      if (contacts && contactSync.enabledAccount() === null && contactSync.status().localOnly === 0) {
+        try {
+          contactSync.enable(acc.id)
+        } catch {
+          // konto nie je Gmail cez Google – nič
+        }
+      }
       return acc
     },
 
@@ -146,7 +169,13 @@ export function createHandlers(ctx: CoreContext): Handlers {
       const offset = Math.max(0, Math.floor(Number(data?.offset) || 0))
       const limit = Math.min(500, Math.max(1, Math.floor(Number(data?.limit) || 100)))
       if (isArchiveId(folderId)) return ctx.archives.listMessages(folderId!, offset, limit)
+      if (data?.threads) return ctx.store.listThreads(folderId, offset, limit)
       return ctx.store.listMessages(folderId, offset, limit)
+    },
+
+    'messages.thread': (data) => {
+      const id = Number(data?.id)
+      return Number.isInteger(id) && id > 0 ? ctx.store.threadMessages(id) : []
     },
 
     'messages.get': async (data) => {
@@ -171,6 +200,19 @@ export function createHandlers(ctx: CoreContext): Handlers {
       ctx.sync.setFlags(ids(data?.ids), change)
     },
 
+    'messages.item': (data) => {
+      const id = Number(data?.id)
+      return Number.isInteger(id) && id > 0 ? ctx.store.messageItem(id) : null
+    },
+
+    'messages.markFolderRead': (data) => {
+      const folderId = data?.folderId === null ? null : Number.isInteger(data?.folderId) ? data.folderId : undefined
+      if (folderId === undefined || isArchiveId(folderId)) throw err('INVALID', 'Neplatná požiadavka')
+      const list = ctx.store.unreadIds(folderId)
+      if (list.length) ctx.sync.setFlags(list, { seen: true })
+      return { count: list.length }
+    },
+
     'sync.now': async (data) => {
       await ctx.sync.syncNow(Number.isInteger(data?.accountId) ? data?.accountId : undefined)
     },
@@ -192,6 +234,47 @@ export function createHandlers(ctx: CoreContext): Handlers {
       const action = data?.action === 'discard' ? 'discard' : data?.action === 'resend' ? 'resend' : null
       if (!action || !Number.isInteger(data?.id)) throw Object.assign(new Error('Neplatná požiadavka'), { code: 'INVALID' })
       resolveOutbox(ctx, data.id, action)
+    },
+
+    'outbox.scheduled': (data) => {
+      const action = data?.action === 'sendNow' ? 'sendNow' : data?.action === 'cancel' ? 'cancel' : null
+      if (!action || !Number.isInteger(data?.id)) throw err('INVALID', 'Neplatná požiadavka')
+      return scheduledOutbox(ctx, data.id, action)
+    },
+
+    'rules.list': () => listRules(ctx.db),
+    'rules.save': (data) => saveRule(ctx.db, data),
+    'rules.delete': (data) => {
+      if (Number.isInteger(data?.id)) deleteRule(ctx.db, data.id)
+    },
+    'rules.reorder': (data) => reorderRules(ctx.db, ids(data?.ids)),
+    'rules.run': (data) => {
+      const folderId = Number(data?.folderId)
+      if (!Number.isInteger(folderId) || folderId <= 0) throw err('INVALID', 'Neplatná požiadavka')
+      const only = Number.isInteger(data?.ruleId) ? listRules(ctx.db).filter((r) => r.id === data.ruleId).map((r) => ({ ...r, enabled: true })) : undefined
+      const { applied } = applyRules(ctx.db, ctx.store, ruleActions(ctx), ctx.store.listIds(folderId), only)
+      return { applied }
+    },
+
+    'signatures.save': (data) => {
+      const r = saveSignature(ctx.db, data)
+      ctx.emit('accounts.changed', null)
+      return r
+    },
+    'signatures.delete': (data) => {
+      if (Number.isInteger(data?.id)) deleteSignature(ctx.db, data.id)
+      ctx.emit('accounts.changed', null)
+    },
+    'signatures.setDefault': (data) => {
+      setDefaultSignature(ctx.db, Number(data?.accountId), Number.isInteger(data?.id) ? (data.id as number) : null)
+      ctx.emit('accounts.changed', null)
+    },
+    'signatures.readImage': (data) => readSignatureImage(ctx.files, str(data?.path, 4096)),
+
+    'templates.list': () => listTemplates(ctx.db),
+    'templates.save': (data) => saveTemplate(ctx.db, data),
+    'templates.delete': (data) => {
+      if (Number.isInteger(data?.id)) deleteTemplate(ctx.db, data.id)
     },
 
     'export.start': async (data) => {
@@ -223,6 +306,7 @@ export function createHandlers(ctx: CoreContext): Handlers {
 
     'archives.list': () => ctx.archives.list(),
     'archives.open': (data) => ctx.archives.open(typeof data?.path === 'string' ? data.path : ''),
+    'archives.openEml': (data) => ctx.archives.openEml(typeof data?.path === 'string' ? data.path : ''),
     'archives.close': async (data) => {
       if (Number.isInteger(data?.archiveId)) await ctx.archives.close(data.archiveId)
     },
@@ -236,14 +320,19 @@ export function createHandlers(ctx: CoreContext): Handlers {
 
     'messages.deleteForever': (data) => ctx.sync.deleteForever(ids(data?.ids)),
 
+    'messages.saveEml': async (data) => {
+      const target = await ctx.files.require(str(data?.path, 4096), 'write')
+      writeFileAtomic(target, await messageRaw(ctx, Number(data?.id)))
+    },
     'attachments.save': (data) => saveAttachment(ctx, Number(data?.messageId), Number(data?.index), str(data?.path, 4096)),
 
     'attachments.saveAll': async (data) => ({ saved: await saveAllAttachments(ctx, Number(data?.messageId), str(data?.dir, 4096)) }),
 
     'attachments.prepareOpen': async (data) => ({ path: await prepareOpen(ctx, Number(data?.messageId), Number(data?.index)) }),
+    'attachments.preview': (data) => previewAttachment(ctx, Number(data?.messageId), Number(data?.index)),
 
     'messages.search': (data) => {
-      const fts = buildFtsQuery(str(data?.query, 500))
+      const fts = buildSearch(str(data?.query, 500), data?.filters ?? {})
       if (!fts) return { total: 0, items: [], notDownloaded: 0 }
       const offset = Math.max(0, Math.floor(Number(data?.offset) || 0))
       const limit = Math.min(500, Math.max(1, Math.floor(Number(data?.limit) || 100)))
@@ -253,7 +342,7 @@ export function createHandlers(ctx: CoreContext): Handlers {
     },
 
     'messages.searchIds': (data) => {
-      const fts = buildFtsQuery(str(data?.query, 500))
+      const fts = buildSearch(str(data?.query, 500), data?.filters ?? {})
       if (!fts) return []
       const scope = searchScope(data)
       if (isArchiveId(scope.folderId) || scope.archiveId !== null) return ctx.archives.searchIds(fts, scope)
@@ -272,7 +361,17 @@ export function createHandlers(ctx: CoreContext): Handlers {
 
     'accounts.remove': (data) => removeAccount(ctx, Number(data?.id)),
 
-    'addresses.suggest': (data) => ctx.store.suggestAddresses(str(data?.query, 200), Math.min(20, Math.max(1, Number(data?.limit) || 8))),
+    'accounts.reorder': (data) => {
+      reorderAccounts(ctx.db, data?.ids)
+      ctx.emit('accounts.changed', null)
+    },
+
+    'addresses.suggest': (data) => {
+      const q = str(data?.query, 200)
+      // Skupiny z adresára najprv („Rodina“ vloží všetky adresy), potom jednotlivé adresy.
+      const groups = suggestGroups(ctx.db, q).map((g) => ({ name: g.name, address: '', group: { id: g.id, members: g.members } }))
+      return [...groups, ...ctx.store.suggestAddresses(q, Math.min(20, Math.max(1, Number(data?.limit) || 8)))]
+    },
 
     'settings.get': () => getSettings(ctx.db),
 
@@ -292,7 +391,8 @@ export function createHandlers(ctx: CoreContext): Handlers {
 
     'messages.listIds': (data) => {
       const folderId = Number.isInteger(data?.folderId) ? (data!.folderId as number) : null
-      return isArchiveId(folderId) ? ctx.archives.listIds(folderId!) : ctx.store.listIds(folderId)
+      if (isArchiveId(folderId)) return ctx.archives.listIds(folderId!)
+      return data?.threads ? ctx.store.listThreadIds(folderId) : ctx.store.listIds(folderId)
     },
 
     'folders.create': async (data) => {
@@ -303,7 +403,22 @@ export function createHandlers(ctx: CoreContext): Handlers {
     'folders.delete': (data) => ctx.sync.deleteFolder(Number(data?.folderId)),
     'folders.rename': (data) => ctx.sync.renameFolder(Number(data?.folderId), str(data?.name, 300), Number.isInteger(data?.parentId) ? (data!.parentId as number) : null),
 
-    'contacts.list': (data) => listContacts(ctx.db, str(data?.query, 200)),
+    'contacts.list': (data) => listContactsWithGroups(ctx.db, str(data?.query, 200), Number.isInteger(data?.groupId) ? data!.groupId : undefined),
+    'contacts.groups': () => listGroups(ctx.db),
+    'contacts.groupSave': (data) => {
+      const g = saveGroup(ctx.db, data)
+      ctx.emit('contacts.changed', null)
+      return g
+    },
+    'contacts.groupDelete': (data) => {
+      if (Number.isInteger(data?.id)) deleteGroup(ctx.db, data.id)
+      ctx.emit('contacts.changed', null)
+    },
+    'contacts.groupMembers': (data) => {
+      setGroupMembers(ctx.db, Number(data?.groupId), { add: ids(data?.add), remove: ids(data?.remove) })
+      ctx.emit('contacts.changed', null)
+    },
+    'contacts.groupAddresses': (data) => groupAddresses(ctx.db, Number(data?.groupId)),
     'contacts.fromMail': (data) => mailAddresses(ctx.db, str(data?.query, 200)),
     'contacts.save': (data) => {
       const c = saveContact(ctx.db, data)
@@ -333,6 +448,7 @@ export function createHandlers(ctx: CoreContext): Handlers {
       contactSync.changed()
       return r
     },
+    'messages.unsubscribe': (data) => unsubscribe(ctx, Number(data?.id)),
     'contacts.syncStatus': () => contactSync.status(),
     'contacts.syncEnable': (data) => contactSync.enable(Number(data?.accountId)),
     'contacts.syncDisable': () => contactSync.disable(),

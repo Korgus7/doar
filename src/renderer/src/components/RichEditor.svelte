@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, onDestroy, tick } from 'svelte'
-  import { Editor, Extension } from '@tiptap/core'
+  import { Editor, Extension, Node, getHTMLFromFragment } from '@tiptap/core'
   import StarterKit from '@tiptap/starter-kit'
   import { t } from '../i18n/index.svelte'
   import { textToHtml } from '../lib/compose-html'
@@ -39,6 +39,32 @@
     }
   })
 
+  /**
+   * Vložený obrázok (logo v podpise): len data: URI – nič sa nesťahuje z internetu. Jadro ho pred odoslaním
+   * prečistí a priloží ako obrázok s Content-ID.
+   */
+  const InlineImage = Node.create({
+    name: 'image',
+    inline: true,
+    group: 'inline',
+    atom: true,
+    draggable: true,
+    addAttributes() {
+      return {
+        src: { default: null },
+        alt: { default: null },
+        width: { default: null },
+        height: { default: null }
+      }
+    },
+    parseHTML() {
+      return [{ tag: 'img[src^="data:image/"]' }]
+    },
+    renderHTML({ HTMLAttributes }) {
+      return ['img', HTMLAttributes]
+    }
+  })
+
   let el: HTMLDivElement | undefined = $state()
   let editor: Editor | null = $state(null)
   /** Zmena stavu editora → prekreslenie tlačidiel (aktívne formátovanie). */
@@ -57,7 +83,8 @@
           code: false,
           link: { openOnClick: false, autolink: true, protocols: ['mailto'], HTMLAttributes: { rel: null, target: null } }
         }),
-        AutoDir
+        AutoDir,
+        InlineImage
       ],
       content: html,
       editable: !disabled,
@@ -127,6 +154,73 @@
     if (src.to > editor.state.doc.content.size || between(src.from, src.to) !== src.text) return false
     const content = src.selection && !result.includes('\n') ? { type: 'text', text: result } : textToHtml(result)
     return editor.chain().focus().insertContentAt({ from: src.from, to: src.to }, content).run()
+  }
+
+  /** Vloží obrázok (data: URI) na miesto kurzora – logo v podpise. Široký obrázok sa zmenší na `width`. */
+  export function insertImage(src: string, width?: number): void {
+    editor
+      ?.chain()
+      .focus()
+      .insertContent({ type: 'image', attrs: { src, ...(width ? { width } : {}) } })
+      .run()
+  }
+
+  /** Úsek podpisu („--“ až po citáciu / preposlanú správu / koniec), alebo null. */
+  function signatureRange(): { from: number; to: number } | null {
+    const doc = editor!.state.doc
+    let from: number | null = null
+    let to = doc.content.size
+    let prev: { node: PmNode; offset: number } | null = null
+    doc.forEach((node, offset) => {
+      const first = node.firstChild
+      if (from === null) {
+        if (node.type.name === 'paragraph' && !!first?.isText && /^--\s?$/.test(first.text ?? '') && (node.childCount === 1 || node.child(1).type.name === 'hardBreak')) from = offset
+      } else if (to === doc.content.size && (node.type.name === 'blockquote' || (node.type.name === 'paragraph' && /^-{5,}/.test(node.textContent)))) {
+        // Hlavička citácie („V pondelok … napísal:“) patrí k citácii, nie k podpisu.
+        const p = prev as { node: PmNode; offset: number } | null
+        to = node.type.name === 'blockquote' && p && p.offset > from && p.node.type.name === 'paragraph' && p.node.textContent.trim() ? p.offset : offset
+      }
+      prev = { node, offset }
+    })
+    return from === null ? null : { from, to: Math.max(from, to) }
+  }
+
+  /** Podpis ako HTML (bez riadku „--“), alebo null, ak v správe nie je. */
+  export function signatureHTML(): string | null {
+    if (!editor) return null
+    const r = signatureRange()
+    if (!r) return null
+    const slice = editor.state.doc.slice(r.from, r.to).content
+    // Prvý odsek je „--“ (prípadne „--<br>text“ zo starších podpisov).
+    const html = getHTMLFromFragment(slice, editor.schema)
+    return html.replace(/^<p[^>]*>--\s?(<br[^>]*>)?/, '<p>').replace(/^<p><\/p>/, '')
+  }
+
+  /** Vymení podpis v správe (null = odstráni). Bez podpisu sa nový vloží za vlastný text, pred citáciu. */
+  export function setSignature(sigHtml: string | null): void {
+    if (!editor) return
+    const r = signatureRange()
+    const content = sigHtml ? `<p>--</p>${sigHtml}` : ''
+    if (r) {
+      if (content) editor.chain().insertContentAt({ from: r.from, to: r.to }, content).run()
+      else editor.chain().deleteRange({ from: r.from, to: r.to }).run()
+    } else if (content) {
+      editor.chain().insertContentAt(ownEnd(), content).run()
+    }
+  }
+
+  /** Vlastný text správy ako HTML (bez podpisu a citácie) – pre uloženie šablóny. */
+  export function ownHTML(): string {
+    if (!editor) return ''
+    return getHTMLFromFragment(editor.state.doc.slice(0, ownEnd()).content, editor.schema)
+  }
+
+  /** Šablóna: prázdny vlastný text nahradí, inak sa vloží na miesto kurzora (Ctrl+Z vráti späť). */
+  export function insertTemplate(content: string): boolean {
+    if (!editor) return false
+    const end = ownEnd()
+    if (!between(0, end).trim()) return editor.chain().focus().insertContentAt({ from: 0, to: end }, content).run()
+    return editor.chain().focus().insertContent(content).run()
   }
 
   const active = (name: string, attrs?: Record<string, unknown>): boolean => {

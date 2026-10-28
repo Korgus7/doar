@@ -9,9 +9,9 @@ import { MAX_ATTACHMENTS_BYTES, isArchiveId } from '../shared/ipc'
 import type { ArchiveManager } from './archive/archive'
 import { composeMessage, forwardSubject, parseAddressList, replySource, replySubject } from './mail/compose'
 import { extractAttachments } from './mail/parse'
-import { htmlToText, outgoingHtml } from './mail/outgoing-html'
+import { htmlToText, inlineImages, outgoingHtml } from './mail/outgoing-html'
 import type { FileGrants } from './files'
-import { discardDraft, prepareDraft } from './drafts'
+import { discardDraft, draftFromRaw, prepareDraft } from './drafts'
 
 function err(code: string, message: string, extra: Record<string, unknown> = {}): Error {
   return Object.assign(new Error(message), { code, ...extra })
@@ -115,7 +115,7 @@ export async function prepareCompose(ctx: Ctx, mode: ComposeMode, messageId?: nu
 }
 
 /** Zloží správu a zaradí ju do odosielacej fronty. Odoslanie prebehne hneď, ak je spojenie. */
-export async function sendCompose(ctx: Ctx, input: ComposeSendInput): Promise<{ outboxId: number }> {
+export async function sendCompose(ctx: Ctx, input: ComposeSendInput, opts: { remember?: boolean } = {}): Promise<{ outboxId: number }> {
   const acc = account(ctx.db, Number(input?.accountId))
   if (!acc) throw err('NO_ACCOUNT', 'Konto neexistuje')
   const str = (v: unknown, max: number): string => (typeof v === 'string' ? v.slice(0, max) : '')
@@ -138,11 +138,22 @@ export async function sendCompose(ctx: Ctx, input: ComposeSendInput): Promise<{ 
     references = [...src.references, ...(src.messageId ? [src.messageId] : [])].slice(-30)
   }
 
+  // Odoslať neskôr: čas v budúcnosti (najviac o rok). Čas v minulosti = odoslať hneď.
+  let sendAt: Date | null = null
+  if (typeof input.sendAt === 'string' && input.sendAt) {
+    const t = Date.parse(input.sendAt)
+    if (!Number.isFinite(t) || t > Date.now() + 366 * 86_400_000) throw err('INVALID_SEND_AT', 'Neplatný čas odoslania')
+    if (t > Date.now() + 30_000) sendAt = new Date(t)
+  }
+
   const attachments = await resolveAttachments(ctx, input.attachments)
   // Formátovaná správa: HTML sa prečistí, textová alternatíva vznikne z neho (nie z rozhrania).
   const html = typeof input.html === 'string' && input.html.trim() ? input.html : null
-  ctx.store.rememberNames(recipients)
+  // Adresáti sa zapamätajú pre našepkávanie a adresár (nie pri odhlásení z odberu).
+  if (opts.remember !== false) ctx.store.rememberNames(recipients)
 
+  // Logo v podpise a iné vložené obrázky → prílohy s Content-ID.
+  const inlined = html ? inlineImages(outgoingHtml(html), acc.email.split('@')[1]) : null
   const { raw, messageId } = await composeMessage({
     from: { name: acc.display_name, address: acc.email },
     to: to.valid,
@@ -150,10 +161,11 @@ export async function sendCompose(ctx: Ctx, input: ComposeSendInput): Promise<{ 
     bcc: bcc.valid,
     subject: str(input.subject, 1000),
     text: html ? htmlToText(html) : str(input.text, 5_000_000),
-    html: html ? outgoingHtml(html) : null,
+    html: inlined?.html ?? null,
     inReplyTo,
     references,
-    attachments
+    attachments: [...attachments, ...(inlined?.images ?? [])],
+    ...(sendAt ? { date: sendAt } : {})
   })
   const sha = ctx.blobs.put(raw)
   const outboxId = ctx.store.addOutbox({
@@ -163,7 +175,8 @@ export async function sendCompose(ctx: Ctx, input: ComposeSendInput): Promise<{ 
     subject: str(input.subject, 1000),
     recipients: recipients.map((a) => a.address),
     replyTo,
-    saveCopy: acc.save_sent_copy === 1
+    saveCopy: acc.save_sent_copy === 1,
+    sendAt: sendAt?.toISOString() ?? null
   })
   ctx.emit('outbox.changed', null)
   ctx.sync.get(acc.id)?.refreshStatus()
@@ -220,6 +233,26 @@ export async function resolveAttachments(ctx: Ctx, list: unknown): Promise<{ fil
 }
 
 /** Rozhodnutie používateľa pri chybe alebo nejasnom výsledku: znova odoslať, alebo zahodiť. */
+/** Naplánovaná správa: odoslať hneď, alebo zrušiť – vráti sa medzi koncepty (s prílohami), dá sa upraviť. */
+export async function scheduledOutbox(ctx: Ctx, id: number, action: 'sendNow' | 'cancel'): Promise<{ draftId: number | null }> {
+  const row = ctx.store.outboxRow(id)
+  if (!row) throw err('NOT_FOUND', 'Položka neexistuje')
+  if (row.state !== 'queued' || !row.send_at) throw err('INVALID_STATE', 'Správa sa práve odosiela alebo už bola odoslaná')
+  if (action === 'sendNow') {
+    ctx.store.setOutboxSendAt(id, null)
+    ctx.emit('outbox.changed', null)
+    ctx.sync.get(row.account_id)?.refreshStatus()
+    void ctx.sync.get(row.account_id)?.processOutboxNow().catch(() => {})
+    return { draftId: null }
+  }
+  const draftId = await draftFromRaw(ctx, row.account_id, ctx.blobs.read(row.blob_sha256), row.reply_to_message)
+  ctx.store.deleteOutbox(id)
+  ctx.emit('outbox.changed', null)
+  ctx.sync.get(row.account_id)?.refreshStatus()
+  void ctx.sync.get(row.account_id)?.processOutboxNow().catch(() => {})
+  return { draftId }
+}
+
 export function resolveOutbox(ctx: Ctx, id: number, action: 'resend' | 'discard'): void {
   const row = ctx.store.outboxRow(id)
   if (!row) throw err('NOT_FOUND', 'Položka neexistuje')

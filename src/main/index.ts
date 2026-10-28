@@ -1,14 +1,14 @@
 import { app, BrowserWindow, clipboard, dialog, ipcMain, MessageChannelMain, nativeImage, nativeTheme, Notification, powerMonitor, session, shell, utilityProcess, type UtilityProcess } from 'electron'
 import { deflateSync } from 'node:zlib'
 import { basename, join, relative, isAbsolute } from 'node:path'
-import { statSync, writeFileSync, rmSync } from 'node:fs'
+import { renameSync, statSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { randomUUID } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import { SecretStore } from './secrets'
 import { buildMenu, showAbout, systemUiLocale, translate } from './menu'
 import { loadWindowState, trackWindowState } from './window-state'
-import { ensureShortcuts } from './shortcuts'
+import { ensureShortcuts, recreateShortcuts } from './shortcuts'
 import { Updater } from './updater'
 import type { CoreToMain, MainToCore, UiLocale } from '../shared/ipc'
 import { incompletePath, isComposeMode, isDangerousFile, isUiLocale, OPEN_ATTACHMENTS_DIR, type ComposeMode, type PickedFile } from '../shared/ipc'
@@ -39,6 +39,30 @@ const loadedWindows = new Set<BrowserWindow>()
 /** Okná správ, ktoré sa môžu zavrieť bez otázky (rozhranie potvrdilo). */
 const allowClose = new WeakSet<BrowserWindow>()
 
+/** Jadro sa nedá spustiť (napr. databáza z novšej verzie) – reštart by nepomohol. */
+let coreFatal = false
+
+/**
+ * Jadro sa nespustilo: zrozumiteľná správa namiesto prázdnej úvodnej obrazovky. Pri databáze z novšej verzie
+ * (bežal novší Doar Mail) ponúkne stiahnutie aktuálnej verzie; dáta sa nemenia.
+ */
+function showCoreFatal(code: 'DB_TOO_NEW' | 'INIT_FAILED'): void {
+  const tooNew = code === 'DB_TOO_NEW'
+  const r = dialog.showMessageBoxSync({
+    type: 'error',
+    title: APP_NAME,
+    message: translate(uiLocale, tooNew ? 'fatal.dbTooNew' : 'fatal.initFailed'),
+    detail: translate(uiLocale, tooNew ? 'fatal.dbTooNewDetail' : 'fatal.initFailedDetail', { path: app.getPath('userData') }),
+    buttons: tooNew ? [translate(uiLocale, 'fatal.download'), translate(uiLocale, 'fatal.close')] : [translate(uiLocale, 'fatal.close')],
+    defaultId: 0,
+    cancelId: tooNew ? 1 : 0,
+    noLink: true
+  })
+  if (tooNew && r === 0) void shell.openExternal('https://github.com/Korgus7/doar/releases/latest')
+  quitting = true
+  app.quit()
+}
+
 function startCore(): UtilityProcess {
   const child = utilityProcess.fork(join(here, 'core.js'), [], { serviceName: 'Doar Core', stdio: 'inherit' })
   const init: MainToCore = { kind: 'init', dataDir: app.getPath('userData'), appVersion: app.getVersion() }
@@ -52,6 +76,11 @@ function startCore(): UtilityProcess {
     }
     if (msg.kind === 'newMail') {
       showNewMail(msg)
+      return
+    }
+    if (msg.kind === 'fatal') {
+      coreFatal = true
+      showCoreFatal(msg.code)
       return
     }
     const reply = (r: Omit<Extract<MainToCore, { kind: 'secret.result' }>, 'kind'>): void =>
@@ -79,7 +108,7 @@ function startCore(): UtilityProcess {
     console.error(`[main] core skončil (kód ${code})`)
     core = null
     coreReady = false
-    if (!quitting) {
+    if (!quitting && !coreFatal) {
       // Jeden pokus o reštart, aby aplikácia nezostala bez jadra.
       setTimeout(() => {
         if (!quitting && !core) core = startCore()
@@ -246,6 +275,64 @@ function createComposeWindow(mode: ComposeMode, messageId?: number, to?: string)
   return win
 }
 
+/** Správa v samostatnom okne (dvojklik v zozname, otvorený súbor .eml). Tá istá správa = to isté okno. */
+const messageWindows = new Map<number, BrowserWindow>()
+function createMessageWindow(id: number): BrowserWindow {
+  const open = messageWindows.get(id)
+  if (open && !open.isDestroyed()) {
+    if (open.isMinimized()) open.restore()
+    open.focus()
+    return open
+  }
+  const b = mainWindow?.getBounds()
+  const win = new BrowserWindow({
+    width: 860,
+    height: 720,
+    minWidth: 480,
+    minHeight: 360,
+    ...(b ? { x: b.x + 80, y: b.y + 50 } : {}),
+    show: false,
+    title: APP_NAME,
+    icon: APP_ICON,
+    webPreferences: webPreferences()
+  })
+  win.setMenuBarVisibility(false)
+  win.once('ready-to-show', () => win.show())
+  messageWindows.set(id, win)
+  win.once('closed', () => {
+    if (messageWindows.get(id) === win) messageWindows.delete(id)
+  })
+  registerWindow(win, { view: 'message', id: String(id) })
+  return win
+}
+
+/** Skryté okno bez skriptov a siete s pripraveným dokumentom (tlač, PDF). Vráti true, ak sa práca podarila. */
+function documentWindow(owner: BrowserWindow, html: string, title: unknown, work: (w: BrowserWindow) => Promise<void>): Promise<boolean> {
+  const file = join(tmpdir(), `doar-tlac-${randomUUID()}.html`)
+  writeFileSync(file, html, { encoding: 'utf8', mode: 0o600 })
+  const w = new BrowserWindow({
+    show: false,
+    parent: owner,
+    title: typeof title === 'string' ? title.slice(0, 200) : APP_NAME,
+    webPreferences: { javascript: false, sandbox: true, contextIsolation: true, nodeIntegration: false, webSecurity: true }
+  })
+  return new Promise<boolean>((resolve) => {
+    const finish = (ok: boolean): void => {
+      if (!w.isDestroyed()) w.close()
+      rmSync(file, { force: true })
+      resolve(ok)
+    }
+    w.webContents.once('did-finish-load', () => {
+      work(w).then(
+        () => finish(true),
+        () => finish(false)
+      )
+    })
+    w.webContents.once('did-fail-load', () => finish(false))
+    void w.loadFile(file)
+  })
+}
+
 function senderWindow(e: Electron.IpcMainEvent): BrowserWindow | null {
   const w = BrowserWindow.fromWebContents(e.sender)
   return w && appWindows.has(w) ? w : null
@@ -277,6 +364,8 @@ function hardenSecurity(): void {
       u.startsWith('data:') ||
       u.startsWith('blob:') ||
       u.startsWith('devtools:') ||
+      // Vstavaný prehliadač PDF (náhľad prílohy) – súčasť Electronu, nie sieť.
+      u.startsWith('chrome-extension://mhjfbmdgcfjbbpaeojofohoefgiehjai/') ||
       (DEV_URL !== undefined && (u.startsWith(DEV_URL) || u.startsWith(DEV_URL.replace(/^http/, 'ws'))))
     cb({ cancel: !allowed })
   })
@@ -323,23 +412,31 @@ if (!gotLock) {
     ipcMain.on('print-html', (e, html: unknown, title: unknown) => {
       const owner = senderWindow(e)
       if (!owner || typeof html !== 'string' || html.length > 30_000_000) return
-      const file = join(tmpdir(), `doar-tlac-${randomUUID()}.html`)
-      writeFileSync(file, html, { encoding: 'utf8', mode: 0o600 })
-      const w = new BrowserWindow({
-        show: false,
-        parent: owner,
-        title: typeof title === 'string' ? title.slice(0, 200) : APP_NAME,
-        webPreferences: { javascript: false, sandbox: true, contextIsolation: true, nodeIntegration: false, webSecurity: true }
+      void documentWindow(owner, html, title, (w) => new Promise<void>((resolve) => w.webContents.print({ printBackground: true }, () => resolve())))
+    })
+    // Uložiť ako PDF: rovnaký dokument ako pri tlači; súbor vyberá používateľ.
+    ipcMain.handle('save-pdf', async (e, html: unknown, title: unknown) => {
+      const owner = BrowserWindow.fromWebContents(e.sender)
+      if (!owner || !appWindows.has(owner) || typeof html !== 'string' || html.length > 30_000_000) return false
+      const name = ((typeof title === 'string' && title.trim() ? title.trim() : 'sprava').replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_').slice(0, 120)) + '.pdf'
+      const r = await dialog.showSaveDialog(owner, {
+        defaultPath: join(app.getPath('documents'), name),
+        filters: [{ name: 'PDF', extensions: ['pdf'] }],
+        properties: ['showOverwriteConfirmation', 'createDirectory']
       })
-      const cleanup = (): void => {
-        if (!w.isDestroyed()) w.close()
-        rmSync(file, { force: true })
-      }
-      w.webContents.once('did-finish-load', () => {
-        w.webContents.print({ printBackground: true }, () => cleanup())
+      if (r.canceled || !r.filePath) return false
+      const target = r.filePath
+      return documentWindow(owner, html, title, async (w) => {
+        const pdf = await w.webContents.printToPDF({ printBackground: true, pageSize: 'A4' })
+        // Dočasný súbor .part – neúplné PDF sa nesmie tváriť ako hotové.
+        const part = `${target}.part`
+        writeFileSync(part, pdf)
+        renameSync(part, target)
       })
-      w.webContents.once('did-fail-load', cleanup)
-      void w.loadFile(file)
+    })
+    ipcMain.on('open-message', (e, id: unknown) => {
+      if (!senderWindow(e) || !Number.isInteger(id) || id === 0) return
+      createMessageWindow(id as number)
     })
     ipcMain.on('unread-count', (e, n: unknown) => {
       if (!mainWindow || e.sender !== mainWindow.webContents || !Number.isInteger(n)) return
@@ -376,8 +473,8 @@ if (!gotLock) {
     ipcMain.on('open-compose', (e, mode: unknown, messageId: unknown, to: unknown) => {
       if (!senderWindow(e)) return
       const m = isComposeMode(mode) ? mode : 'new'
-      // Adresát z adresára – len text do poľa Komu (overí ho okno správy ako hocičo napísané).
-      const recipient = m === 'new' && typeof to === 'string' && to.length <= 2000 && !/[\r\n]/.test(to) ? to : undefined
+      // Adresát z adresára (aj celá skupina) – len text do poľa Komu (overí ho okno správy ako hocičo napísané).
+      const recipient = m === 'new' && typeof to === 'string' && to.length <= 50_000 && !/[\r\n]/.test(to) ? to : undefined
       createComposeWindow(m, Number.isInteger(messageId) ? (messageId as number) : undefined, recipient)
     })
     // Záloha: súbor vyberá používateľ v natívnom dialógu; jadro smie zapisovať len do takto zvolenej cesty.
@@ -442,6 +539,11 @@ if (!gotLock) {
       }
       allow(path, 'tree')
       return path
+    })
+    // Odkazy na ploche a v ponuke Štart znova (Nastavenia → Všeobecné).
+    ipcMain.handle('recreate-shortcuts', (e) => {
+      if (!windowOf(e) || process.windowsStore) return false
+      return recreateShortcuts(APP_NAME, 'sk.doar.app')
     })
     // Schránka: len text (napr. meno a adresa z adresára), len z okien aplikácie.
     ipcMain.on('copy-text', (e, text: unknown) => {
@@ -508,6 +610,26 @@ if (!gotLock) {
       const rel = relative(base, path)
       if (!rel || rel.startsWith('..') || isAbsolute(rel) || isDangerousFile(path) || !picked(path)) return false
       return (await shell.openPath(path)) === ''
+    })
+    // Náhľad PDF prílohy: vstavaný prehliadač PDF v samostatnom okne – len dočasná kópia pripravená jadrom.
+    ipcMain.handle('preview-pdf', async (e, path: unknown, title: unknown) => {
+      if (!windowOf(e) || typeof path !== 'string' || !/\.pdf$/i.test(path)) return false
+      const base = join(app.getPath('userData'), OPEN_ATTACHMENTS_DIR)
+      const rel = relative(base, path)
+      if (!rel || rel.startsWith('..') || isAbsolute(rel) || !picked(path)) return false
+      const b = mainWindow?.getBounds()
+      const w = new BrowserWindow({
+        width: 900,
+        height: 1000,
+        ...(b ? { x: b.x + 100, y: b.y + 30 } : {}),
+        title: typeof title === 'string' && title ? title.slice(0, 200) : APP_NAME,
+        icon: APP_ICON,
+        // Bez preloadu a Node.js; plugins = vstavaný prehliadač PDF v Chromiu.
+        webPreferences: { plugins: true, sandbox: true, contextIsolation: true, nodeIntegration: false, webSecurity: true }
+      })
+      w.setMenuBarVisibility(false)
+      await w.loadFile(path)
+      return true
     })
     // Jeden koncept = jedno okno. Druhé okno s tým istým konceptom sa zavrie a ukáže sa to prvé.
     const draftWindows = new Map<number, BrowserWindow>()

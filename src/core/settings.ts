@@ -2,7 +2,7 @@ import type { Db } from './store/db'
 import type { AppSettings } from '../shared/ipc'
 
 /** Všeobecné nastavenia aplikácie – tabuľka settings (kľúč → JSON). */
-const DEFAULTS: AppSettings = { notifyNewMail: true, notifyShowContent: true, composeHtml: true }
+const DEFAULTS: AppSettings = { notifyNewMail: true, notifyShowContent: true, composeHtml: true, threads: false }
 
 export function getSettings(db: Db): AppSettings {
   const out: AppSettings = { ...DEFAULTS }

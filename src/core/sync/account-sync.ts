@@ -58,6 +58,8 @@ export interface SyncDeps {
   onAuthRejected?: (account: AccountRow) => void
   /** Nové neprečítané správy v doručenej pošte (nie pri prvej synchronizácii). */
   onNewMail?: (n: { accountId: number; folderId: number; messageIds: number[] }) => void
+  /** Nové správy v doručenej pošte (aj prečítané) – pravidlá. Vráti správy, o ktorých sa nemá oznamovať. */
+  onArrived?: (n: { accountId: number; folderId: number; messageIds: number[] }) => Set<number>
 }
 
 const SPECIAL: Record<string, SpecialUse> = {
@@ -117,6 +119,11 @@ type Task = { prio: number; key: string; run: () => Promise<void>; done: (e?: un
  * Synchronizácia jedného konta.
  * Jedno pracovné spojenie vykonáva úlohy postupne (prioritná fronta); druhé spojenie sleduje doručenú poštu (IDLE).
  */
+/** Správa vo fronte sa má odoslať teraz (nie je naplánovaná na neskôr). */
+function isDue(r: OutboxRow, now: number): boolean {
+  return !r.send_at || !(Date.parse(r.send_at) > now)
+}
+
 export class AccountSync {
   private client: ImapFlow | null = null
   private watcher: ImapFlow | null = null
@@ -430,9 +437,10 @@ export class AccountSync {
       }
     }
     this.setStatus({ state: 'idle', code: undefined, lastSync: new Date().toISOString() })
-    if (this.deps.store.outboxRows(this.account.id).some((r) => r.state === 'queued' || r.state === 'uncertain' || r.sent_copy_state === 'pending' || r.sent_copy_state === 'failed')) {
+    if (this.deps.store.outboxRows(this.account.id).some((r) => (r.state === 'queued' && isDue(r, Date.now())) || r.state === 'uncertain' || r.sent_copy_state === 'pending' || r.sent_copy_state === 'failed')) {
       void this.processOutboxNow().catch(() => {})
     }
+    this.scheduleNextSend()
     this.scheduleBodies()
   }
 
@@ -458,10 +466,12 @@ export class AccountSync {
     const store = this.deps.store
     // 1. Odoslanie čakajúcich – potrebuje len SMTP (IMAP môže byť nedostupný).
     this.outboxOffline = false
-    for (const r of store.outboxRows(this.account.id).filter((x) => x.state === 'queued')) {
+    const now = Date.now()
+    for (const r of store.outboxRows(this.account.id).filter((x) => x.state === 'queued' && isDue(x, now))) {
       if (this.stopped || this.outboxOffline) break
       await this.sendOne(r)
     }
+    this.scheduleNextSend()
     if (this.outboxOffline) {
       this.setStatus({})
       this.retryOutboxLater()
@@ -519,6 +529,32 @@ export class AccountSync {
 
   private outboxRetry: NodeJS.Timeout | null = null
   private outboxBackoff = 0
+  private sendTimer: NodeJS.Timeout | null = null
+
+  /** Odoslať neskôr: zobudiť sa v čase najbližšej naplánovanej správy. */
+  private scheduleNextSend(): void {
+    if (this.sendTimer) {
+      clearTimeout(this.sendTimer)
+      this.timers.delete(this.sendTimer)
+      this.sendTimer = null
+    }
+    if (this.stopped) return
+    const now = Date.now()
+    const next = this.deps.store
+      .outboxRows(this.account.id)
+      .filter((r) => r.state === 'queued' && !isDue(r, now))
+      .map((r) => Date.parse(r.send_at!))
+      .sort((a, b) => a - b)[0]
+    if (next === undefined) return
+    // setTimeout znesie najviac ~24 dní; dlhšie čakanie sa rozdelí.
+    const t = setTimeout(() => {
+      this.timers.delete(t)
+      this.sendTimer = null
+      void this.processOutboxNow().catch(() => {})
+    }, Math.min(Math.max(next - now, 0) + 500, 2 ** 31 - 1))
+    this.sendTimer = t
+    this.timers.add(t)
+  }
 
   /** Bez pripojenia: odoslanie sa zopakuje samo (15 s, 30 s, … najviac 5 min.) – správa určite neodišla. */
   private retryOutboxLater(): void {
@@ -744,7 +780,7 @@ export class AccountSync {
       }
       // Upozorniť len na správy, ktoré prišli od minulej synchronizácie doručenej pošty (nie pri prvom načítaní).
       const notifyFrom = folder.special_use === 'inbox' ? folder.uidnext : null
-      const arrived: number[] = []
+      const arrived: HeaderInput[] = []
 
       const serverUids = mb.exists > 0 ? ((await client.search({ all: true }, { uid: true })) || []) : []
       const serverSet = new Set(serverUids)
@@ -761,11 +797,17 @@ export class AccountSync {
         if (store.insertHeaders(this.account.id, folder.id, headers) > 0) {
           this.deps.emit('messages.changed', { folderIds: [folder.id] })
         }
-        if (notifyFrom !== null) for (const h of headers) if (h.uid >= notifyFrom && !h.flags.has('\\Seen')) arrived.push(h.uid)
+        if (notifyFrom !== null) for (const h of headers) if (h.uid >= notifyFrom) arrived.push(h)
       }
-      if (arrived.length && this.deps.onNewMail) {
-        const ids = arrived.map((uid) => store.messageByUid(folder.id, uid)).filter((x): x is number => x !== null)
-        if (ids.length) this.deps.onNewMail({ accountId: this.account.id, folderId: folder.id, messageIds: ids })
+      if (arrived.length) {
+        const byUid = (uid: number): number | null => store.messageByUid(folder.id, uid)
+        // Pravidlá na novú poštu; správy, ktoré presunuli alebo označili ako prečítané, sa neoznamujú.
+        const handled = this.deps.onArrived?.({ accountId: this.account.id, folderId: folder.id, messageIds: arrived.map((h) => byUid(h.uid)).filter((x): x is number => x !== null) }) ?? new Set<number>()
+        const ids = arrived
+          .filter((h) => !h.flags.has('\\Seen'))
+          .map((h) => byUid(h.uid))
+          .filter((x): x is number => x !== null && !handled.has(x))
+        if (ids.length && this.deps.onNewMail) this.deps.onNewMail({ accountId: this.account.id, folderId: folder.id, messageIds: ids })
       }
 
       // Príznaky: s CONDSTORE len zmenené od minulej synchronizácie, inak všetky.

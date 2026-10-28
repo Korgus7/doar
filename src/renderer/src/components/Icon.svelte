@@ -26,6 +26,8 @@
     chevron: '<path d="m7 10 5 5 5-5"/>',
     plus: '<path d="M12 5v14M5 12h14"/>',
     close: '<path d="m6 6 12 12M18 6 6 18"/>',
+    filter: '<path d="M4 5.5h16l-6.2 7.2V18l-3.6 1.8v-7.1z"/>',
+    more: '<circle cx="5.5" cy="12" r="1.3"/><circle cx="12" cy="12" r="1.3"/><circle cx="18.5" cy="12" r="1.3"/>',
     contacts: '<rect x="4.5" y="3.5" width="15" height="17"/><circle cx="12" cy="10" r="2.6"/><path d="M8 17c.6-2 2.1-3 4-3s3.4 1 4 3"/>'
   } as const
   export type IconName = keyof typeof ICONS

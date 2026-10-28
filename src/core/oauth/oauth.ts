@@ -28,6 +28,8 @@ export interface OAuthEndpoint {
   redirectHost: 'localhost' | '127.0.0.1'
   /** Rozsah pre prístup ku kontaktom (synchronizácia adresára); pýta sa až keď ju používateľ zapne. */
   contactsScope?: string
+  /** Rozsah, bez ktorého pošta nefunguje – Google ho na stránke súhlasu dovolí odškrtnúť. */
+  mailScope?: string
 }
 
 export type OAuthConfig = Record<OAuthProvider, OAuthEndpoint | null>
@@ -85,7 +87,8 @@ export function oauthConfig(env: Record<string, string | undefined> = process.en
             scopeOnToken: false,
             extraAuth: { access_type: 'offline', prompt: 'consent' },
             redirectHost: '127.0.0.1',
-            contactsScope: 'https://www.googleapis.com/auth/carddav'
+            contactsScope: 'https://www.googleapis.com/auth/carddav',
+            mailScope: 'https://mail.google.com/'
           }
         : null
   }
@@ -99,6 +102,8 @@ export interface OAuthTokens {
   expiresAt: number
   /** E-mail prihláseného účtu (z id_token), ak ho poskytovateľ poslal. */
   email: string | null
+  /** Udelené rozsahy (ak ich poskytovateľ poslal). */
+  scope: string | null
 }
 
 export type FetchFn = (url: string, init: { method: string; headers: Record<string, string>; body: string; signal?: AbortSignal }) => Promise<Response>
@@ -151,12 +156,15 @@ async function tokenRequest(ep: OAuthEndpoint, params: Record<string, string>, f
     accessToken,
     refreshToken,
     expiresAt: Date.now() + (Number.isFinite(expiresIn) && expiresIn > 0 ? expiresIn : 3600) * 1000,
-    email: emailFromIdToken(j['id_token'])
+    email: emailFromIdToken(j['id_token']),
+    scope: typeof j['scope'] === 'string' ? j['scope'] : null
   }
 }
 
 interface Flow {
   provider: OAuthProvider
+  /** Pýtal sa aj prístup ku kontaktom. */
+  contacts: boolean
   url: string
   server: http.Server
   result: Promise<OAuthTokens>
@@ -275,7 +283,7 @@ export class OAuthService {
         server.close()
       })
     result.catch(() => {})
-    const flow: Flow = { provider: input.provider, url, server, result, tokens: null, cancel: () => rejectCode(oerr('OAUTH_CANCELLED', 'Zrušené')), timer }
+    const flow: Flow = { provider: input.provider, contacts: !!input.contacts, url, server, result, tokens: null, cancel: () => rejectCode(oerr('OAUTH_CANCELLED', 'Zrušené')), timer }
     this.flows.set(flowId, flow)
     log.info('prihlásenie začaté', { provider: input.provider })
     return { flowId, url }
@@ -286,7 +294,13 @@ export class OAuthService {
     const flow = this.flows.get(flowId)
     if (!flow) throw oerr('OAUTH_FAILED', 'Neznáme prihlásenie')
     try {
-      flow.tokens = await flow.result
+      const tokens = await flow.result
+      // Google na stránke súhlasu dovolí jednotlivé prístupy odškrtnúť – bez pošty (alebo kontaktov) by Doar nefungoval.
+      const ep = this.config[flow.provider]
+      const granted = tokens.scope?.split(/\s+/) ?? null
+      if (granted && ep?.mailScope && !granted.includes(ep.mailScope)) throw oerr('OAUTH_SCOPE_MAIL', 'Nebol povolený prístup k pošte')
+      if (granted && flow.contacts && ep?.contactsScope && !granted.includes(ep.contactsScope)) throw oerr('OAUTH_SCOPE_CONTACTS', 'Nebol povolený prístup ku kontaktom')
+      flow.tokens = tokens
       log.info('prihlásenie dokončené', { provider: flow.provider })
       return { email: flow.tokens.email, provider: flow.provider }
     } catch (e) {
@@ -311,6 +325,13 @@ export class OAuthService {
 
   flowEmail(flowId: unknown): string | null {
     return typeof flowId === 'string' ? (this.flows.get(flowId)?.tokens?.email ?? null) : null
+  }
+
+  /** Povolil používateľ pri prihlásení aj prístup ku kontaktom? */
+  flowHasContacts(flowId: unknown): boolean {
+    const f = typeof flowId === 'string' ? this.flows.get(flowId) : undefined
+    const scope = this.config[f?.provider ?? 'google']?.contactsScope
+    return !!(f?.tokens?.scope && scope && f.tokens.scope.split(/\s+/).includes(scope))
   }
 
   flowProvider(flowId: unknown): OAuthProvider | null {

@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte'
   import { t } from '../i18n/index.svelte'
-  import { mail, findFolder } from '../lib/mail.svelte'
+  import { mail, findFolder, setThreads } from '../lib/mail.svelte'
   import { isArchiveId } from '../../../shared/ipc'
   import FolderPane from './FolderPane.svelte'
   import MessageList from './MessageList.svelte'
@@ -12,6 +12,7 @@
   import MoveDialog from './MoveDialog.svelte'
   import NewFolderDialog from './NewFolderDialog.svelte'
   import Toast from './Toast.svelte'
+  import AttachmentPreview from './AttachmentPreview.svelte'
   import { ui, undoLast, folderLabel } from '../lib/actions.svelte'
   import { runSearch } from '../lib/mail.svelte'
   import { openSettings } from '../lib/settings.svelte'
@@ -19,7 +20,8 @@
   import { openMenu } from '../lib/actions.svelte'
   import { backup } from '../lib/backup.svelte'
   import { restore } from '../lib/restore.svelte'
-  import { openArchive } from '../lib/archive.svelte'
+  import { openArchive, openDroppedFiles } from '../lib/archive.svelte'
+  import AdvancedSearch from './AdvancedSearch.svelte'
   import { checkUpdates } from '../lib/update.svelte'
 
   let { onAddAccount }: { onAddAccount: () => void } = $props()
@@ -101,7 +103,7 @@
       e.preventDefault()
       if (searchTimer) clearTimeout(searchTimer)
       query = ''
-      void runSearch('')
+      void runSearch('', 'all', null)
     } else if (e.key === 'ArrowDown') {
       e.preventDefault()
       document.querySelector<HTMLElement>('[role="listbox"]')?.focus()
@@ -124,6 +126,9 @@
       { label: t('menu.restore'), run: () => ((restore.kind = 'restore'), (restore.open = true)) },
       { label: t('menu.importOther'), run: () => ((restore.kind = 'import'), (restore.open = true)) },
       { label: t('menu.openArchive'), run: () => void openArchive() },
+      { label: t('menu.openEml'), run: () => void openArchive() },
+      'sep',
+      { label: `${mail.threads ? '✓ ' : ''}${t('menu.threads')}`, run: () => void setThreads(!mail.threads) },
       'sep',
       { label: t('menu.settings'), shortcut: 'Ctrl+,', run: () => openSettings() },
       { label: t('menu.checkUpdates'), run: checkUpdates },
@@ -168,7 +173,18 @@
   }
 </script>
 
-<svelte:window onkeydown={onGlobalKey} />
+<svelte:window
+  onkeydown={onGlobalKey}
+  ondragover={(e) => {
+    // Súbory z Prieskumníka (.eml, mbox) – nie správy ani priečinky ťahané v aplikácii.
+    if (!ui.dragging && !ui.draggingFolder && e.dataTransfer?.types.includes('Files')) e.preventDefault()
+  }}
+  ondrop={(e) => {
+    if (ui.dragging || ui.draggingFolder || !e.dataTransfer?.files.length) return
+    e.preventDefault()
+    void openDroppedFiles([...e.dataTransfer.files])
+  }}
+/>
 
 <div class="shell">
   <div class="toolbar">
@@ -179,18 +195,21 @@
       {t('toolbar.sync')}
     </button>
     <div class="search" role="search">
-      <span class="glass"><Icon name="search" /></span>
-      <input
-        bind:this={searchEl}
-        bind:value={query}
-        type="search"
-        placeholder={t('toolbar.search')}
-        aria-label={t('search.label')}
-        title={t('search.tip')}
-        spellcheck="false"
-        oninput={onSearchInput}
-        onkeydown={onSearchKey}
-      />
+      <span class="field">
+        <span class="glass"><Icon name="search" /></span>
+        <input
+          bind:this={searchEl}
+          bind:value={query}
+          type="search"
+          placeholder={t('toolbar.search')}
+          aria-label={t('search.label')}
+          title={t('search.tip')}
+          spellcheck="false"
+          oninput={onSearchInput}
+          onkeydown={onSearchKey}
+        />
+        <AdvancedSearch {query} />
+      </span>
       {#if mail.search}
         <select
           aria-label={t('search.scope')}
@@ -243,6 +262,7 @@
 <MoveDialog />
 <NewFolderDialog />
 <Toast />
+<AttachmentPreview />
 
 <style>
   .shell {
@@ -280,6 +300,13 @@
     gap: 0.4rem;
     position: relative;
   }
+  .field {
+    flex: 1;
+    min-width: 8rem;
+    display: flex;
+    align-items: center;
+    position: relative;
+  }
   .glass {
     position: absolute;
     inset-inline-start: 0.6rem;
@@ -291,7 +318,7 @@
     flex: 1;
     min-width: 8rem;
     padding-block: 0.38em;
-    padding-inline: 1.9rem 0.6em;
+    padding-inline: 1.9rem 2.2rem;
     border: 1px solid var(--border);
     border-radius: var(--radius-sm);
     background: var(--bg);

@@ -1,10 +1,10 @@
 <script lang="ts">
   import type { FolderItem } from '../../../shared/ipc'
   import { t } from '../i18n/index.svelte'
-  import { mail, selectFolder } from '../lib/mail.svelte'
+  import { mail, selectFolder, loadAccounts } from '../lib/mail.svelte'
   import { closeArchive, archivePercent } from '../lib/archive.svelte'
   import type { MessageKey } from '../i18n/index.svelte'
-  import { ui, moveTo, openMenu, folderLabel, deleteFolder, renameFolder, descendantIds, showToast, errorText } from '../lib/actions.svelte'
+  import { ui, moveTo, openMenu, folderLabel, deleteFolder, renameFolder, descendantIds, showToast, errorText, type MenuEntry } from '../lib/actions.svelte'
   import { openSettings } from '../lib/settings.svelte'
   import Icon, { type IconName } from './Icon.svelte'
   import type { SpecialUse } from '../../../shared/ipc'
@@ -128,13 +128,65 @@
     void moveTo(d.ids, { folderId: f.id })
   }
 
+  /** Ťahané konto (zmena poradia kont) a konto, nad ktorým práve je. */
+  let draggingAcc = $state<number | null>(null)
+  let accDrop = $state<number | null>(null)
+
+  /** Presunie konto na miesto iného konta (alebo o jedno vyššie/nižšie). */
+  async function moveAccount(id: number, to: number): Promise<void> {
+    const list = [...mail.accounts]
+    const from = list.findIndex((a) => a.id === id)
+    if (from < 0 || to < 0 || to >= list.length || to === from) return
+    const [acc] = list.splice(from, 1)
+    list.splice(to, 0, acc!)
+    mail.accounts = list
+    try {
+      await window.doar.invoke('accounts.reorder', { ids: list.map((a) => a.id) })
+    } catch (err) {
+      showToast(errorText(err), { tone: 'error' })
+      await loadAccounts().catch(() => {})
+    }
+  }
+
+  function onAccDrop(target: number): void {
+    const id = draggingAcc
+    draggingAcc = null
+    accDrop = null
+    if (id === null || id === target) return
+    void moveAccount(id, mail.accounts.findIndex((a) => a.id === target))
+  }
+
   function newFolder(accountId: number, parentId: number | null): void {
     ui.newFolder = { accountId, parentId }
   }
 
+  /** Označí všetko v priečinku (null = spoločná doručená pošta) ako prečítané. */
+  async function markFolderRead(folderId: number | null): Promise<void> {
+    try {
+      const r = await window.doar.invoke('messages.markFolderRead', { folderId })
+      showToast(r.count ? t('actions.markedRead', { n: r.count }) : t('actions.nothingUnread'))
+    } catch (err) {
+      showToast(errorText(err), { tone: 'error' })
+    }
+  }
+
+  async function runRules(f: FolderItem): Promise<void> {
+    try {
+      const r = await window.doar.invoke('rules.run', { folderId: f.id })
+      showToast(t('rules.ranCount', { n: r.applied }))
+    } catch (err) {
+      showToast(errorText(err), { tone: 'error' })
+    }
+  }
+
   function folderMenu(e: MouseEvent, f: FolderItem): void {
     e.preventDefault()
-    const items = [{ label: t('actions.newSubfolder'), run: () => newFolder(f.accountId, f.id) }]
+    const items: MenuEntry[] = [
+      { label: t('actions.markFolderRead'), disabled: !f.unread, run: () => void markFolderRead(f.id) },
+      { label: t('rules.runOnFolder'), run: () => void runRules(f) },
+      'sep'
+    ]
+    items.push({ label: t('actions.newSubfolder'), run: () => newFolder(f.accountId, f.id) })
     if (!f.specialUse && f.path.toUpperCase() !== 'INBOX') {
       items.push({ label: t('actions.renameFolder'), run: () => (ui.newFolder = { accountId: f.accountId, parentId: null, editId: f.id }) })
       items.push({ label: t('actions.deleteFolder'), run: () => void deleteFolder(f) })
@@ -204,7 +256,16 @@
 <nav class="pane" aria-label={t('folders.label')}>
   <ul class="tree">
     <li>
-      <button class="item unified" class:active={mail.folderId === null} aria-current={mail.folderId === null ? 'page' : undefined} onclick={() => selectFolder(null)}>
+      <button
+        class="item unified"
+        class:active={mail.folderId === null}
+        aria-current={mail.folderId === null ? 'page' : undefined}
+        onclick={() => selectFolder(null)}
+        oncontextmenu={(e) => {
+          e.preventDefault()
+          openMenu(e.clientX, e.clientY, [{ label: t('actions.markFolderRead'), disabled: !unifiedUnread, run: () => void markFolderRead(null) }], t('folders.unifiedInbox'))
+        }}
+      >
         <span class="icon"><Icon name="inboxes" /></span>
         <span class="name">{t('folders.unifiedInbox')}</span>
         {#if unifiedUnread}<span class="badge">{unifiedUnread}</span>{/if}
@@ -212,10 +273,30 @@
     </li>
   </ul>
 
-  {#each mail.accounts as acc (acc.id)}
+  {#each mail.accounts as acc, i (acc.id)}
     {@const open = !collapsed.includes(acc.id)}
     {@const unread = inboxUnread(acc.id)}
-    <section class="account" style:--acc={acc.color}>
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <section
+      class="account"
+      class:acc-drop={accDrop === acc.id && draggingAcc !== acc.id}
+      class:acc-up={accDrop === acc.id && draggingAcc !== null && mail.accounts.findIndex((a) => a.id === draggingAcc) > i}
+      style:--acc={acc.color}
+      ondragover={(e) => {
+        if (draggingAcc === null) return
+        e.preventDefault()
+        if (e.dataTransfer) e.dataTransfer.dropEffect = 'move'
+        accDrop = acc.id
+      }}
+      ondragleave={(e) => {
+        if (accDrop === acc.id && !(e.currentTarget as HTMLElement).contains(e.relatedTarget as Node | null)) accDrop = null
+      }}
+      ondrop={(e) => {
+        if (draggingAcc === null) return
+        e.preventDefault()
+        onAccDrop(acc.id)
+      }}
+    >
       <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
       <h2
         class:drop={headDrop === acc.id}
@@ -233,13 +314,35 @@
         }}
         oncontextmenu={(e) => {
           e.preventDefault()
-          openMenu(e.clientX, e.clientY, [
+          const items: MenuEntry[] = [
             { label: t('actions.newFolder'), run: () => newFolder(acc.id, null) },
             { label: t('folders.accountSettings'), run: () => openSettings({ accountId: acc.id }) }
-          ], acc.email)
+          ]
+          if (mail.accounts.length > 1) {
+            items.push(
+              'sep',
+              { label: t('folders.accountUp'), disabled: i === 0, run: () => void moveAccount(acc.id, i - 1) },
+              { label: t('folders.accountDown'), disabled: i === mail.accounts.length - 1, run: () => void moveAccount(acc.id, i + 1) }
+            )
+          }
+          openMenu(e.clientX, e.clientY, items, acc.email)
         }}
       >
-        <button class="toggle" aria-expanded={open} title={acc.email} onclick={() => toggle(acc.id)}>
+        <button
+          class="toggle"
+          aria-expanded={open}
+          title={acc.email}
+          onclick={() => toggle(acc.id)}
+          draggable={mail.accounts.length > 1 ? 'true' : undefined}
+          ondragstart={(e) => {
+            draggingAcc = acc.id
+            if (e.dataTransfer) {
+              e.dataTransfer.effectAllowed = 'move'
+              e.dataTransfer.setData('text/plain', acc.email)
+            }
+          }}
+          ondragend={() => ((draggingAcc = null), (accDrop = null))}
+        >
           <span class="chev" class:shut={!open}><Icon name="chevron" size={14} /></span>
           <span class="dot" aria-hidden="true"></span>
           <span class="acc-name">{!acc.name || acc.name === acc.email.split('@')[1] ? acc.email : acc.name}</span>
@@ -427,6 +530,13 @@
   .new:hover {
     color: var(--accent);
     background: color-mix(in srgb, var(--text) 8%, transparent);
+  }
+  /* Miesto, kam padne ťahané konto: čiara pod kontom (pri ťahaní nahor nad ním). */
+  .account.acc-drop {
+    box-shadow: 0 3px 0 0 var(--accent);
+  }
+  .account.acc-drop.acc-up {
+    box-shadow: 0 -3px 0 0 var(--accent);
   }
   h2.drop,
   .item.drop {

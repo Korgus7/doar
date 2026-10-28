@@ -32,7 +32,8 @@ Verzia návrhu: 1 (2026-10-21). Mení sa len s odôvodnením v `ROZHODNUTIA.md`.
 | `sync` | synchronizácia priečinkov a správ, IDLE, fronta operácií, odosielacia fronta |
 | `export` | export mboxrd (záloha) |
 | `import` | čítanie mbox prúdom, obnova do konta (IMAP APPEND, duplicity, pokračovanie); `import/sources` – prevod pošty z Outlooku (.pst/.ost), Outlook Expressu (.dbx) a Windows Mail (.eml) do formátu zálohy Doar |
-| `archive` | lokálny archív – súbor mbox len na čítanie (zoznam, fulltext, čítanie zo súboru); v rozhraní záporné ID |
+| `archive` | lokálny archív – súbor mbox len na čítanie (zoznam, fulltext, čítanie zo súboru); v rozhraní záporné ID; aj samostatné súbory `.eml` (len v pamäti) |
+| `rules.ts`, `templates.ts`, `unsubscribe.ts` | pravidlá pre novú poštu, šablóny správ, odhlásenie z odberu (0.9) |
 | `ai` | voliteľná AI (0.4c): `providers.ts` (Anthropic, OpenAI-kompatibilné – OpenRouter, lokálny server; streamovanie SSE), `prompts.ts` (zadania, obsah pošty ako nedôveryhodné dáta), `service.ts` (nastavenia, kľúč, spúšťanie úloh) |
 | `jobs` | dlhé úlohy s priebehom a zrušením (sync, export, import) |
 
@@ -95,6 +96,7 @@ messages(
   local_state,          -- synced | pending | failed (čakajúca lokálna zmena)
   hidden,               -- 1 = čaká na presun/vymazanie, v pôvodnom priečinku sa nezobrazuje (0.2)
   moving_to,            -- cieľ čakajúceho presunu – správa sa už zobrazuje tam (0.3)
+  thread_key, thread_subject, -- konverzácia (0.9): spoločný kľúč vlákna, predmet bez „Re:“
   UNIQUE(folder_id, uid))
 
 messages_fts USING fts5(subject, from_text, to_text, body_text,
@@ -123,7 +125,15 @@ outbox(
   id PK, account_id, blob_sha256, message_id,
   state,                -- draft | queued | sending | sent | error | uncertain
   sent_copy_state,      -- not_needed | pending | done | failed
-  smtp_response, error, created_at, updated_at)
+  smtp_response, error, created_at, updated_at,
+  send_at)              -- odoslať neskôr (0.9): skôr sa neodošle; NULL = hneď
+
+rules(id PK, name, enabled, account_id NULL, field, value, action, folder_id, position)
+                      -- pravidlá pre novú poštu (0.9): field from|to|subject|any, action move|read|flag|archive|trash
+templates(id PK, name, subject, html, text, updated_at)       -- šablóny správ (0.9)
+signatures(id PK, account_id, name, html, is_default, position) -- podpisy (0.9), HTML aj s logom (data:)
+contact_groups(id PK, name UNIQUE NOCASE)                      -- skupiny v adresári (0.9)
+contact_group_members(group_id, contact_id)
 
 jobs(id PK, kind, account_id, state, started_at, finished_at,
      progress_json, summary_json)                   -- export, import, úvodná sync
@@ -157,6 +167,8 @@ remote_content_allow(sender PK, created_at)
 - **Cieľ podľa úlohy priečinka:** Kôš/Archív/Spam sa hľadajú podľa SPECIAL-USE a známych názvov; ak chýbajú, Doar založí `Trash`/`Archive`/`Junk`. Archív na Gmaile = „Všetka pošta“.
 - **Natrvalo vymazať** (`expunge`): len na výslovný pokyn s potvrdením, bez oneskorenia: `\Deleted` + `UID EXPUNGE` len pre tieto UID.
 - **Bez pripojenia (0.3):** `SyncStatus.pendingChanges` = čakajúce operácie + neodoslané správy. Odoslanie, ktoré zlyhalo pred pripojením (`OFFLINE_CODES`), zostáva `queued` s `error = 'OFFLINE'` a opakuje sa samo. `reconnectAll()` (udalosť `online`, `powerMonitor`) zruší odklad.
+- **Konverzácie (0.9):** `MailStore.assignThread` pri vložení hlavičiek (In-Reply-To → kľúč predchodcu; rovnaké Message-ID; náhradne predmet), `linkReferences` po stiahnutí tela (References), `listThreads` (okenné funkcie SQLite: jeden riadok na konverzáciu v priečinku), `threadMessages` pre čítanie.
+- **Pravidlá (0.9):** nové UID v doručenej pošte (od `uidnext` z minulej synchronizácie) → `onArrived` → `applyRules` (`core/rules.ts`) → `moveMessages` / `setFlags` ako pri ručnej akcii. Správy, ktoré pravidlo presunulo alebo označilo ako prečítané, nejdú do `onNewMail` (oznámenie).
 - **Chyby:** výpadok spojenia operáciu len vráti do fronty (bez započítania pokusu). Po 3 odmietnutiach serverom sa správy znova zobrazia s ⚠. Operácia v stave `running` po páde aplikácie sa pri ďalšom spustení zopakuje.
 
 ## 6. Odosielanie
@@ -166,6 +178,8 @@ remote_content_allow(sender PK, created_at)
 3. Odpoveď 250 po DATA → `sent`. Chyba pred odoslaním DATA → `error` (bezpečné zopakovať).
 4. Spojenie sa preruší po odoslaní DATA, ale bez odpovede → `uncertain`. Hľadá sa v Odoslaných podľa `Message-ID`. Ak sa správa nájde → `sent`. Ak nie, aplikácia sa opýta používateľa. **Nikdy sa neodošle znova automaticky.**
 5. Kópia do Odoslaných (`APPEND` s `\Seen`) má vlastný stav `sent_copy_state`. Jej zlyhanie nikdy nespustí nové odoslanie.
+
+6. **Odoslať neskôr (0.9):** riadok s `send_at` v budúcnosti sa preskakuje; `AccountSync.scheduleNextSend()` nastaví časovač na najbližší čas (po spustení a po každom kole fronty). Dátum v hlavičke správy = naplánovaný čas. Zrušenie (`outbox.scheduled` cancel) zloží z originálu nový koncept (`draftFromRaw`).
 
 `save_sent_copy`: Gmail a Microsoft = 0 (server si kópiu ukladá sám), ostatní = 1. Dá sa zmeniť v nastaveniach konta.
 
@@ -186,7 +200,10 @@ remote_content_allow(sender PK, created_at)
 - Preklady: vlastný modul `src/renderer/src/i18n/`, súbory `sk.json` (zdroj kľúčov), `en`, `cs`, `de`, `hu`, `fr`, `es`, `ru`, `he`. Zoznam jazykov a ich názvy v `src/shared/ipc.ts` (`UI_LOCALES`, `LOCALE_NAMES`, `RTL_LOCALES`, `pickUiLocale`) – používa ho rozhranie aj menu v main procese. Predvolený jazyk podľa `app.getLocale()`.
 - Sprava doľava (hebrejčina): `<html dir="rtl">` podľa jazyka rozhrania; štýly používajú logické vlastnosti (`margin-inline-start`, `border-inline-start`, `text-align: start`…), takže sa rozloženie zrkadlí samo. Obsah pošty má smer podľa seba: v správe `unicode-bidi: plaintext` pre odseky bez `dir`, v zozname a hlavičke `<bdi>`, v editore `dir="auto"` na odsekoch a nadpisoch (ide aj do odoslaného HTML), polia a čistý text `dir="auto"` / `unicode-bidi: plaintext`.
 - Témy: CSS premenné, svetlý a tmavý režim podľa systému alebo ručne.
-- Okno na písanie správy je samostatné okno (ako v Outlook Expresse).
+- Okno na písanie správy je samostatné okno (ako v Outlook Expresse). Správa sa dá otvoriť aj v samostatnom okne na čítanie (0.9): `MessageApp.svelte` (`?view=message&id=`), ten istý `Reader` s `standalone`; main proces drží jedno okno na správu (`createMessageWindow`).
+- Náhľad príloh (0.9): `attachments.preview` v jadre (obrázok ako data:, text, PDF ako dočasná kópia) → `AttachmentPreview.svelte`, PDF cez `preview-pdf` v main procese (okno s `plugins: true`, bez preloadu).
+- Podpisy (0.9): `core/signatures.ts`, `SignaturesEditor.svelte`; v editore vlastný uzol `image` (len data:), `RichEditor.setSignature/signatureHTML`; pri odoslaní `inlineImages` (data: → Content-ID).
+- Súbor `.eml` (0.9): `ArchiveManager.openEml` – originál len v pamäti jadra, ID od `EML_ID_BASE` (`isEmlId`), inak sa správa ako správa z archívu. PDF: `save-pdf` v main procese (rovnaký dokument ako tlač, `printToPDF`).
 - Akcie so správami (0.2): výber viacerých (Ctrl/Shift + klik, Shift + šípky, Ctrl+A), kontextová ponuka (aj Shift+F10), ťahanie na priečinok, klávesy Del / Shift+Del / E / Ctrl+Shift+V, oznámenie s „Vrátiť späť“ (aj Ctrl+Z). Stav v `src/renderer/src/lib/actions.svelte.ts`.
 - Nastavenia: `SettingsDialog.svelte`; jadro `accounts.ts` (údaje konta), `account-admin.ts` (server, odstránenie, upratanie úložiska), `settings.ts` (tabuľka settings). Oznámenia o novej pošte: jadro (`onNewMail` v synchronizácii) → main (`Notification`).
 - Písanie: `ComposeApp.svelte` + `RichEditor.svelte` (TipTap) + `AddressInput.svelte`; prevody text ↔ HTML v `lib/compose-html.ts`, v jadre `mail/outgoing-html.ts` (prečistenie a textová podoba na odoslanie). Tlač: `lib/print.ts` → main (`print-html`, skryté okno bez JS).

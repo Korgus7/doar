@@ -1,5 +1,5 @@
 import type { Db } from './store/db'
-import type { Contact, ContactInput, MailAddressItem } from '../shared/ipc'
+import type { Address, Contact, ContactGroup, ContactInput, MailAddressItem } from '../shared/ipc'
 
 /**
  * Adresár: kontakty uložené používateľom alebo importované (vCard .vcf, CSV z Outlooku, Gmailu, Excelu).
@@ -71,10 +71,13 @@ export function saveContact(db: Db, input: ContactInput): Contact {
       )
       .run(c.name, c.email, c.phone, c.company, c.note, c.address, id)
     if (!r.changes) throw err('NOT_FOUND', 'Kontakt neexistuje')
-    return { id, ...c }
+    if (Array.isArray(input.groups)) setContactGroups(db, id, input.groups)
+    return { id, ...c, groups: groupMap(db).get(id) ?? [] }
   }
   const r = db.prepare('INSERT INTO contacts (name, email, phone, company, note, address) VALUES (?, ?, ?, ?, ?, ?)').run(c.name, c.email, c.phone, c.company, c.note, c.address)
-  return { id: Number(r.lastInsertRowid), ...c }
+  const newId = Number(r.lastInsertRowid)
+  if (Array.isArray(input.groups)) setContactGroups(db, newId, input.groups)
+  return { id: newId, ...c, groups: groupMap(db).get(newId) ?? [] }
 }
 
 /** Zmaže kontakty; prepojené so serverom (synchronizácia) sa zmažú aj tam pri ďalšej synchronizácii. */
@@ -496,4 +499,96 @@ export function toCsv(list: Contact[]): string {
     rows.push([given, family, c.email, c.phone, c.company, c.address, c.note])
   }
   return '\uFEFF' + rows.map((r) => r.map(q).join(',')).join('\r\n') + '\r\n'
+}
+
+/* ---------- skupiny (napr. „Rodina“) – len v Doare ---------- */
+
+/** Skupiny kontaktov podľa kontaktu (pre zoznam). */
+function groupMap(db: Db): Map<number, number[]> {
+  const m = new Map<number, number[]>()
+  for (const r of db.prepare('SELECT contact_id, group_id FROM contact_group_members').all() as { contact_id: number; group_id: number }[]) {
+    const list = m.get(r.contact_id) ?? []
+    list.push(r.group_id)
+    m.set(r.contact_id, list)
+  }
+  return m
+}
+
+/** Kontakty s ich skupinami; groupId = len kontakty tej skupiny. */
+export function listContactsWithGroups(db: Db, query = '', groupId?: number): Contact[] {
+  const groups = groupMap(db)
+  return listContacts(db, query)
+    .map((c) => ({ ...c, groups: groups.get(c.id) ?? [] }))
+    .filter((c) => groupId === undefined || c.groups.includes(groupId))
+}
+
+export function listGroups(db: Db): ContactGroup[] {
+  return db
+    .prepare(
+      `SELECT g.id, g.name, COUNT(m.contact_id) AS count, COUNT(CASE WHEN c.email != '' THEN 1 END) AS withEmail
+       FROM contact_groups g LEFT JOIN contact_group_members m ON m.group_id = g.id LEFT JOIN contacts c ON c.id = m.contact_id
+       GROUP BY g.id ORDER BY g.name COLLATE NOCASE`
+    )
+    .all() as unknown as ContactGroup[]
+}
+
+export function saveGroup(db: Db, input: { id?: number; name: string }): ContactGroup {
+  const name = clip(input?.name, 100).replace(/\s+/g, ' ')
+  if (!name) throw err('GROUP_NAME', 'Zadajte názov skupiny')
+  // Bez ohľadu na veľké písmená (aj s diakritikou – NOCASE v SQLite pozná len ASCII).
+  const clash = (db.prepare('SELECT id, name FROM contact_groups').all() as { id: number; name: string }[]).find((g) => g.name.toLocaleLowerCase('sk') === name.toLocaleLowerCase('sk'))
+  if (clash && clash.id !== input.id) throw err('GROUP_EXISTS', 'Skupina s týmto názvom už existuje')
+  let id: number
+  if (Number.isInteger(input.id)) {
+    if (!db.prepare('UPDATE contact_groups SET name = ? WHERE id = ?').run(name, input.id as number).changes) throw err('NOT_FOUND', 'Skupina neexistuje')
+    id = input.id as number
+  } else id = (db.prepare('INSERT INTO contact_groups (name) VALUES (?) RETURNING id').get(name) as { id: number }).id
+  return listGroups(db).find((g) => g.id === id)!
+}
+
+export function deleteGroup(db: Db, id: number): void {
+  // Kontakty ostanú, zmizne len skupina.
+  db.prepare('DELETE FROM contact_groups WHERE id = ?').run(id)
+}
+
+export function setGroupMembers(db: Db, groupId: number, change: { add?: number[]; remove?: number[] }): void {
+  if (!db.prepare('SELECT 1 FROM contact_groups WHERE id = ?').get(groupId)) throw err('NOT_FOUND', 'Skupina neexistuje')
+  const add = db.prepare('INSERT OR IGNORE INTO contact_group_members (group_id, contact_id) SELECT ?, id FROM contacts WHERE id = ?')
+  const del = db.prepare('DELETE FROM contact_group_members WHERE group_id = ? AND contact_id = ?')
+  db.exec('BEGIN')
+  try {
+    for (const id of change.add ?? []) add.run(groupId, id)
+    for (const id of change.remove ?? []) del.run(groupId, id)
+    db.exec('COMMIT')
+  } catch (e) {
+    db.exec('ROLLBACK')
+    throw e
+  }
+}
+
+/** Skupiny kontaktu: nastaví presne tieto (pri uložení kontaktu). */
+export function setContactGroups(db: Db, contactId: number, groups: number[]): void {
+  db.prepare('DELETE FROM contact_group_members WHERE contact_id = ?').run(contactId)
+  const add = db.prepare('INSERT OR IGNORE INTO contact_group_members (group_id, contact_id) SELECT id, ? FROM contact_groups WHERE id = ?')
+  for (const g of groups) if (Number.isInteger(g)) add.run(contactId, g)
+}
+
+/** Adresy kontaktov skupiny (len s e-mailom), zoradené podľa mena. */
+export function groupAddresses(db: Db, groupId: number): Address[] {
+  return (db
+    .prepare(
+      `SELECT c.name, c.email AS address FROM contact_group_members m JOIN contacts c ON c.id = m.contact_id
+       WHERE m.group_id = ? AND c.email != '' ORDER BY c.name COLLATE NOCASE, c.email`
+    )
+    .all(groupId) as unknown as Address[])
+}
+
+/** Skupiny, ktorých názov sa začína hľadaným textom (bez diakritiky) – pre našepkávanie adresátov. */
+export function suggestGroups(db: Db, query: string): { id: number; name: string; members: Address[] }[] {
+  const q = fold(query.trim())
+  if (!q) return []
+  return listGroups(db)
+    .filter((g) => g.withEmail > 0 && fold(g.name).split(/\s+/).some((w) => w.startsWith(q)))
+    .slice(0, 3)
+    .map((g) => ({ id: g.id, name: g.name, members: groupAddresses(db, g.id) }))
 }

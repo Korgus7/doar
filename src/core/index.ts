@@ -6,7 +6,8 @@ import { join } from 'node:path'
 import { openDb, sqliteVersion, type Db } from './store/db'
 import { BlobStore } from './store/blobs'
 import { initLog, logger } from './log'
-import { createHandlers, type Handlers } from './handlers'
+import { applyRules } from './rules'
+import { createHandlers, ruleActions, type Handlers } from './handlers'
 import { MainSecrets, MemorySecrets } from './secrets'
 import { realNet } from './providers/net'
 import { MailStore } from './store/mailstore'
@@ -90,7 +91,7 @@ function init(dataDir: string, appVersion: string): void {
   const store = new MailStore(db)
   const emit: Parameters<typeof createHandlers>[0]['emit'] = (ch, data) => broadcast({ kind: 'evt', ch, data })
   const oauth = new OAuthService({ secrets, sessionSecrets })
-  const sync = new SyncManager({
+  const sync: SyncManager = new SyncManager({
     oauth,
     db,
     store,
@@ -98,6 +99,15 @@ function init(dataDir: string, appVersion: string): void {
     secrets,
     sessionSecrets,
     emit,
+    // Pravidlá pre novú poštu (presun, prečítané, hviezdička…). Chyba pravidla nesmie zastaviť synchronizáciu.
+    onArrived: ({ messageIds }): Set<number> => {
+      try {
+        return applyRules(db, store, ruleActions({ sync }), messageIds).handled
+      } catch (e) {
+        log.warn('pravidlá sa nepodarilo použiť', { error: e })
+        return new Set<number>()
+      }
+    },
     // Nová pošta → systémové oznámenie (zobrazí main proces), ak ho používateľ nevypol.
     onNewMail: ({ messageIds }) => {
       const s = getSettings(db)
@@ -129,6 +139,16 @@ function init(dataDir: string, appVersion: string): void {
   cleanOpenDir(dataDir)
   archives = new ArchiveManager({ db, files, emit })
   void archives.init().catch((e) => log.warn('kontrola archívov zlyhala', { error: e }))
+  // Konverzácie pre poštu z predošlých verzií – po dávkach, aby jadro medzitým odpovedalo.
+  const backfill = (): void => {
+    try {
+      if (store.backfillThreads() > 0) setTimeout(backfill, 20)
+      else emit('messages.changed', { folderIds: store.listFolders().map((f) => f.id) })
+    } catch (e) {
+      log.warn('konverzácie sa nepodarilo doplniť', { error: e })
+    }
+  }
+  setTimeout(backfill, 500)
   // Adresár: synchronizácia s kontaktmi Google (ak ju používateľ zapol).
   const contactSync = new ContactSync({
     db,
@@ -172,7 +192,10 @@ parentPort.on('message', (e) => {
       init(msg.dataDir, msg.appVersion)
     } catch (err) {
       log.error('inicializácia jadra zlyhala', { error: err })
-      process.exit(1)
+      const tooNew = err instanceof Error && err.message.startsWith('DB_TOO_NEW')
+      parentPort!.postMessage({ kind: 'fatal', code: tooNew ? 'DB_TOO_NEW' : 'INIT_FAILED' } satisfies CoreToMain)
+      // Správa musí odísť skôr, než proces skončí.
+      setTimeout(() => process.exit(1), 200)
     }
   } else if (msg.kind === 'port') {
     const p = e.ports[0]

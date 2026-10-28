@@ -138,9 +138,9 @@ describe('nastavenia konta', () => {
   })
 
   it('všeobecné nastavenia: predvolené, uloženie, neplatné hodnoty sa ignorujú', async () => {
-    expect(await h['settings.get']()).toEqual({ notifyNewMail: true, notifyShowContent: true, composeHtml: true })
-    expect(await h['settings.set']({ notifyShowContent: false })).toEqual({ notifyNewMail: true, notifyShowContent: false, composeHtml: true })
-    expect(await h['settings.set']({ notifyNewMail: 'nie' as unknown as boolean, iné: 1 } as never)).toEqual({ notifyNewMail: true, notifyShowContent: false, composeHtml: true })
+    expect(await h['settings.get']()).toEqual({ notifyNewMail: true, notifyShowContent: true, composeHtml: true, threads: false })
+    expect(await h['settings.set']({ notifyShowContent: false })).toEqual({ notifyNewMail: true, notifyShowContent: false, composeHtml: true, threads: false })
+    expect(await h['settings.set']({ notifyNewMail: 'nie' as unknown as boolean, iné: 1 } as never)).toEqual({ notifyNewMail: true, notifyShowContent: false, composeHtml: true, threads: false })
   })
 
   it('odstránenie konta: preč z Doaru aj s lokálnou kópiou, pošta na serveri zostane, iné konto nedotknuté', async () => {

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { openDb } from '../../src/core/store/db'
-import { buildFtsQuery, parseSearch } from '../../src/core/search'
+import { buildFtsQuery, buildSearch, flagsWhere, parseDate, parseSearch } from '../../src/core/search'
 
 function matches(rows: [string, string, string, string][], input: string): number[] {
   const db = openDb(':memory:')
@@ -59,5 +59,32 @@ describe('vyhľadávanie', () => {
     expect(parseSearch('https://firma.sk')).toEqual([{ field: null, text: 'https://firma.sk', phrase: false }])
     expect(parseSearch('o 12:00')[1]).toEqual({ field: null, text: '12:00', phrase: false })
     expect(matches(MAIL, '12:00')).toEqual([3])
+  })
+})
+
+describe('rozšírené hľadanie', () => {
+  it('filtre v texte: príloha, neprečítané, hviezdička, dátum (aj slovensky a bez diakritiky)', () => {
+    const r = buildSearch('faktúra má:prílohu je:neprecitane is:flagged po:1.10.2026 before:2026-10-31')!
+    expect(r.fts).toBe('"faktúra"*')
+    expect(r.flags).toEqual({ after: '2026-10-01', before: '2026-10-31', attachment: true, unread: true, flagged: true })
+    // Neplatný dátum je obyčajný text.
+    expect(buildSearch('po:32.13.2026')!.fts).toBe('"po:32.13.2026"*')
+    expect(parseDate('29.2.2025')).toBeNull()
+    expect(parseDate('29. 2. 2024')).toBe('2024-02-29')
+  })
+
+  it('formulár: polia od/komu/predmet a filtre; samotný filter bez textu stačí', () => {
+    const r = buildSearch('', { from: 'jan', subject: 'cenová ponuka', after: '2026-01-01', attachment: true })!
+    expect(r.fts).toBe('from_text : "jan"* AND subject : "cenová"* AND subject : "ponuka"*')
+    expect(r.flags.after).toBe('2026-01-01')
+    expect(buildSearch('', { unread: true })).toEqual({ fts: null, flags: expect.objectContaining({ unread: true }) })
+    expect(buildSearch('', {})).toBeNull()
+    expect(buildSearch('  ', { from: '  ' })).toBeNull()
+  })
+
+  it('podmienka SQL: „do“ vrátane celého dňa', () => {
+    const w = flagsWhere({ after: '2026-10-01', before: '2026-10-31', attachment: true, unread: false, flagged: true }, 'm.date')
+    expect(w.where).toBe('m.date >= ? AND m.date < ? AND m.has_attachments = 1 AND m.flagged = 1')
+    expect(w.args).toEqual(['2026-10-01T00:00:00', '2026-11-01T00:00:00'])
   })
 })

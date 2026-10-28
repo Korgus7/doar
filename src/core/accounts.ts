@@ -1,5 +1,6 @@
 import net from 'node:net'
 import type { Db } from './store/db'
+import { defaultSignatureText, listSignatures, setSignatureText } from './signatures'
 import type { AccountDetails, AccountPatch, AccountSettings, AccountSummary, AddAccountInput, OAuthProvider, ServerSettings } from '../shared/ipc'
 import { ACCOUNT_COLORS_VIVID } from '../shared/ipc'
 import { passwordKey, type Secrets } from './secrets'
@@ -43,14 +44,24 @@ export function validateSettings(input: unknown): AccountSettings {
   }
 }
 
-const SUMMARY_COLS = `id, email, name, color, display_name AS displayName, COALESCE(signature, '') AS signature`
+const SUMMARY_COLS = `id, email, name, color, display_name AS displayName`
+
+/** Podpisy k údajom konta (predvolený aj ako čistý text). */
+function withSignatures(db: Db, rows: Omit<AccountSummary, 'signature' | 'signatures'>[]): AccountSummary[] {
+  const all = listSignatures(db)
+  return rows.map((r) => {
+    const signatures = all.filter((s) => s.accountId === r.id)
+    return { ...r, signatures, signature: signatures.find((s) => s.isDefault)?.text.trim() ?? '' }
+  })
+}
 
 export function listAccounts(db: Db): AccountSummary[] {
-  return db.prepare(`SELECT ${SUMMARY_COLS} FROM accounts ORDER BY sort_order, id`).all() as unknown as AccountSummary[]
+  return withSignatures(db, db.prepare(`SELECT ${SUMMARY_COLS} FROM accounts ORDER BY sort_order, id`).all() as unknown as AccountSummary[])
 }
 
 export function accountSummary(db: Db, id: number): AccountSummary | null {
-  return (db.prepare(`SELECT ${SUMMARY_COLS} FROM accounts WHERE id = ?`).get(id) as unknown as AccountSummary | undefined) ?? null
+  const r = db.prepare(`SELECT ${SUMMARY_COLS} FROM accounts WHERE id = ?`).get(id) as unknown as AccountSummary | undefined
+  return r ? withSignatures(db, [r])[0]! : null
 }
 
 export function getAccount(db: Db, id: number): AccountDetails {
@@ -83,7 +94,8 @@ export function getAccount(db: Db, id: number): AccountDetails {
     name: r.name,
     color: r.color,
     displayName: r.displayName,
-    signature: r.signature,
+    signature: defaultSignatureText(db, r.id),
+    signatures: listSignatures(db, r.id),
     username: r.username,
     imap: { host: r.imap_host, port: r.imap_port, security: r.imap_security },
     smtp: { host: r.smtp_host, port: r.smtp_port, security: r.smtp_security },
@@ -92,6 +104,26 @@ export function getAccount(db: Db, id: number): AccountDetails {
     authType: r.auth_type,
     oauthProvider: r.auth_type === 'oauth2' ? oauthProviderOf(r.provider_key) : null,
     pendingOutbox: r.pending
+  }
+}
+
+/**
+ * Nové poradie kont (zoznam priečinkov, spoločná doručená pošta, výber odosielateľa).
+ * Musí obsahovať presne všetky kontá – inak by sa poradie rozbilo pri súbežnom pridaní/odstránení.
+ */
+export function reorderAccounts(db: Db, ids: unknown): void {
+  const all = (db.prepare('SELECT id FROM accounts').all() as { id: number }[]).map((r) => r.id)
+  if (!Array.isArray(ids) || ids.length !== all.length || new Set(ids).size !== ids.length || !ids.every((x) => all.includes(x as number))) {
+    throw err('NOT_FOUND', 'Zoznam kont sa medzitým zmenil')
+  }
+  const st = db.prepare('UPDATE accounts SET sort_order = ? WHERE id = ?')
+  db.exec('BEGIN')
+  try {
+    ids.forEach((id, i) => st.run(i, id as number))
+    db.exec('COMMIT')
+  } catch (e) {
+    db.exec('ROLLBACK')
+    throw e
   }
 }
 
@@ -117,11 +149,9 @@ export function updateAccount(db: Db, id: number, patch: AccountPatch): AccountS
     sets.push('color = ?')
     args.push(patch.color.toLowerCase())
   }
+  // Textový podpis (staršie rozhranie) → predvolený podpis konta.
   const sig = text(patch?.signature, 10_000)
-  if (sig !== null) {
-    sets.push('signature = ?')
-    args.push(sig.replace(/\s+$/, ''))
-  }
+  if (sig !== null) setSignatureText(db, id, sig)
   if (typeof patch?.saveSentCopy === 'boolean') {
     sets.push('save_sent_copy = ?')
     args.push(patch.saveSentCopy ? 1 : 0)

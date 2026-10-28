@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { Address } from '../../../shared/ipc'
+  import type { AddressSuggestion } from '../../../shared/ipc'
   import { t } from '../i18n/index.svelte'
 
   /**
@@ -15,7 +15,7 @@
     inputEl = $bindable()
   }: { value?: string; id: string; label: string; placeholder?: string; disabled?: boolean; inputEl?: HTMLInputElement } = $props()
 
-  let items = $state<Address[]>([])
+  let items = $state<AddressSuggestion[]>([])
   let active = $state(-1)
   let open = $state(false)
   let timer: ReturnType<typeof setTimeout> | null = null
@@ -42,7 +42,7 @@
       if (my !== seq) return
       // Adresy, ktoré už v poli sú, neponúkať.
       const present = new Set(value.toLowerCase().match(/[^\s<>,;"]+@[^\s<>,;"]+/g) ?? [])
-      items = r.filter((a) => !present.has(a.address.toLowerCase()))
+      items = r.filter((a) => (a.group ? a.group.members.some((m) => !present.has(m.address.toLowerCase())) : !present.has(a.address.toLowerCase())))
       active = items.length ? 0 : -1
       open = items.length > 0
     }, 120)
@@ -54,12 +54,17 @@
     active = -1
   }
 
-  function choose(a: Address): void {
+  function choose(a: AddressSuggestion): void {
     const caret = inputEl?.selectionStart ?? value.length
     const { start } = currentToken()
     const after = value.slice(caret).replace(/^[^,;]*/, '')
-    const name = a.name.replace(/[",<>]/g, '').trim()
-    const entry = name ? `${name} <${a.address}>` : a.address
+    const one = (x: { name: string; address: string }): string => {
+      const name = x.name.replace(/[",<>]/g, '').trim()
+      return name ? `${name} <${x.address}>` : x.address
+    }
+    // Skupina: všetky jej adresy, ktoré v poli ešte nie sú.
+    const present = new Set(value.slice(0, start).toLowerCase().match(/[^\s<>,;"]+@[^\s<>,;"]+/g) ?? [])
+    const entry = a.group ? a.group.members.filter((m) => !present.has(m.address.toLowerCase())).map(one).join(', ') : one(a)
     const head = value.slice(0, start).replace(/\s*$/, '')
     value = `${head ? `${head} ` : ''}${entry}, ${after.replace(/^[,;]\s*/, '')}`.replace(/\s+$/, ' ')
     close()
@@ -111,7 +116,7 @@
   />
   {#if open}
     <ul class="list" id={`${id}-list`} role="listbox" aria-label={t('compose.suggestions')}>
-      {#each items as a, i (a.address)}
+      {#each items as a, i (a.group ? `g${a.group.id}` : a.address)}
         <li
           id={`${id}-opt-${i}`}
           role="option"
@@ -122,8 +127,13 @@
             choose(a)
           }}
         >
-          {#if a.name}<strong>{a.name}</strong>{/if}
-          <span>{a.address}</span>
+          {#if a.group}
+            <strong>{a.name}</strong>
+            <span>{t('contacts.groupMembers', { n: a.group.members.length })}</span>
+          {:else}
+            {#if a.name}<strong>{a.name}</strong>{/if}
+            <span>{a.address}</span>
+          {/if}
         </li>
       {/each}
     </ul>

@@ -6,7 +6,7 @@ import type { MailStore } from './store/mailstore'
 import type { SyncManager } from './sync/manager'
 import { extractAttachments, type AttachmentContent } from './mail/parse'
 import { FileGrants, openDir, safeFilename, uniqueName, writeFileAtomic } from './files'
-import { isArchiveId, isDangerousFile } from '../shared/ipc'
+import { isArchiveId, isDangerousFile, previewKind, type AttachmentPreview } from '../shared/ipc'
 import type { ArchiveManager } from './archive/archive'
 
 function err(code: string, message: string): Error {
@@ -79,4 +79,50 @@ export async function prepareOpen(ctx: AttachmentCtx, messageId: number, index: 
   const path = join(dir, name)
   writeFileAtomic(path, a.content)
   return path
+}
+
+const IMAGE_TYPES: Record<string, string> = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp', bmp: 'image/bmp' }
+const MAX_PREVIEW_IMAGE = 25 * 1024 * 1024
+const MAX_PREVIEW_TEXT = 2 * 1024 * 1024
+
+/**
+ * Náhľad prílohy priamo v Doare. Obrázok ide do rozhrania ako data: URI (SVG nie – môže obsahovať skripty),
+ * text ako text, PDF ako dočasná kópia, ktorú zobrazí okno náhľadu v main procese (bez siete a bez Node.js).
+ */
+export async function previewAttachment(ctx: AttachmentCtx, messageId: number, index: number): Promise<AttachmentPreview> {
+  const a = await attachmentOf(ctx, messageId, index)
+  const kind = previewKind(a.filename, a.contentType)
+  if (kind === 'image') {
+    if (a.content.length > MAX_PREVIEW_IMAGE) throw err('PREVIEW_TOO_LARGE', 'Príloha je na náhľad príliš veľká')
+    const ext = (a.filename.split('.').pop() ?? '').toLowerCase()
+    const type = /^image\/(png|jpeg|gif|webp|bmp)$/.test(a.contentType.toLowerCase()) ? a.contentType.toLowerCase() : IMAGE_TYPES[ext]
+    if (!type) throw err('NO_PREVIEW', 'Náhľad tohto typu súboru nie je k dispozícii')
+    return { kind: 'image', dataUrl: `data:${type};base64,${a.content.toString('base64')}` }
+  }
+  if (kind === 'text') {
+    if (a.content.length > MAX_PREVIEW_TEXT) throw err('PREVIEW_TOO_LARGE', 'Príloha je na náhľad príliš veľká')
+    return { kind: 'text', text: decodeText(a.content) }
+  }
+  if (kind === 'pdf') {
+    // Iba skutočné PDF (hlavička %PDF) – nie spustiteľný súbor s príponou .pdf.
+    if (!a.content.subarray(0, 1024).toString('latin1').includes('%PDF-')) throw err('NO_PREVIEW', 'Súbor nie je PDF')
+    const dir = join(openDir(ctx.dataDir), randomUUID().slice(0, 12))
+    mkdirSync(dir, { recursive: true })
+    const name = safeFilename(a.filename).replace(/\.[^.]*$/, '') + '.pdf'
+    const path = join(dir, name)
+    writeFileAtomic(path, a.content)
+    return { kind: 'pdf', path }
+  }
+  throw err('NO_PREVIEW', 'Náhľad tohto typu súboru nie je k dispozícii')
+}
+
+/** Text prílohy: UTF-8 (aj s BOM), inak Windows-1250 (staršie súbory zo slovenských Windows). */
+function decodeText(b: Buffer): string {
+  const utf = new TextDecoder('utf-8', { fatal: false }).decode(b)
+  if (!utf.includes('\uFFFD')) return utf.replace(/^\uFEFF/, '')
+  try {
+    return new TextDecoder('windows-1250').decode(b)
+  } catch {
+    return utf
+  }
 }

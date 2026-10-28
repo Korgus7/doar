@@ -6,7 +6,8 @@ import { dirname, join } from 'node:path'
  * Doar Mail sa na Windowse dodáva ako priečinok (bez inštalátora – pozri electron-builder.yml).
  * Odkazy s vlastnou ikonou si preto vytvorí sám:
  * - ponuka Štart: vždy (Windows na ňu viaže aj systémové oznámenia – AppUserModelID),
- * - plocha: len pri prvom spustení (keď ho používateľ zmaže, už sa nevráti),
+ * - plocha: pri prvom spustení a po spustení z iného priečinka (nová verzia rozbalená inam);
+ *   keď ho používateľ zmaže a program je stále na tom istom mieste, už sa nevráti,
  * - po presune priečinka aplikácie sa existujúce odkazy opravia.
  */
 export function ensureShortcuts(name: string, appUserModelId: string): void {
@@ -16,9 +17,11 @@ export function ensureShortcuts(name: string, appUserModelId: string): void {
   const startMenu = join(app.getPath('appData'), 'Microsoft', 'Windows', 'Start Menu', 'Programs', `${name}.lnk`)
   const desktop = join(app.getPath('desktop'), `${name}.lnk`)
   const stateFile = join(app.getPath('userData'), 'shortcuts.json')
-  let firstRun = true
+  // Pre aký program (cestu) bol odkaz na ploche naposledy vytvorený. Nový priečinok (napr. nová verzia
+  // rozbalená vedľa starej) = odkaz sa vytvorí znova; ten istý priečinok a zmazaný odkaz = používateľ ho nechce.
+  let state: { created?: boolean; target?: string } = {}
   try {
-    firstRun = !(JSON.parse(readFileSync(stateFile, 'utf8')) as { created?: boolean }).created
+    state = JSON.parse(readFileSync(stateFile, 'utf8')) as { created?: boolean; target?: string }
   } catch {
     // prvé spustenie
   }
@@ -38,12 +41,34 @@ export function ensureShortcuts(name: string, appUserModelId: string): void {
   }
   if (!existsSync(startMenu)) write(startMenu, 'create')
   else if (!pointsHere(startMenu)) write(startMenu, 'replace')
-  if (firstRun) {
-    if (!existsSync(desktop)) write(desktop, 'create')
+  const movedHere = !state.created || (state.target ?? '').toLowerCase() !== target.toLowerCase()
+  if (movedHere) {
+    write(desktop, existsSync(desktop) ? 'replace' : 'create')
     try {
-      writeFileSync(stateFile, JSON.stringify({ created: true }))
+      writeFileSync(stateFile, JSON.stringify({ created: true, target }))
     } catch {
       // nevadí – pri ďalšom spustení sa len znova skontroluje
     }
   } else if (existsSync(desktop) && !pointsHere(desktop)) write(desktop, 'replace')
+}
+
+/** Na požiadanie (Nastavenia): vytvorí odkaz na ploche aj v ponuke Štart znova (napr. po zmazaní). */
+export function recreateShortcuts(name: string, appUserModelId: string): boolean {
+  if (process.platform !== 'win32' || !app.isPackaged) return false
+  const target = process.execPath
+  const opts = { target, cwd: dirname(target), icon: join(process.resourcesPath, 'icon.ico'), iconIndex: 0, appUserModelId, description: name }
+  try {
+    writeFileSync(join(app.getPath('userData'), 'shortcuts.json'), JSON.stringify({ created: true, target }))
+  } catch {
+    // nevadí
+  }
+  let ok = true
+  for (const path of [join(app.getPath('desktop'), `${name}.lnk`), join(app.getPath('appData'), 'Microsoft', 'Windows', 'Start Menu', 'Programs', `${name}.lnk`)]) {
+    try {
+      ok = shell.writeShortcutLink(path, existsSync(path) ? 'replace' : 'create', opts) && ok
+    } catch {
+      ok = false
+    }
+  }
+  return ok
 }

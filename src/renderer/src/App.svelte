@@ -58,6 +58,7 @@
         await loadAccounts()
         await loadFolders()
         for (const s of await window.doar.invoke('sync.status')) mail.statuses[s.accountId] = s
+        mail.threads = (await window.doar.invoke('settings.get').catch(() => null))?.threads ?? false
         await selectFolder(null)
         coreError = false
         ready = true

@@ -74,6 +74,15 @@ const api: DoarApi = {
   openCompose(mode, messageId, to) {
     ipcRenderer.send('open-compose', mode, messageId, to)
   },
+  openMessage(id) {
+    if (Number.isInteger(id)) ipcRenderer.send('open-message', id)
+  },
+  previewPdf(path, title) {
+    return ipcRenderer.invoke('preview-pdf', path, title) as Promise<boolean>
+  },
+  savePdf(html, title) {
+    return ipcRenderer.invoke('save-pdf', html, title) as Promise<boolean>
+  },
   closeWindow() {
     ipcRenderer.send('close-window')
   },
@@ -90,6 +99,9 @@ const api: DoarApi = {
   },
   chooseImportFolder() {
     return ipcRenderer.invoke('choose-import-folder') as Promise<string | null>
+  },
+  recreateShortcuts() {
+    return ipcRenderer.invoke('recreate-shortcuts') as Promise<boolean>
   },
   copyText(text) {
     if (typeof text === 'string') ipcRenderer.send('copy-text', text)

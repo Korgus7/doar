@@ -128,9 +128,11 @@
     } else if (e.key === 'PageDown' || e.key === 'PageUp') {
       e.preventDefault()
       go(i + (e.key === 'PageDown' ? step : -step), e.shiftKey)
-    } else if (e.key === 'Enter' && mail.selectedId !== null && isDraft(mail.selectedId)) {
+    } else if (e.key === 'Enter' && mail.selectedId !== null) {
+      // Enter: koncept do okna na písanie, inú správu do samostatného okna (ako v Outlook Expresse).
       e.preventDefault()
-      window.doar.openCompose('draft', mail.selectedId)
+      if (isDraft(mail.selectedId)) window.doar.openCompose('draft', mail.selectedId)
+      else window.doar.openMessage(mail.selectedId)
     } else if (ctrl && !e.shiftKey && e.key.toLowerCase() === 'a') {
       e.preventDefault()
       void selectAll()
@@ -185,7 +187,7 @@
 {#if mail.search}
   <div class="search-bar" role="status">
     <span>{mail.total ? t('search.results', { n: mail.total }) : t('search.none')}</span>
-    <button class="link" onclick={() => void runSearch('')}>{t('search.clear')}</button>
+    <button class="link" onclick={() => void runSearch('', 'all', null)}>{t('search.clear')}</button>
     {#if mail.searchNotDownloaded > 0}
       <p class="incomplete">⚠ {t('search.incomplete', { n: mail.searchNotDownloaded })}</p>
     {/if}
@@ -223,7 +225,7 @@
               draggable="true"
               onclick={(e) => onRowClick(e, i, m.id)}
               oncontextmenu={(e) => onContext(e, i, m.id)}
-              ondblclick={() => isDraft(m.id) && window.doar.openCompose('draft', m.id)}
+              ondblclick={() => (isDraft(m.id) ? window.doar.openCompose('draft', m.id) : window.doar.openMessage(m.id))}
               ondragstart={(e) => onDragStart(e, i, m.id)}
               ondragend={() => (ui.dragging = null)}
               onkeydown={() => {}}
@@ -232,8 +234,9 @@
               <div class="line1">
                 <span class="mark" title={m.seen ? undefined : t('list.unread')}>{m.seen ? '' : '•'}</span>
                 <span class="from">
-                  <bdi>{#if showRecipients}{m.to.join(', ') || t('list.unknownSender')}{:else}{m.fromName || m.fromAddr || t('list.unknownSender')}{/if}</bdi>
+                  <bdi>{#if showRecipients}{m.to.join(', ') || t('list.unknownSender')}{:else if m.threadFrom?.length}{m.threadFrom.slice(-3).join(', ')}{:else}{m.fromName || m.fromAddr || t('list.unknownSender')}{/if}</bdi>
                 </span>
+                {#if m.threadIds}<span class="count" title={t('thread.count', { n: m.threadIds.length })}>{m.threadIds.length}</span>{/if}
                 {#if m.localState === 'pending'}<span class="state" title={t('list.pending')}>⏳</span>{/if}
                 {#if !m.downloaded}<span class="state cloud" title={t('list.notDownloaded')} aria-label={t('list.notDownloaded')}>☁</span>{/if}
                 {#if m.localState === 'failed'}<span class="state warn" title={t('list.failed')}>⚠</span>{/if}
@@ -270,6 +273,16 @@
 </div>
 
 <style>
+  .count {
+    flex: none;
+    font-size: 0.72rem;
+    line-height: 1.35;
+    padding: 0 0.35rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    color: var(--text-muted);
+    font-weight: 400;
+  }
   .wrap {
     height: 100%;
     display: flex;

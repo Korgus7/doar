@@ -15,11 +15,39 @@ export async function openArchive(): Promise<void> {
   try {
     const path = await window.doar.chooseImportFile()
     if (!path) return
+    if (/\.eml$/i.test(path)) return await openEmlFile(path)
     const { archiveId } = await window.doar.invoke('archives.open', { path })
     pendingOpen = archiveId
     await afterChange()
   } catch (e) {
     showToast(errorText(e), { tone: 'error' })
+  }
+}
+
+/** Súbor .eml (vybraný alebo pretiahnutý do okna) – otvorí sa v samostatnom okne, len na čítanie. */
+export async function openEmlFile(path: string): Promise<void> {
+  try {
+    const { id } = await window.doar.invoke('archives.openEml', { path })
+    window.doar.openMessage(id)
+  } catch (e) {
+    showToast(errorText(e), { tone: 'error' })
+  }
+}
+
+/** Súbory pretiahnuté z Prieskumníka do hlavného okna: .eml sa otvoria, archívy mbox sa pridajú. */
+export async function openDroppedFiles(files: File[]): Promise<void> {
+  const picked = await window.doar.filesFromDrop(files)
+  for (const f of picked.slice(0, 20)) {
+    if (/\.eml$/i.test(f.name)) await openEmlFile(f.path)
+    else if (/\.(mbox|mbx)$/i.test(f.name)) {
+      try {
+        const { archiveId } = await window.doar.invoke('archives.open', { path: f.path })
+        pendingOpen = archiveId
+        await afterChange()
+      } catch (e) {
+        showToast(errorText(e), { tone: 'error' })
+      }
+    }
   }
 }
 

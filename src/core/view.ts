@@ -37,6 +37,7 @@ export async function buildView(
     attachments: r.attachments,
     remoteBlocked: r.remoteBlocked,
     remoteShown,
-    senderAllowed
+    senderAllowed,
+    unsubscribe: r.unsubscribe ? (r.unsubscribe.oneClick ? 'oneClick' : r.unsubscribe.mailto ? 'mailto' : 'url') : null
   }
 }

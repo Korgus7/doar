@@ -5,10 +5,12 @@
   import { MAX_ATTACHMENTS_BYTES, WARN_ATTACHMENTS_BYTES } from '../../shared/ipc'
   import { t, i18n, type MessageKey } from './i18n/index.svelte'
   import { fileSize, fullDate, timeOnly } from './lib/format'
-  import { hasFormatting, htmlIsEmpty, htmlToText, quoteHtml, signatureHtml, textToHtml, escapeHtml } from './lib/compose-html'
+  import { hasFormatting, htmlIsEmpty, htmlToText, quoteHtml, textToHtml, escapeHtml } from './lib/compose-html'
   import RichEditor from './components/RichEditor.svelte'
   import AddressInput from './components/AddressInput.svelte'
   import AiPanel from './components/AiPanel.svelte'
+  import TemplatesPanel from './components/TemplatesPanel.svelte'
+  import type { MailTemplate, Signature } from '../../shared/ipc'
   import { ai, aiReady, loadAiConfig, type AiSource } from './lib/ai.svelte'
 
   interface Attached {
@@ -50,6 +52,65 @@
   let closing = false
   /** Panel AI (návrh odpovede, úpravy textu) – len ak je AI zapnutá v nastaveniach. */
   let aiOpen = $state(false)
+  /** Panel šablón a panel „Odoslať neskôr“. */
+  let templatesOpen = $state(false)
+  let scheduleOpen = $state(false)
+  let scheduleAt = $state('')
+
+  /** Aktuálna správa pre uloženie šablóny (len vlastný text – bez podpisu a citácie). */
+  function templateSource(): { subject: string; html: string | null; text: string } {
+    if (format === 'html') {
+      const own = editorRef?.ownHTML() ?? html
+      return { subject, html: own, text: htmlToText(own) }
+    }
+    return { subject, html: null, text: body.slice(0, ownEndText(body)).replace(/\s+$/, '') }
+  }
+
+  /** Vloží šablónu: predmet len do prázdneho poľa, text do prázdnej správy alebo na miesto kurzora. */
+  function applyTemplate(tpl: MailTemplate): void {
+    if (!subject.trim() && tpl.subject) subject = tpl.subject
+    if (format === 'html') {
+      editorRef?.insertTemplate(tpl.html ?? textToHtml(tpl.text))
+      return
+    }
+    const text = tpl.text || (tpl.html ? htmlToText(tpl.html) : '')
+    const end = ownEndText(body)
+    const rest = body.slice(end)
+    if (!body.slice(0, end).trim()) body = rest.trim() ? `${text.replace(/\s+$/, '')}\n\n${rest}` : text
+    else if (bodyEl) {
+      bodyEl.focus()
+      if (!document.execCommand('insertText', false, text)) {
+        const a = bodyEl.selectionStart
+        body = body.slice(0, a) + text + body.slice(bodyEl.selectionEnd)
+      }
+    }
+  }
+
+  /** Hodnota pre <input type="datetime-local"> v miestnom čase. */
+  function localInput(d: Date): string {
+    const p = (n: number): string => String(n).padStart(2, '0')
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`
+  }
+  /** Rýchla voľba: zajtra 8:00, alebo najbližší pondelok 8:00. */
+  function preset(kind: 'tomorrow' | 'monday'): string {
+    const d = new Date()
+    d.setHours(8, 0, 0, 0)
+    if (kind === 'tomorrow') d.setDate(d.getDate() + 1)
+    else d.setDate(d.getDate() + (((8 - d.getDay()) % 7) || 7))
+    return localInput(d)
+  }
+  function openSchedule(): void {
+    scheduleAt ||= preset('tomorrow')
+    scheduleOpen = !scheduleOpen
+  }
+  function scheduleSend(): void {
+    const at = new Date(scheduleAt)
+    if (!scheduleAt || Number.isNaN(at.getTime()) || at.getTime() <= Date.now() + 60_000) {
+      error = t('compose.scheduleFuture')
+      return
+    }
+    void send(at.toISOString())
+  }
 
   /** Koniec vlastného textu v čistom texte: pred podpisom „-- “, citáciou (aj s hlavičkou) alebo preposlanou správou. */
   function ownEndText(s: string): number {
@@ -90,35 +151,57 @@
     return true
   }
 
-  /** Práve vložený podpis (aby sa dal vymeniť pri zmene odosielateľa). */
-  let sigBlock = ''
-  const signatureBlock = (id: number | null): string => {
-    const sig = accounts.find((a) => a.id === id)?.signature?.trim()
-    return sig ? `\n\n-- \n${sig}` : ''
+  /**
+   * Podpis: konto môže mať viac podpisov (formátovaných, aj s logom), predvolený sa vloží do novej správy.
+   * V okne sa dá vybrať iný alebo žiadny. Pri zmene odosielateľa sa vymení – ak ho používateľ v správe neupravil.
+   */
+  let sigId = $state<number | null>(null)
+  /** Podpis, ktorý Doar naposledy vložil (na porovnanie, či ho používateľ medzitým neupravil). */
+  let sigInserted: string | null = null
+  let sigInsertedText = ''
+  const signaturesOf = (id: number | null): Signature[] => accounts.find((a) => a.id === id)?.signatures ?? []
+  const defaultSignature = (id: number | null): Signature | null => signaturesOf(id).find((x) => x.isDefault) ?? null
+  const sigName = (x: Signature, i: number): string => x.name || t('signature.numbered', { n: i + 1 })
+  /** Porovnanie podpisov bez ohľadu na drobné rozdiely v HTML editora. */
+  const sameSig = (a: string | null, b: string | null): boolean =>
+    (a === null || !a.trim()) === (b === null || !b.trim()) && (a === null || b === null || (htmlToText(a).trim() === htmlToText(b).trim() && (a.match(/<img/g)?.length ?? 0) === (b.match(/<img/g)?.length ?? 0)))
+  const sigBlockHtml = (x: Signature | null): string => (x ? `<p>--</p>${x.html}` : '')
+  const sigBlockText = (x: Signature | null): string => (x?.text.trim() ? `\n\n-- \n${x.text.trim()}` : '')
+
+  /** Vloží vybraný podpis (aj žiadny) namiesto toho, ktorý je v správe. */
+  function applySignature(next: Signature | null): void {
+    if (format === 'html') editorRef?.setSignature(next?.html ?? null)
+    else {
+      const m = /(?:^|\n)(-- ?\n)/.exec(body)
+      if (m) {
+        // Podpis od riadku „-- “ po citáciu / preposlanú správu (aj s jej hlavičkou).
+        const lineAt = m.index + (m[0].startsWith('\n') ? 1 : 0)
+        const after = lineAt + m[1]!.length
+        const tail = body.slice(after + ownEndText(body.slice(after))).replace(/^\s+/, '')
+        body = body.slice(0, lineAt).replace(/\s+$/, '') + sigBlockText(next) + (tail ? `\n\n${tail}` : '')
+      } else if (next) {
+        const at = ownEndText(body)
+        const tail = body.slice(at).replace(/^\s+/, '')
+        body = body.slice(0, at).replace(/\s+$/, '') + sigBlockText(next) + (tail ? `\n\n${tail}` : '')
+      }
+    }
+    sigId = next?.id ?? null
+    sigInserted = next?.html ?? null
+    sigInsertedText = sigBlockText(next).trim()
   }
 
-  const signatureText = (id: number | null): string => accounts.find((a) => a.id === id)?.signature?.trim() ?? ''
-  /** Text podpisu, ktorý je práve v HTML správe. */
-  let sigText = ''
-
-  /** Iný odosielateľ → iný podpis (ak používateľ podpis medzitým neupravil). */
+  /** Iný odosielateľ → jeho predvolený podpis (ak používateľ podpis v správe neupravil). */
   function onAccountChange(): void {
-    if (format === 'html') return swapHtmlSignature()
-    const next = signatureBlock(accountId)
-    if (sigBlock && body.includes(sigBlock)) body = body.replace(sigBlock, next)
-    else if (!sigBlock && next && !body.trim()) body = next
-    else return
-    sigBlock = next
+    const untouched =
+      format === 'html' ? sameSig(editorRef?.signatureHTML() ?? null, sigInserted) : sigInsertedText ? body.includes(sigInsertedText) : !/(^|\n)-- ?\n/.test(body)
+    if (!untouched) return
+    applySignature(defaultSignature(accountId))
   }
-  function swapHtmlSignature(): void {
-    const next = signatureText(accountId)
-    const cur = editorRef?.getHTML() ?? html
-    const m = /<p>--<br>([\s\S]*?)<\/p>/.exec(cur)
-    const inner = m ? new DOMParser().parseFromString(m[1]!.replace(/<br\s*\/?>/g, '\n'), 'text/html').body.textContent ?? '' : null
-    if (m && sigText && inner?.trim() === sigText) editorRef?.setHTML(cur.replace(m[0], signatureHtml(next)))
-    else if (!sigText && next && htmlIsEmpty(cur)) editorRef?.setHTML(`<p></p>${signatureHtml(next)}`)
-    else return
-    sigText = next
+
+  /** Výber podpisu v okne správy. */
+  function onSignatureSelect(value: string): void {
+    const next = signaturesOf(accountId).find((x) => String(x.id) === value) ?? null
+    applySignature(next)
   }
 
   /** Prepnutie formátovaný ↔ čistý text. */
@@ -228,13 +311,18 @@
         subject = pre.subject
         format = pre.draft ? (pre.draft.html ? 'html' : 'plain') : settings?.composeHtml === false ? 'plain' : 'html'
         if (format === 'html') {
-          sigText = pre.draft ? '' : signatureText(pre.accountId)
+          const sig = pre.draft ? null : defaultSignature(pre.accountId)
+          sigId = sig?.id ?? null
+          sigInserted = sig?.html ?? null
           html = pre.draft
             ? pre.draft.html!
-            : `<p></p>${signatureHtml(sigText)}${pre.quote ? quoteHtml(quoteHeader(pre.quote), pre.quote.text) : pre.forward ? forwardHtml(pre.forward) : ''}`
+            : `<p></p>${sigBlockHtml(sig)}${pre.quote ? quoteHtml(quoteHeader(pre.quote), pre.quote.text) : pre.forward ? forwardHtml(pre.forward) : ''}`
         } else {
-          sigBlock = pre.draft ? '' : signatureBlock(pre.accountId)
-          body = pre.draft ? pre.draft.text : sigBlock + (pre.quote ? quoteText(pre.quote) : pre.forward ? forwardText(pre.forward) : '')
+          const sig = pre.draft ? null : defaultSignature(pre.accountId)
+          sigId = sig?.id ?? null
+          sigInserted = sig?.html ?? null
+          sigInsertedText = sigBlockText(sig).trim()
+          body = pre.draft ? pre.draft.text : sigBlockText(sig) + (pre.quote ? quoteText(pre.quote) : pre.forward ? forwardText(pre.forward) : '')
         }
         replyToMessage = pre.replyToMessage
         attachments = pre.attachments.map((a, i) => ({ key: `pre:${i}`, name: a.filename, size: a.size, source: a.source }))
@@ -367,7 +455,7 @@
     return t(key) !== key ? t(key) : t('errors.generic', { message: err.message ?? String(e) })
   }
 
-  async function send(): Promise<void> {
+  async function send(sendAt: string | null = null): Promise<void> {
     if (sending || accountId === null) return
     error = null
     if (!to.trim() && !cc.trim() && !bcc.trim()) {
@@ -395,7 +483,8 @@
         replyToMessage,
         // Proxy zo stavu Svelte sa cez MessagePort neprenesie – posielame obyčajné objekty.
         attachments: attachments.map((a) => ({ ...a.source })),
-        draftId
+        draftId,
+        sendAt
       })
       closing = true
       // Správa je vo fronte – odošle sa hneď alebo hneď po obnovení spojenia. Okno môžeme zavrieť.
@@ -442,9 +531,12 @@
 
 <div class="compose">
   <header class="bar">
-    <button class="btn btn-primary" onclick={send} disabled={sending || !ready} title={t('compose.shortcut')}>
-      {sending ? t('compose.sending') : `${t('compose.send')} ➤`}
-    </button>
+    <span class="split">
+      <button class="btn btn-primary" onclick={() => void send()} disabled={sending || !ready} title={t('compose.shortcut')}>
+        {sending ? t('compose.sending') : `${t('compose.send')} ➤`}
+      </button>
+      <button class="btn btn-primary more" class:on={scheduleOpen} aria-pressed={scheduleOpen} onclick={openSchedule} disabled={sending || !ready} title={t('compose.sendLater')} aria-label={t('compose.sendLater')}>🕓</button>
+    </span>
     <button class="btn" onclick={pickFiles} disabled={sending || !ready}><Icon name="attachment" size={15} />{t('compose.attach')}</button>
     <button class="btn" class:on={format === 'html'} aria-pressed={format === 'html'} onclick={toggleFormat} disabled={sending || !ready} title={t('compose.formatTitle')}>
       {format === 'html' ? t('compose.formatOn') : t('compose.formatOff')}
@@ -452,6 +544,7 @@
     {#if aiReady(ai.config)}
       <button class="btn" class:on={aiOpen} aria-pressed={aiOpen} onclick={() => (aiOpen = !aiOpen)} disabled={sending || !ready} title={t('ai.compose.buttonTitle')}><Icon name="ai" size={15} />{t('ai.compose.button')}</button>
     {/if}
+    <button class="btn" class:on={templatesOpen} aria-pressed={templatesOpen} onclick={() => (templatesOpen = !templatesOpen)} disabled={sending || !ready} title={t('templates.buttonTitle')}>{t('templates.button')}</button>
     <button class="btn" onclick={discard} disabled={sending || !ready} title={t('compose.discardTitle')}>🗑 {t('compose.discardBtn')}</button>
     <span class="status" class:warn={saveFailed} role="status">
       {#if saveFailed}{t('compose.draftFailed')}{:else if savedAt && savedOffline}{t('compose.draftSavedLocal', { time: timeOnly(savedAt) })}{:else if savedAt}{t('compose.draftSaved', { time: timeOnly(savedAt) })}{:else}{t('compose.plainOnly')}{/if}
@@ -490,6 +583,15 @@
       <span>{t('compose.subject')}</span>
       <input bind:value={subject} type="text" dir="auto" disabled={sending} />
     </label>
+    {#if signaturesOf(accountId).length}
+      <label class="row">
+        <span>{t('signature.label')}</span>
+        <select class="sig" value={sigId === null ? '' : String(sigId)} onchange={(e) => onSignatureSelect(e.currentTarget.value)} disabled={sending}>
+          {#each signaturesOf(accountId) as x, i (x.id)}<option value={String(x.id)}>{sigName(x, i)}</option>{/each}
+          <option value="">{t('signature.none')}</option>
+        </select>
+      </label>
+    {/if}
   </form>
 
   {#if attachments.length}
@@ -509,6 +611,27 @@
         {#if totalSize > MAX_ATTACHMENTS_BYTES}· {t('errors.ATTACHMENTS_TOO_LARGE')}{:else if totalSize > WARN_ATTACHMENTS_BYTES}· {t('compose.attachmentsBig')}{/if}
       </p>
     </section>
+  {/if}
+
+  {#if scheduleOpen && ready}
+    <form
+      class="schedule"
+      onsubmit={(e) => {
+        e.preventDefault()
+        scheduleSend()
+      }}
+    >
+      <label for="send-at">{t('compose.sendLaterAt')}</label>
+      <input id="send-at" type="datetime-local" bind:value={scheduleAt} min={localInput(new Date())} disabled={sending} />
+      <button type="button" class="btn small" onclick={() => (scheduleAt = preset('tomorrow'))} disabled={sending}>{t('compose.tomorrowMorning')}</button>
+      <button type="button" class="btn small" onclick={() => (scheduleAt = preset('monday'))} disabled={sending}>{t('compose.mondayMorning')}</button>
+      <button type="submit" class="btn btn-primary small" disabled={sending || !scheduleAt}>{t('compose.schedule')}</button>
+      <small>{t('compose.scheduleNote')}</small>
+    </form>
+  {/if}
+
+  {#if templatesOpen && ready}
+    <TemplatesPanel current={templateSource} apply={applyTemplate} disabled={sending} onclose={() => (templatesOpen = false)} />
   {/if}
 
   {#if aiOpen && ready && aiReady(ai.config)}
@@ -547,6 +670,42 @@
     white-space: nowrap;
     flex: none;
   }
+  .split {
+    display: inline-flex;
+    flex: none;
+  }
+  .split .btn:first-child {
+    border-start-end-radius: 0;
+    border-end-end-radius: 0;
+  }
+  .split .more {
+    border-start-start-radius: 0;
+    border-end-start-radius: 0;
+    border-inline-start: 1px solid rgb(255 255 255 / 30%);
+    padding-inline: 0.55em;
+  }
+  .schedule {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.45rem;
+    padding: 0.5rem 1rem;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface-2);
+    font-size: 0.88rem;
+  }
+  .schedule input {
+    width: auto;
+  }
+  .schedule small {
+    flex-basis: 100%;
+    color: var(--text-muted);
+    font-size: 0.8rem;
+  }
+  .btn.small {
+    padding: 0.25em 0.6em;
+    font-size: 0.82rem;
+  }
   .status {
     min-width: 0;
     overflow: hidden;
@@ -583,6 +742,11 @@
     background: var(--bg);
     width: 100%;
     min-width: 0;
+  }
+  select.sig {
+    justify-self: start;
+    width: auto;
+    min-width: 12rem;
   }
   .link {
     justify-self: start;

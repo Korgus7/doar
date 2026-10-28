@@ -32,6 +32,7 @@ export class SyncManager {
     undoDelayMs?: number
     draftDelayMs?: number
     onNewMail?: SyncDeps['onNewMail']
+    onArrived?: SyncDeps['onArrived']
   }) {
     this.undoDelayMs = opts.undoDelayMs ?? 8000
     this.draftDelayMs = opts.draftDelayMs ?? 30_000
@@ -43,6 +44,7 @@ export class SyncManager {
       clientFactory: opts.clientFactory,
       smtpSend: opts.smtpSend,
       onNewMail: opts.onNewMail,
+      onArrived: opts.onArrived,
       onAuthRejected: (acc) => opts.oauth?.invalidate(acc.id),
       getPassword: async (acc) => {
         if (acc.auth_type === 'oauth2') {

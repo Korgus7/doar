@@ -31,9 +31,18 @@ test('nastavenia: názov, farba, podpis v novej správe, server, upozornenia, od
   await dlg.getByLabel('Názov konta').fill('Práca')
   await dlg.getByLabel('Meno odosielateľa').fill('Tomáš Kováč')
   await dlg.getByRole('radio', { name: 'Farba 3' }).check()
-  await dlg.getByLabel('Podpis').fill('S pozdravom\nTomáš Kováč')
   await dlg.getByRole('button', { name: 'Uložiť', exact: true }).click()
   await expect(dlg.getByText('Uložené.')).toBeVisible()
+  // Podpis (od 0.9 formátovaný, môže ich byť viac).
+  await dlg.getByRole('button', { name: 'Nový podpis' }).click()
+  const sigEditor = dlg.getByRole('textbox', { name: 'Text podpisu' })
+  await sigEditor.click()
+  await win.keyboard.type('S pozdravom')
+  await win.keyboard.press('Shift+Enter')
+  await win.keyboard.type('Tomáš Kováč')
+  await dlg.getByRole('button', { name: 'Uložiť podpis' }).click()
+  await expect(dlg.getByText('Podpis je uložený.')).toBeVisible()
+  await expect(dlg.getByRole('radio', { name: 'Podpis 1' })).toBeChecked()
   await expect(folders.getByText('Práca')).toBeVisible()
   await win.screenshot({ path: 'test-results/nastavenia-konto.png' })
 
@@ -63,7 +72,7 @@ test('nastavenia: názov, farba, podpis v novej správe, server, upozornenia, od
   const [c] = await Promise.all([app.waitForEvent('window'), win.getByRole('button', { name: /Nová správa/ }).click()])
   await c.waitForLoadState('domcontentloaded')
   // Prázdny prvý odsek (kurzor), potom podpis „--“ a jeho riadky.
-  expect(await c.getByRole('textbox', { name: 'Text správy' }).innerHTML()).toMatch(/^<p dir="auto"><br class="ProseMirror-trailingBreak"><\/p><p dir="auto">--<br>S pozdravom<br>Tomáš Kováč<\/p>$/)
+  expect(await c.getByRole('textbox', { name: 'Text správy' }).innerHTML()).toMatch(/^<p dir="auto"><br class="ProseMirror-trailingBreak"><\/p><p dir="auto">--<\/p><p dir="auto">S pozdravom<br>Tomáš Kováč<\/p>$/)
   await Promise.all([c.waitForEvent('close'), app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().find((w) => w.getTitle() === 'Nová správa')?.close())])
 
   // Vzhľad: Tmavý / Svetlý / Podľa systému – prepne sa hneď a zapamätá sa.
@@ -92,7 +101,7 @@ test('nastavenia: názov, farba, podpis v novej správe, server, upozornenia, od
   // Ponuka ☰: položky, ktoré boli dole v paneli; „Pridať konto…“ otvorí sprievodcu.
   await win.getByRole('button', { name: 'Ponuka' }).click()
   const menu = win.getByRole('menu', { name: 'Ponuka' })
-  await expect(menu.getByRole('menuitem')).toHaveText([/^Pridať konto…/, /^Zálohovať konto…/, /^Obnoviť zo zálohy…/, /^Importovať z iného programu…/, /^Otvoriť archív…/, /^Nastavenia…/, /^Skontrolovať aktualizácie…/, /^O aplikácii Doar Mail/])
+  await expect(menu.getByRole('menuitem')).toHaveText([/^Pridať konto…/, /^Zálohovať konto…/, /^Obnoviť zo zálohy…/, /^Importovať z iného programu…/, /^Otvoriť archív…/, /^Otvoriť správu zo súboru \(\.eml\)…/, /Zoskupiť do konverzácií/, /^Nastavenia…/, /^Skontrolovať aktualizácie…/, /^O aplikácii Doar Mail/])
   await menu.getByRole('menuitem', { name: 'Pridať konto…' }).click()
   await expect(win.getByRole('heading', { name: 'Pridať konto' })).toBeVisible()
   await win.getByRole('button', { name: 'Zrušiť' }).click()

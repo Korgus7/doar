@@ -1,7 +1,7 @@
 import type { AttachmentInfo, FolderItem } from '../../../shared/ipc'
-import { isArchiveId, isDangerousFile } from '../../../shared/ipc'
+import { isArchiveId, isDangerousFile, previewKind } from '../../../shared/ipc'
 import { t, type MessageKey } from '../i18n/index.svelte'
-import { mail, setSelection, indexOf, messageAt, itemsById, allIds, setFlags, loadFolders, findFolder, selectFolder } from './mail.svelte'
+import { mail, setSelection, indexOf, messageAt, itemsById, allIds, setFlags, loadFolders, findFolder, selectFolder, expandThreads } from './mail.svelte'
 
 /**
  * Akcie nad správami (Kôš, Archív, presun, spam, natrvalo) a stav okolo nich:
@@ -37,7 +37,9 @@ export const ui = $state({
   /** Práve ťahané správy (dragover nevidí obsah dataTransfer). */
   dragging: null as null | { ids: number[]; accountIds: number[] },
   /** Ťahaný priečinok (presun pod iný priečinok alebo na najvyššiu úroveň). */
-  draggingFolder: null as null | { id: number; accountId: number }
+  draggingFolder: null as null | { id: number; accountId: number },
+  /** Náhľad prílohy (obrázok, text) nad oknom. */
+  preview: null as null | { messageId: number; attachment: AttachmentInfo; image?: string; text?: string }
 })
 
 let toastSeq = 0
@@ -75,8 +77,9 @@ export function folderById(id: number | null | undefined): FolderItem | undefine
 }
 
 /** Správy kont (správy archívu sa nedajú meniť, presúvať ani mazať). */
+/** Správy, s ktorými sa dá pracovať (nie archív); riadok konverzácie = všetky jej správy v priečinku. */
 function writable(ids: number[]): number[] {
-  return ids.filter((id) => !isArchiveId(id))
+  return expandThreads(ids.filter((id) => !isArchiveId(id)))
 }
 
 function specialOf(ids: number[]): string | null | undefined {
@@ -141,7 +144,8 @@ export async function moveTo(list: number[], target: { folderId?: number; specia
   // Polia zo stavu Svelte sú proxy – cez MessagePort sa dajú poslať len obyčajné hodnoty.
   const ids = writable([...list])
   if (!ids.length) return
-  const before = [...ids]
+  // Výber na obnovenie: riadky zoznamu (pri konverzáciách nie všetky ich správy).
+  const before = list.filter((id) => !isArchiveId(id))
   try {
     selectAfter(ids)
     const r = await window.doar.invoke('messages.move', { ids, ...target })
@@ -355,9 +359,22 @@ export async function openAttachment(messageId: number, a: AttachmentInfo): Prom
   }
 }
 
+/** Náhľad prílohy: obrázok a text v Doare, PDF v okne náhľadu. */
+export async function previewAttachment(messageId: number, a: AttachmentInfo): Promise<void> {
+  try {
+    const p = await window.doar.invoke('attachments.preview', { messageId, index: a.index })
+    if (p.kind === 'pdf') {
+      if (!(await window.doar.previewPdf(p.path, a.filename))) showToast(t('errors.NO_PREVIEW'), { tone: 'error' })
+    } else ui.preview = { messageId, attachment: a, ...(p.kind === 'image' ? { image: p.dataUrl } : { text: p.text }) }
+  } catch (e) {
+    showToast(errorText(e), { tone: 'error' })
+  }
+}
+
 export function attachmentMenu(messageId: number, a: AttachmentInfo): MenuEntry[] {
   const dangerous = isDangerousFile(a.filename)
   return [
+    ...(previewKind(a.filename, a.contentType) ? [{ label: t('attachments.preview'), run: () => void previewAttachment(messageId, a) }] : []),
     { label: dangerous ? t('attachments.openBlocked') : t('attachments.open'), disabled: dangerous, run: () => void openAttachment(messageId, a) },
     { label: t('attachments.saveAs'), run: () => void saveAttachment(messageId, a) }
   ]

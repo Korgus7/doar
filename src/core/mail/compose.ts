@@ -29,11 +29,13 @@ export interface ComposeInput {
   text: string
   inReplyTo?: string | null
   references?: string[]
-  attachments?: { filename: string; content: Buffer; contentType?: string }[]
+  attachments?: { filename: string; content: Buffer; contentType?: string; cid?: string }[]
   /** Pevné Message-ID (koncept má rovnaké naprieč verziami); inak sa vytvorí nové. */
   messageId?: string
   /** Formátovaná podoba (už prečistené HTML na odoslanie). Text je potom alternatíva (multipart/alternative). */
   html?: string | null
+  /** Dátum v hlavičke (odoslať neskôr = naplánovaný čas); inak teraz. */
+  date?: Date
 }
 
 /**
@@ -52,11 +54,11 @@ export async function composeMessage(input: ComposeInput): Promise<{ raw: Buffer
     text: input.text,
     html: input.html ?? undefined,
     messageId,
-    date: new Date(),
+    date: input.date ?? new Date(),
     inReplyTo: input.inReplyTo ?? undefined,
     references: input.references?.length ? input.references : undefined,
     textEncoding: 'quoted-printable',
-    attachments: input.attachments?.map((a) => ({ filename: a.filename, content: a.content, contentType: a.contentType })),
+    attachments: input.attachments?.map((a) => ({ filename: a.filename, content: a.content, contentType: a.contentType, ...(a.cid ? { cid: a.cid, contentDisposition: 'inline' as const } : {}) })),
     headers: { 'X-Mailer': 'Doar' }
   })
   const compiled = mail.compile()
