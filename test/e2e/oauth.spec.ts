@@ -2,15 +2,13 @@ import { test, expect } from '@playwright/test'
 import { createHash } from 'node:crypto'
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
-import { testAccessToken } from '../../scripts/testserver.mjs'
-import { launchApp, testServer } from './helpers'
+import { FakeGraph } from '../fixtures/graph-server'
+import { launchApp } from './helpers'
 
-const srv = testServer()
-test.skip(!srv, 'testovací poštový server (Dovecot) nie je k dispozícii')
+const USER = 'dusan@outlook.com'
+const graph = new FakeGraph()
 
-const USER = 'dusan@doar.test'
-
-/** Falošný prihlasovací server Microsoftu: overí PKCE a vydá token pre testovací poštový server. */
+/** Falošný prihlasovací server Microsoftu: overí PKCE a vydá token pre testovací server Graph. */
 async function fakeAuth(): Promise<{ base: string; close: () => void; authorized: () => number }> {
   const challenges = new Map<string, string>()
   const server = createServer((req, res) => {
@@ -31,7 +29,7 @@ async function fakeAuth(): Promise<{ base: string; close: () => void; authorized
       const challenge = challenges.get(p.get('code') ?? '')
       const ok = challenge && createHash('sha256').update(p.get('code_verifier') ?? '').digest('base64url') === challenge
       const json = ok
-        ? { access_token: testAccessToken(USER), refresh_token: 'rt-1', expires_in: 3600, id_token: `x.${Buffer.from(JSON.stringify({ email: USER })).toString('base64url')}.y` }
+        ? { access_token: graph.token, refresh_token: 'rt-1', expires_in: 3600, id_token: `x.${Buffer.from(JSON.stringify({ email: USER })).toString('base64url')}.y` }
         : { error: 'invalid_grant' }
       res.writeHead(ok ? 200 : 400, { 'content-type': 'application/json' }).end(JSON.stringify(json))
     })
@@ -40,10 +38,12 @@ async function fakeAuth(): Promise<{ base: string; close: () => void; authorized
   return { base: `http://127.0.0.1:${(server.address() as AddressInfo).port}`, close: () => server.close(), authorized: () => challenges.size }
 }
 
-test('Outlook.com: prihlásenie cez Microsoft v sprievodcovi, bez hesla → konto sa pridá', async () => {
+test('Outlook.com cez Microsoft Graph: prihlásenie v sprievodcovi, pošta, odoslanie, nastavenia konta', async () => {
   test.setTimeout(120_000)
   const auth = await fakeAuth()
-  const { app } = await launchApp({ LANG: 'sk_SK.UTF-8', DOAR_OAUTH_TEST_URL: auth.base })
+  await graph.start()
+  await graph.addMessage('inbox', `From: Eva <eva@firma.sk>\r\nTo: ${USER}\r\nSubject: Vitaj v Outlooku\r\nMessage-ID: <v1@firma.sk>\r\nDate: ${new Date().toUTCString()}\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nAhoj cez Graph\r\n`)
+  const { app } = await launchApp({ LANG: 'sk_SK.UTF-8', DOAR_OAUTH_TEST_URL: auth.base, DOAR_GRAPH_TEST_URL: graph.base })
   // Namiesto prehliadača používateľa: adresu prihlásenia „otvorí“ hlavný proces sám (presmerovania až späť do Doar).
   await app.evaluate(({ shell }) => {
     shell.openExternal = async (url: string) => {
@@ -51,11 +51,12 @@ test('Outlook.com: prihlásenie cez Microsoft v sprievodcovi, bez hesla → kont
     }
   })
   const win = await app.firstWindow()
+  await win.setViewportSize({ width: 1280, height: 800 }).catch(() => {})
   await win.getByRole('status').filter({ hasText: 'SQLite' }).waitFor()
 
   await win.getByRole('button', { name: 'Pridať konto' }).click()
   await win.getByLabel('Vaše meno').fill('Dušan Testový')
-  await win.getByLabel('E‑mailová adresa').fill('dusan@outlook.com')
+  await win.getByLabel('E‑mailová adresa').fill('dusan@hotmail.com')
   await win.getByRole('button', { name: 'Pokračovať' }).click()
 
   const signIn = win.getByRole('button', { name: 'Prihlásiť sa cez Microsoft' })
@@ -64,17 +65,6 @@ test('Outlook.com: prihlásenie cez Microsoft v sprievodcovi, bez hesla → kont
   await expect(win.getByRole('button', { name: 'Overiť a uložiť' })).toHaveCount(0)
   await expect(win.getByLabel('Heslo')).toHaveCount(0)
   await win.screenshot({ path: 'test-results/oauth-sprievodca.png' })
-
-  // Skutočné servery Outlooku sú v teste nedostupné → nasmerujeme ich na testovací server.
-  await win.getByRole('button', { name: 'Upraviť ručne' }).click()
-  await expect(win.getByLabel('Heslo')).toHaveCount(0)
-  const servers = win.getByLabel('Server')
-  const ports = win.getByLabel('Port')
-  await servers.nth(0).fill('127.0.0.1')
-  await ports.nth(0).fill(String(srv!.ports.imaps))
-  await servers.nth(1).fill('127.0.0.1')
-  await win.getByLabel('Zabezpečenie').nth(1).selectOption('tls')
-  await ports.nth(1).fill(String(srv!.ports.smtps))
 
   await signIn.click()
   const sessionOnly = win.getByRole('button', { name: 'Pokračovať bez uloženia hesla' })
@@ -85,12 +75,32 @@ test('Outlook.com: prihlásenie cez Microsoft v sprievodcovi, bez hesla → kont
   await expect(shell.getByText(USER)).toBeVisible({ timeout: 30_000 })
   expect(auth.authorized()).toBe(1)
 
-  // V nastaveniach konta: namiesto hesla prihlásenie cez Microsoft.
+  // Pošta cez Graph: priečinky Outlooku, správa aj s obsahom.
+  await expect(shell.getByRole('button', { name: /^Odoslané/ })).toBeVisible({ timeout: 30_000 })
+  await expect(shell.getByRole('button', { name: /^Kôš/ })).toBeVisible()
+  await expect(shell.getByRole('button', { name: /^Outbox/ })).toHaveCount(0)
+  await expect(win.getByText('Vitaj v Outlooku').first()).toBeVisible({ timeout: 30_000 })
+  await win.getByText('Vitaj v Outlooku').first().click()
+  await expect(win.frameLocator('iframe').first().getByText('Ahoj cez Graph').or(win.getByText('Ahoj cez Graph'))).toBeVisible({ timeout: 30_000 })
+
+  // Odoslanie cez Graph.
+  const [c] = await Promise.all([app.waitForEvent('window'), win.getByRole('button', { name: /Nová správa/ }).click()])
+  // Okno je pripravené, keď má vybraté konto odosielateľa.
+  await expect(c.getByRole('combobox', { name: /^Od/ })).toHaveValue(/\d+/, { timeout: 15_000 })
+  await c.getByLabel('Komu').fill('eva@firma.sk')
+  await c.getByLabel('Predmet').fill('Odpoveď z Doaru')
+  await c.getByLabel('Text správy').fill('Ahoj Eva')
+  await Promise.all([c.waitForEvent('close'), c.getByRole('button', { name: /^Odoslať ➤/ }).click()])
+  await expect.poll(() => graph.sent.length, { timeout: 30_000 }).toBe(1)
+  expect(graph.sent[0]!.toString()).toMatch(/^To: eva@firma\.sk$/m)
+  await expect.poll(() => graph.inFolder('sentitems').length, { timeout: 10_000 }).toBe(1)
+
+  // V nastaveniach konta: bez servera a hesla, len prihlásenie cez Microsoft.
   await win.getByRole('button', { name: 'Nastavenia' }).first().click()
   await win.getByText('Nastavenia servera', { exact: true }).click()
-  await expect(win.getByText('Prihlásenie cez Microsoft – heslo sa neukladá.')).toBeVisible()
-  await expect(win.getByRole('button', { name: 'Prihlásiť sa znova cez Microsoft' })).toBeVisible()
+  await expect(win.getByText('Pošta tohto konta ide cez Microsoft Graph', { exact: false })).toBeVisible()
   await expect(win.getByLabel('Nové heslo')).toHaveCount(0)
+  await expect(win.getByRole('button', { name: 'Overiť a uložiť' })).toHaveCount(0)
   await win.screenshot({ path: 'test-results/oauth-nastavenia.png' })
   await win.getByRole('button', { name: 'Prihlásiť sa znova cez Microsoft' }).click()
   await expect(win.getByText('Prihlásenie je obnovené.')).toBeVisible({ timeout: 30_000 })
@@ -98,4 +108,5 @@ test('Outlook.com: prihlásenie cez Microsoft v sprievodcovi, bez hesla → kont
 
   await app.close()
   auth.close()
+  await graph.close()
 })

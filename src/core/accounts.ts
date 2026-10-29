@@ -45,6 +45,8 @@ export function validateSettings(input: unknown): AccountSettings {
 }
 
 const SUMMARY_COLS = `id, email, name, color, display_name AS displayName`
+/** „Server“ kont cez Microsoft Graph (IMAP/SMTP sa nepoužíva; stĺpce v databáze sú povinné). */
+export const GRAPH_HOST = 'graph.microsoft.com'
 
 /** Podpisy k údajom konta (predvolený aj ako čistý text). */
 function withSignatures(db: Db, rows: Omit<AccountSummary, 'signature' | 'signatures'>[]): AccountSummary[] {
@@ -67,7 +69,7 @@ export function accountSummary(db: Db, id: number): AccountSummary | null {
 export function getAccount(db: Db, id: number): AccountDetails {
   const r = db
     .prepare(
-      `SELECT ${SUMMARY_COLS}, username, imap_host, imap_port, imap_security, smtp_host, smtp_port, smtp_security, save_sent_copy, password_storage, auth_type, provider_key,
+      `SELECT ${SUMMARY_COLS}, username, imap_host, imap_port, imap_security, smtp_host, smtp_port, smtp_security, save_sent_copy, password_storage, auth_type, provider_key, protocol,
               (SELECT COUNT(*) FROM outbox o WHERE o.account_id = accounts.id AND o.state IN ('queued','sending','error','uncertain')) AS pending
        FROM accounts WHERE id = ?`
     )
@@ -84,6 +86,7 @@ export function getAccount(db: Db, id: number): AccountDetails {
         password_storage: 'os' | 'session'
         auth_type: 'password' | 'oauth2'
         provider_key: string | null
+        protocol: 'imap' | 'graph'
         pending: number
       })
     | undefined
@@ -103,6 +106,7 @@ export function getAccount(db: Db, id: number): AccountDetails {
     passwordStorage: r.password_storage,
     authType: r.auth_type,
     oauthProvider: r.auth_type === 'oauth2' ? oauthProviderOf(r.provider_key) : null,
+    protocol: r.protocol,
     pendingOutbox: r.pending
   }
 }
@@ -200,7 +204,13 @@ export async function addAccount(db: Db, secrets: Secrets, sessionSecrets: Secre
     }
     const provider = oauth.flowProvider(flowId)
     if (provider) settings.providerKey = provider === 'google' ? 'gmail' : 'microsoft'
+    // Outlook.com, Hotmail, Microsoft 365: pošta cez Microsoft Graph (IMAP a SMTP Microsoft novým kontám vypína).
+    if (provider === 'microsoft') {
+      settings.imap = { host: GRAPH_HOST, port: 443, security: 'tls' }
+      settings.smtp = { host: GRAPH_HOST, port: 443, security: 'tls' }
+    }
   } else if (typeof input.password !== 'string' || input.password.length === 0) throw err('PASSWORD_REQUIRED', 'Chýba heslo')
+  const protocol = flowId && settings.providerKey === 'microsoft' ? 'graph' : 'imap'
   const remember = input.rememberPassword !== false
   if (remember && !(await secrets.available())) {
     throw err('SECURE_STORAGE_UNAVAILABLE', 'Bezpečné úložisko hesiel systému nie je dostupné')
@@ -218,8 +228,8 @@ export async function addAccount(db: Db, secrets: Secrets, sessionSecrets: Secre
   const row = db
     .prepare(
       `INSERT INTO accounts (email, display_name, name, imap_host, imap_port, imap_security, smtp_host, smtp_port, smtp_security,
-        auth_type, username, provider_key, save_sent_copy, color, sort_order, password_storage)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        auth_type, username, provider_key, save_sent_copy, color, sort_order, password_storage, protocol)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        RETURNING ${SUMMARY_COLS}`
     )
     .get(
@@ -238,7 +248,8 @@ export async function addAccount(db: Db, secrets: Secrets, sessionSecrets: Secre
       settings.saveSentCopy ? 1 : 0,
       color,
       count,
-      remember ? 'os' : 'session'
+      remember ? 'os' : 'session',
+      protocol
     ) as unknown as AccountSummary
 
   try {

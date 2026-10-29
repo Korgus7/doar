@@ -103,7 +103,8 @@ const settings: AccountSettings = {
   imap: { host: '127.0.0.1', port: srv.ports.imaps, security: 'tls' },
   smtp: { host: '127.0.0.1', port: srv.ports.smtps, security: 'tls' },
   saveSentCopy: false,
-  providerKey: 'microsoft'
+  // IMAP/SMTP s tokenom (XOAUTH2) používa Google; Microsoft ide cez Graph (test/unit/graph.test.ts).
+  providerKey: 'gmail'
 }
 
 /** „Prehliadač“: otvorí adresu prihlásenia, server presmeruje na spätné volanie Doar Mail. */
@@ -113,7 +114,7 @@ async function browse(url: string): Promise<{ status: number; html: string }> {
 }
 
 async function signIn(loginHint = USER): Promise<string> {
-  const { flowId, url } = await h['oauth.start']({ provider: 'microsoft', loginHint, lang: 'sk', text: { title: 'Doar Mail', done: 'Prihlásenie hotové', failed: 'Nepodarilo sa' } })
+  const { flowId, url } = await h['oauth.start']({ provider: 'google', loginHint, lang: 'sk', text: { title: 'Doar Mail', done: 'Prihlásenie hotové', failed: 'Nepodarilo sa' } })
   const page = await browse(url)
   expect(page.html).toContain('Prihlásenie hotové')
   await h['oauth.finish']({ flowId })
@@ -185,9 +186,9 @@ describe('prihlásenie cez Microsoft/Google (OAuth)', () => {
     accountId = acc.id
     expect(acc.email).toBe(USER) // adresa z prihlásenia má prednosť pred preklepom
     const details = await h['accounts.get']({ id: accountId })
-    expect(details).toMatchObject({ authType: 'oauth2', oauthProvider: 'microsoft', passwordStorage: 'os' })
+    expect(details).toMatchObject({ authType: 'oauth2', oauthProvider: 'google', passwordStorage: 'os', protocol: 'imap' })
     expect(await secrets.get(passwordKey(accountId))).toBeNull()
-    expect(JSON.parse((await secrets.get(oauthKey(accountId)))!)).toEqual({ provider: 'microsoft', refreshToken: 'rt-1' })
+    expect(JSON.parse((await secrets.get(oauthKey(accountId)))!)).toEqual({ provider: 'google', refreshToken: 'rt-1' })
     expect(JSON.stringify(db.prepare('SELECT * FROM accounts').all())).not.toContain('rt-1')
     await until(() => sync.get(accountId)?.status.lastSync != null)
     const list = await h['messages.list']({ folderId: null, offset: 0, limit: 10 })
@@ -217,7 +218,7 @@ describe('prihlásenie cez Microsoft/Google (OAuth)', () => {
     expect(sync.get(accountId)!.status.state).not.toBe('error')
 
     // Prihlásenie zrušené u poskytovateľa → OAUTH_EXPIRED, synchronizácia sa nezacyklí.
-    await secrets.set(oauthKey(accountId), JSON.stringify({ provider: 'microsoft', refreshToken: 'revoked' }))
+    await secrets.set(oauthKey(accountId), JSON.stringify({ provider: 'google', refreshToken: 'revoked' }))
     oauth.invalidate(accountId)
     await sync.restart(accountId)
     await until(() => sync.get(accountId)?.status.code === 'OAUTH_EXPIRED')

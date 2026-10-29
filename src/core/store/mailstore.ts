@@ -28,6 +28,8 @@ export interface FolderRow {
   highestmodseq: string | null
   total_count: number
   selectable: number
+  /** Graph: odkaz na ďalšiu delta synchronizáciu priečinka. */
+  delta_link: string | null
 }
 
 export interface HeaderInput {
@@ -43,6 +45,8 @@ export interface HeaderInput {
   to: { name: string; address: string }[]
   cc: { name: string; address: string }[]
   flags: Set<string>
+  /** Graph: ID správy u poskytovateľa (uid je potom len lokálne poradové číslo). */
+  remoteId?: string
 }
 
 export interface Flags {
@@ -136,13 +140,13 @@ export class MailStore {
 
   folderRows(accountId: number): FolderRow[] {
     return this.db
-      .prepare('SELECT id, account_id, path, special_use, uidvalidity, uidnext, highestmodseq, total_count, selectable FROM folders WHERE account_id = ?')
+      .prepare('SELECT id, account_id, path, special_use, uidvalidity, uidnext, highestmodseq, total_count, selectable, delta_link FROM folders WHERE account_id = ?')
       .all(accountId) as unknown as FolderRow[]
   }
 
   folder(id: number): FolderRow | null {
     return (this.db
-      .prepare('SELECT id, account_id, path, special_use, uidvalidity, uidnext, highestmodseq, total_count, selectable FROM folders WHERE id = ?')
+      .prepare('SELECT id, account_id, path, special_use, uidvalidity, uidnext, highestmodseq, total_count, selectable, delta_link FROM folders WHERE id = ?')
       .get(id) as unknown as FolderRow | undefined) ?? null
   }
 
@@ -157,7 +161,22 @@ export class MailStore {
          FROM folders f ${accountId === undefined ? '' : 'WHERE f.account_id = ?'}`
       )
       .all(...(accountId === undefined ? [] : [accountId])) as unknown as (Omit<FolderItem, 'selectable' | 'depth'> & { selectable: number; delimiter: string | null })[]
+    // Priečinky bez oddeľovača (Graph – cesta je ID): hĺbka a poradie podľa reťazca nadradených priečinkov.
+    const byPath = new Map(rows.map((r) => [`${r.accountId}\u0000${r.path}`, r]))
+    const chain = (r: (typeof rows)[number]): (typeof rows)[number][] => {
+      const out = [r]
+      let p = r.parentPath
+      for (let i = 0; p !== null && i < 64; i++) {
+        const parent = byPath.get(`${r.accountId}\u0000${p}`)
+        if (!parent) break
+        out.unshift(parent)
+        p = parent.parentPath
+      }
+      return out
+    }
+    const sortKey = (r: (typeof rows)[number]): string => (r.delimiter === null ? chain(r).map((x) => x.name).join('\u0001') : r.path)
     const items = rows.map((r) => ({
+      sortKey: sortKey(r),
       id: r.id,
       accountId: r.accountId,
       path: r.path,
@@ -168,14 +187,16 @@ export class MailStore {
       unread: r.unread,
       total: r.total,
       localCount: r.localCount,
-      depth: r.parentPath ? r.path.split(r.delimiter ?? '/').length - 1 : 0
+      depth: !r.parentPath ? 0 : r.delimiter === null ? chain(r).length - 1 : r.path.split(r.delimiter).length - 1
     }))
-    return items.sort(
-      (a, b) =>
-        a.accountId - b.accountId ||
-        (SPECIAL_ORDER[a.specialUse ?? ''] ?? 10) - (SPECIAL_ORDER[b.specialUse ?? ''] ?? 10) ||
-        a.path.localeCompare(b.path, 'sk')
-    )
+    return items
+      .sort(
+        (a, b) =>
+          a.accountId - b.accountId ||
+          (SPECIAL_ORDER[a.specialUse ?? ''] ?? 10) - (SPECIAL_ORDER[b.specialUse ?? ''] ?? 10) ||
+          a.sortKey.localeCompare(b.sortKey, 'sk')
+      )
+      .map(({ sortKey: _k, ...item }) => item)
   }
 
   /** Zmena UIDVALIDITY: všetky lokálne záznamy priečinka sú neplatné. Originály (.eml) ostávajú. */
@@ -209,6 +230,50 @@ export class MailStore {
 
   maxUid(folderId: number): number {
     return (this.db.prepare('SELECT COALESCE(MAX(uid), 0) AS m FROM messages WHERE folder_id = ?').get(folderId) as { m: number }).m
+  }
+
+  // ---------- Graph (správy s ID u poskytovateľa) ----------
+
+  /** ID správ v Graph → lokálne uid v priečinku (a či bola odpovedaná – Graph to nevie, pamätá si to Doar). */
+  remoteUids(folderId: number): Map<string, { uid: number; answered: boolean }> {
+    const rows = this.db.prepare('SELECT uid, remote_id, answered FROM messages WHERE folder_id = ? AND remote_id IS NOT NULL').all(folderId) as { uid: number; remote_id: string; answered: number }[]
+    return new Map(rows.map((r) => [r.remote_id, { uid: r.uid, answered: r.answered === 1 }]))
+  }
+
+  messageByRemote(folderId: number, remoteId: string): number | null {
+    return (this.db.prepare('SELECT id FROM messages WHERE folder_id = ? AND remote_id = ?').get(folderId, remoteId) as { id: number } | undefined)?.id ?? null
+  }
+
+  setRemoteId(id: number, remoteId: string): void {
+    this.db.prepare('UPDATE messages SET remote_id = ? WHERE id = ?').run(remoteId, id)
+  }
+
+  /** Zmaže lokálne záznamy správ, ktoré Graph oznámil ako odstránené (alebo presunuté preč). */
+  removeRemote(folderId: number, remoteIds: string[]): number {
+    if (!remoteIds.length) return 0
+    const del = this.db.prepare('DELETE FROM messages WHERE folder_id = ? AND remote_id = ?')
+    let n = 0
+    this.db.exec('BEGIN')
+    try {
+      for (const r of remoteIds) n += Number(del.run(folderId, r).changes)
+      this.db.exec('COMMIT')
+    } catch (e) {
+      this.db.exec('ROLLBACK')
+      throw e
+    }
+    return n
+  }
+
+  /** Delta synchronizácia priečinka (Graph): odkaz na ďalšie zmeny a počet správ. */
+  setDeltaLink(folderId: number, link: string | null, total?: number): void {
+    this.db
+      .prepare(
+        `UPDATE folders SET delta_link = ?, total_count = COALESCE(?, (SELECT COUNT(*) FROM messages WHERE folder_id = folders.id)),
+           last_sync_at = strftime('%Y-%m-%dT%H:%M:%fZ','now'),
+           synced_bodies_count = (SELECT COUNT(*) FROM messages WHERE folder_id = folders.id AND blob_sha256 IS NOT NULL)
+         WHERE id = ?`
+      )
+      .run(link, total ?? null, folderId)
   }
 
   // ---------- konverzácie ----------
@@ -290,8 +355,8 @@ export class MailStore {
     if (!list.length) return 0
     const ins = this.db.prepare(
       `INSERT OR IGNORE INTO messages (account_id, folder_id, uid, size, internal_date, date_header, message_id, in_reply_to, subject,
-         from_addr, from_name, to_json, cc_json, seen, flagged, answered, draft, keywords_json)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`
+         from_addr, from_name, to_json, cc_json, seen, flagged, answered, draft, keywords_json, remote_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`
     )
     const fts = this.db.prepare('INSERT INTO messages_fts(rowid, subject, from_text, to_text, body_text) VALUES (?, ?, ?, ?, ?)')
     let added = 0
@@ -317,7 +382,8 @@ export class MailStore {
           f.flagged ? 1 : 0,
           f.answered ? 1 : 0,
           f.draft ? 1 : 0,
-          JSON.stringify(f.keywords)
+          JSON.stringify(f.keywords),
+          h.remoteId ?? null
         ) as { id: number } | undefined
         if (!row) continue
         added++
@@ -1052,6 +1118,8 @@ export interface MessageRow {
   local_state: string
   /** Cieľ presunu, ktorý ešte čaká na server (správa sa už zobrazuje tam). */
   moving_to: number | null
+  /** Graph: ID správy u poskytovateľa. */
+  remote_id: string | null
   folder_path: string
   account_email: string
 }

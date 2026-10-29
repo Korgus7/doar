@@ -64,6 +64,8 @@ describe('podpisy', () => {
     const old = openDb(file)
     old.prepare(`INSERT INTO accounts(id,email,imap_host,imap_port,imap_security,smtp_host,smtp_port,smtp_security,username,signature)
       VALUES (1,'a@b.sk','i',993,'tls','s',465,'tls','a','Ján Novák\r\nTel. 0905 <1>')`).run()
+    // Databáza z verzie 0.8 (migrácie po 17 sa vrátia).
+    old.exec('DELETE FROM schema_migrations WHERE version = 19; DROP INDEX messages_remote; ALTER TABLE messages DROP COLUMN remote_id; ALTER TABLE folders DROP COLUMN delta_link; ALTER TABLE accounts DROP COLUMN protocol')
     old.exec("DELETE FROM signatures; DELETE FROM schema_migrations WHERE version = 18; DROP TABLE signatures; DROP TABLE contact_group_members; DROP TABLE contact_groups; DROP INDEX messages_thread; DROP INDEX messages_account_msgid; DROP INDEX messages_reply_to; DROP INDEX messages_thread_subject; ALTER TABLE messages DROP COLUMN thread_subject")
     old.close()
     const db2 = openDb(file)

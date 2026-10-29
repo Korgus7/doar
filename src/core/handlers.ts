@@ -11,6 +11,7 @@ import type { ArchiveManager } from './archive/archive'
 import { buildView } from './view'
 import { discover } from './providers/discover'
 import { testConnection } from './mail/connection-test'
+import { testGraph } from './graph/test'
 import { addAccount, getAccount, listAccounts, reorderAccounts, updateAccount, validateSettings } from './accounts'
 import { removeAccount, updateServer } from './account-admin'
 import { getSettings, setSettings } from './settings'
@@ -139,6 +140,8 @@ export function createHandlers(ctx: CoreContext): Handlers {
     'accounts.test': async (data) => {
       const settings = validateSettings(data?.settings)
       if (data?.oauth?.flowId) {
+        // Microsoft: pošta cez Graph (IMAP a SMTP sa neoverujú).
+        if (oauth.flowProvider(data.oauth.flowId) === 'microsoft') return testGraph(oauth.flowCredential(data.oauth.flowId).accessToken)
         const signedIn = oauth.flowEmail(data.oauth.flowId)
         return testConnection(signedIn ? { ...settings, email: signedIn, username: signedIn } : settings, oauth.flowCredential(data.oauth.flowId))
       }

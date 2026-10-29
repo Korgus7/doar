@@ -69,7 +69,8 @@ export function oauthConfig(env: Record<string, string | undefined> = process.en
       ? {
           authUrl: 'https://login.microsoftonline.com/common/oauth2/v2.0/authorize',
           tokenUrl: 'https://login.microsoftonline.com/common/oauth2/v2.0/token',
-          scope: 'offline_access openid email https://outlook.office.com/IMAP.AccessAsUser.All https://outlook.office.com/SMTP.Send',
+          // Pošta cez Microsoft Graph (čítanie, presuny, koncepty aj odosielanie) – IMAP a SMTP Microsoft novým kontám vypína.
+          scope: 'offline_access openid email https://graph.microsoft.com/Mail.ReadWrite https://graph.microsoft.com/Mail.Send',
           clientId: ms,
           scopeOnToken: true,
           extraAuth: { prompt: 'select_account' },

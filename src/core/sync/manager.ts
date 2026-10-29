@@ -6,12 +6,18 @@ import { passwordKey } from '../secrets'
 import type { CoreEvents, EventChannel, SyncStatus } from '../../shared/ipc'
 import type { ImapFlow } from 'imapflow'
 import { AccountSync, type AccountRow, type MovePayload, type SyncDeps } from './account-sync'
+import { GraphSync } from './graph-sync'
+import type { GraphFetch } from '../graph/client'
 import { createImapClient } from '../mail/imap'
 import type { OAuthService } from '../oauth/oauth'
 
+/** Synchronizácia jedného konta: IMAP + SMTP, alebo Microsoft Graph. */
+export type MailSync = AccountSync | GraphSync
+
 /** Spravuje synchronizáciu všetkých kont. */
 export class SyncManager {
-  private syncs = new Map<number, AccountSync>()
+  private syncs = new Map<number, MailSync>()
+  private graphOpts: { graphBase?: string; graphFetch?: GraphFetch }
   private deps: SyncDeps
   private undoDelayMs: number
   /** Odstup nahratia konceptu na server od posledného uloženia (ms). */
@@ -33,7 +39,11 @@ export class SyncManager {
     draftDelayMs?: number
     onNewMail?: SyncDeps['onNewMail']
     onArrived?: SyncDeps['onArrived']
+    /** Pre testy: falošný server Microsoft Graph. */
+    graphBase?: string
+    graphFetch?: GraphFetch
   }) {
+    this.graphOpts = { graphBase: opts.graphBase, graphFetch: opts.graphFetch }
     this.undoDelayMs = opts.undoDelayMs ?? 8000
     this.draftDelayMs = opts.draftDelayMs ?? 30_000
     this.deps = {
@@ -59,7 +69,7 @@ export class SyncManager {
   private accountRow(id: number): AccountRow | null {
     return (this.deps.db
       .prepare(
-        'SELECT id, email, username, imap_host, imap_port, imap_security, smtp_host, smtp_port, smtp_security, save_sent_copy, display_name, password_storage, auth_type FROM accounts WHERE id = ?'
+        'SELECT id, email, username, imap_host, imap_port, imap_security, smtp_host, smtp_port, smtp_security, save_sent_copy, display_name, password_storage, auth_type, protocol FROM accounts WHERE id = ?'
       )
       .get(id) as unknown as AccountRow | undefined) ?? null
   }
@@ -71,6 +81,7 @@ export class SyncManager {
   async newImapClient(accountId: number): Promise<ImapFlow> {
     const row = this.accountRow(accountId)
     if (!row) throw Object.assign(new Error('Konto neexistuje'), { code: 'NO_ACCOUNT' })
+    if (row.protocol === 'graph') throw Object.assign(new Error('Pre kontá cez Microsoft Graph zatiaľ nie je dostupné'), { code: 'GRAPH_UNSUPPORTED' })
     const pass = await this.deps.getPassword(row)
     if (!pass) throw Object.assign(new Error('Chýba heslo'), { code: 'PASSWORD_REQUIRED' })
     return this.deps.clientFactory
@@ -90,7 +101,7 @@ export class SyncManager {
     if (this.syncs.has(accountId)) return
     const row = this.accountRow(accountId)
     if (!row) return
-    const s = new AccountSync(row, this.deps)
+    const s: MailSync = row.protocol === 'graph' ? new GraphSync(row, { ...this.deps, ...this.graphOpts }) : new AccountSync(row, this.deps)
     this.syncs.set(accountId, s)
     s.start()
   }
@@ -111,7 +122,7 @@ export class SyncManager {
     await Promise.all([...this.syncs.keys()].map((id) => this.stop(id)))
   }
 
-  get(accountId: number): AccountSync | undefined {
+  get(accountId: number): MailSync | undefined {
     return this.syncs.get(accountId)
   }
 
@@ -125,7 +136,7 @@ export class SyncManager {
   }
 
   async syncNow(accountId?: number): Promise<void> {
-    const list = accountId === undefined ? [...this.syncs.values()] : [this.syncs.get(accountId)].filter((s): s is AccountSync => !!s)
+    const list = accountId === undefined ? [...this.syncs.values()] : [this.syncs.get(accountId)].filter((s): s is MailSync => !!s)
     await Promise.allSettled(list.map((s) => s.requestSync()))
   }
 

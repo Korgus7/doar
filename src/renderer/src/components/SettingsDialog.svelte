@@ -228,10 +228,12 @@
                     </div>
                   {/each}
                 </fieldset>
-                <label class="check">
-                  <input type="checkbox" bind:checked={form.saveSentCopy} />
-                  <span>{t('wizard.saveSentCopy')}<small>{t('wizard.saveSentCopy.hint')}</small></span>
-                </label>
+                {#if details.protocol !== 'graph'}
+                  <label class="check">
+                    <input type="checkbox" bind:checked={form.saveSentCopy} />
+                    <span>{t('wizard.saveSentCopy')}<small>{t('wizard.saveSentCopy.hint')}</small></span>
+                  </label>
+                {/if}
                 <div class="row">
                   <button class="btn btn-primary" type="submit" disabled={busy}>{t('account.save')}</button>
                   {#if message}<span class="msg" class:error={message.tone === 'error'} role="status">{message.text}</span>{/if}
@@ -240,6 +242,19 @@
 
               <SignaturesEditor accountId={details.id} />
 
+              {#if details.protocol === 'graph'}
+                <details class="server" bind:open={serverOpen}>
+                  <summary>{t('account.server')}</summary>
+                  <p class="note">{t('account.viaGraph')}</p>
+                  <div class="field">
+                    <span>{t('account.oauthVia', { provider: oauthProviderName(details.oauthProvider) })}</span>
+                    <div><button class="btn" type="button" onclick={() => void reauth()} disabled={busy}>{t('account.reauth', { provider: oauthProviderName(details.oauthProvider) })}</button></div>
+                  </div>
+                  {#if serverResult}
+                    <div class="result" class:error={!serverResult.ok} role="status"><p>{serverResult.text}</p></div>
+                  {/if}
+                </details>
+              {:else}
               <details class="server" bind:open={serverOpen}>
                 <summary>{t('account.server')}</summary>
                 <p class="note">{t('account.serverHint')}</p>
@@ -291,6 +306,7 @@
                   {/if}
                 </form>
               </details>
+              {/if}
 
               <div class="danger-zone">
                 <button class="btn danger" onclick={removeAccount} disabled={busy}>{t('account.remove')}</button>

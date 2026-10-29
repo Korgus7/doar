@@ -26,6 +26,9 @@
   let editing = $state(false)
   let busy = $state(false)
   let test = $state<ConnectionTestResult | null>(null)
+  /** Riadky výsledku overenia: IMAP a SMTP, alebo jeden riadok pri konte cez Microsoft Graph. */
+  type TestRow = readonly ['imap' | 'smtp', 'wizard.imap' | 'wizard.smtp' | 'wizard.graph']
+  const testRows = $derived<readonly TestRow[]>(test?.graph ? [['imap', 'wizard.graph']] : [['imap', 'wizard.imap'], ['smtp', 'wizard.smtp']])
   let error = $state<string | null>(null)
   let secureMissing = $state(false)
   /** Prihlásenie cez Microsoft/Google: prebieha / dokončené (ID prihlásenia). */
@@ -301,7 +304,7 @@
 
       {#if test}
         <ul class="results" aria-live="polite">
-          {#each [['imap', 'wizard.imap'], ['smtp', 'wizard.smtp']] as const as [proto, label] (proto)}
+          {#each testRows as [proto, label] (proto)}
             {@const r = test[proto]}
             <li class={r.ok ? 'ok' : 'fail'}>
               <span class="icon" aria-hidden="true">{r.ok ? '✓' : '✕'}</span>

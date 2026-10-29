@@ -29,7 +29,8 @@ Verzia návrhu: 1 (2026-10-21). Mení sa len s odôvodnením v `ROZHODNUTIA.md`.
 | `store` | SQLite (`node:sqlite`, WAL), migrácie, úložisko originálov `.eml`, FTS5 |
 | `mail` | pripojenia IMAP (imapflow) a SMTP (nodemailer), skladanie a parsovanie správ |
 | `providers` | tabuľka známych poskytovateľov, autoconfig, rozpoznanie špeciálnych priečinkov |
-| `sync` | synchronizácia priečinkov a správ, IDLE, fronta operácií, odosielacia fronta |
+| `sync` | synchronizácia priečinkov a správ, IDLE, fronta operácií, odosielacia fronta; `graph-sync.ts` – to isté cez Microsoft Graph (Outlook.com, Microsoft 365) |
+| `graph` | klient Microsoft Graph (HTTPS, nemenné ID, stránkovanie, preťaženie), overenie konta |
 | `export` | export mboxrd (záloha) |
 | `import` | čítanie mbox prúdom, obnova do konta (IMAP APPEND, duplicity, pokračovanie); `import/sources` – prevod pošty z Outlooku (.pst/.ost), Outlook Expressu (.dbx) a Windows Mail (.eml) do formátu zálohy Doar |
 | `archive` | lokálny archív – súbor mbox len na čítanie (zoznam, fulltext, čítanie zo súboru); v rozhraní záporné ID; aj samostatné súbory `.eml` (len v pamäti) |
@@ -169,6 +170,7 @@ remote_content_allow(sender PK, created_at)
 - **Bez pripojenia (0.3):** `SyncStatus.pendingChanges` = čakajúce operácie + neodoslané správy. Odoslanie, ktoré zlyhalo pred pripojením (`OFFLINE_CODES`), zostáva `queued` s `error = 'OFFLINE'` a opakuje sa samo. `reconnectAll()` (udalosť `online`, `powerMonitor`) zruší odklad.
 - **Konverzácie (0.9):** `MailStore.assignThread` pri vložení hlavičiek (In-Reply-To → kľúč predchodcu; rovnaké Message-ID; náhradne predmet), `linkReferences` po stiahnutí tela (References), `listThreads` (okenné funkcie SQLite: jeden riadok na konverzáciu v priečinku), `threadMessages` pre čítanie.
 - **Pravidlá (0.9):** nové UID v doručenej pošte (od `uidnext` z minulej synchronizácie) → `onArrived` → `applyRules` (`core/rules.ts`) → `moveMessages` / `setFlags` ako pri ručnej akcii. Správy, ktoré pravidlo presunulo alebo označilo ako prečítané, nejdú do `onNewMail` (oznámenie).
+- **Microsoft Graph (1.0):** kontá s prihlásením cez Microsoft (`accounts.protocol = 'graph'`) majú `GraphSync` namiesto `AccountSync` – rovnaké rozhranie pre zvyšok jadra. Priečinky z `/me/mailFolders` (cesta = ID priečinka, hĺbka a poradie podľa nadradených), špeciálne podľa „well-known“ mien, Pošta na odoslanie sa nezobrazuje. Správy cez **delta** priečinka (`folders.delta_link` – len zmeny; neplatný odkaz → priečinok celý znova), lokálne `uid` je poradové číslo, ID v Graph v `messages.remote_id` (ImmutableId – platí aj po presune, originál sa po presune nesťahuje znova). Originál `.eml` cez `/messages/{id}/$value`. Prečítané/hviezdička = PATCH, presun = `/move`, natrvalo = DELETE, koncept = `POST /me/messages` s MIME. „Odpovedané“ Graph nepozná – pamätá si ho Doar. Nová pošta: doručená pošta každú minútu (Graph pre desktop nemá IDLE).
 - **Chyby:** výpadok spojenia operáciu len vráti do fronty (bez započítania pokusu). Po 3 odmietnutiach serverom sa správy znova zobrazia s ⚠. Operácia v stave `running` po páde aplikácie sa pri ďalšom spustení zopakuje.
 
 ## 6. Odosielanie
@@ -182,6 +184,8 @@ remote_content_allow(sender PK, created_at)
 6. **Odoslať neskôr (0.9):** riadok s `send_at` v budúcnosti sa preskakuje; `AccountSync.scheduleNextSend()` nastaví časovač na najbližší čas (po spustení a po každom kole fronty). Dátum v hlavičke správy = naplánovaný čas. Zrušenie (`outbox.scheduled` cancel) zloží z originálu nový koncept (`draftFromRaw`).
 
 `save_sent_copy`: Gmail a Microsoft = 0 (server si kópiu ukladá sám), ostatní = 1. Dá sa zmeniť v nastaveniach konta.
+
+**Microsoft Graph:** `POST /me/sendMail` s celou správou v MIME (aj so skrytou kópiou – Graph ju príjemcom nezobrazí), kópiu do Odoslaných uloží server. Spojenie sa nenadviazalo (DNS, odmietnuté) alebo 429/503 → `queued`; prerušené, vypršaný čas alebo iná chyba 5xx → `uncertain` (hľadá sa v Odoslaných podľa `internetMessageId`); 4xx → `error`. Najväčšia správa asi 3 MB (požiadavka do 4 MB v base64).
 
 ## 7. Bezpečnosť
 
@@ -226,7 +230,8 @@ doar/
       store/     db.ts, migrations/, blobs.ts, mailstore.ts
       mail/      connection-test.ts, imap.ts, smtp.ts, compose.ts, parse.ts, sanitize.ts, remote.ts
       providers/ known.ts, autoconfig.ts, discover.ts, net.ts (neskôr special-folders.ts)
-      sync/      account-sync.ts (vrátane odosielacej fronty), manager.ts
+      sync/      account-sync.ts (vrátane odosielacej fronty), graph-sync.ts, manager.ts
+      graph/     client.ts, test.ts
       export/    mboxrd.ts, export-account.ts, manager.ts
       import/    mbox-reader.ts, import-account.ts, manager.ts, sources/ (eml, dbx, pst, prevod)
       archive/   archive.ts

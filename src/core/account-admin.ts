@@ -23,6 +23,8 @@ export async function updateServer(
   test: typeof testConnection = testConnection
 ): Promise<{ saved: boolean; test: ConnectionTestResult }> {
   const acc = getAccount(ctx.db, id)
+  // Konto cez Microsoft Graph nemá IMAP ani SMTP – nastaviť sa dá len nové prihlásenie.
+  if (acc.protocol === 'graph') throw Object.assign(new Error('Konto cez Microsoft Graph nemá nastavenia servera'), { code: 'GRAPH_UNSUPPORTED' })
   const settings = validateSettings({
     email: acc.email,
     displayName: acc.displayName,

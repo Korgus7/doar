@@ -39,6 +39,8 @@ export interface AccountDetails extends AccountSummary {
   /** Prihlásenie heslom, alebo cez účet poskytovateľa. */
   authType: 'password' | 'oauth2'
   oauthProvider: OAuthProvider | null
+  /** 'graph' = Outlook.com / Microsoft 365 cez Microsoft Graph (bez IMAP a SMTP). */
+  protocol: 'imap' | 'graph'
   /** Správy tohto konta, ktoré ešte čakajú na odoslanie (pri odstránení konta by sa stratili). */
   pendingOutbox: number
 }
@@ -189,6 +191,8 @@ export type ConnectionErrorCode =
   | 'TLS_FAILED'
   | 'STARTTLS_UNSUPPORTED'
   | 'PROTOCOL'
+  | 'GRAPH_MAILBOX'
+  | 'GRAPH_FORBIDDEN'
   | 'UNKNOWN'
 
 export interface ProtocolTestResult {
@@ -203,6 +207,8 @@ export interface ProtocolTestResult {
 export interface ConnectionTestResult {
   imap: ProtocolTestResult
   smtp: ProtocolTestResult
+  /** Konto cez Microsoft Graph: imap aj smtp sú ten istý výsledok overenia cez Graph. */
+  graph?: boolean
 }
 
 export interface AddAccountInput {

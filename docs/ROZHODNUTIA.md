@@ -343,6 +343,14 @@ Používateľ si vybral sadu funkcií naraz („nebudeme robiť verziu zakaždý
 - Overené: unit 212, e2e 28 (nové: prehliadač PDF sa naozaj načíta, farba písma, zvýraznenia a pozadia správy až u príjemcu). Používateľ overil náhľad PDF vo Windows (dev).
 - **Vydanie `v0.9.1` (2026-10-29).**
 
+## 2026-10-29 – Microsoft Graph pre Outlook.com a Microsoft 365 (1.0, prvá časť)
+
+- **Prečo:** Microsoft novým kontám Outlook.com vypína IMAP („User is authenticated but not connected“) aj SMTP („SmtpClientAuthentication is disabled“) a používateľ to zmeniť nemôže. Graph funguje pre Outlook.com, Hotmail aj Microsoft 365.
+- **Kontá s prihlásením cez Microsoft ide pošta len cez Graph** (`accounts.protocol = 'graph'`, migrácia 019). Rozsahy prihlásenia: `Mail.ReadWrite`, `Mail.Send`, `offline_access`, `openid`, `email` – v Azure netreba nič meniť (súhlas sa pýta pri prihlásení). Doterajšie kontá Microsoft (IMAP s tokenom) migrácia prepne na Graph, ich priečinky z IMAP zahodí (načítajú sa znova) – treba sa raz prihlásiť znova (iné oprávnenia).
+- **Zachované princípy:** originál správy (.eml) sa sťahuje celý (`/$value`), zmeny cez frontu operácií s „Vrátiť späť“, odoslanie len po potvrdení servera (202), nejasný výsledok sa automaticky neopakuje.
+- **Zatiaľ nie pre kontá cez Graph:** export a záloha mbox, import a obnova do konta (idú cez IMAP) – chyba `GRAPH_UNSUPPORTED` s vysvetlením. Správa s prílohami nad ~3 MB (`GRAPH_TOO_LARGE`; väčšie by potrebovali nahrávanie príloh po častiach). Upozornenie na novú poštu do minúty (nie hneď).
+- **Testy:** falošný server Graph (`test/fixtures/graph-server.ts`) – unit testy synchronizácie (priečinky, stránkovaná delta, neplatný delta odkaz, príznaky, presun s rovnakým ID, natrvalo, odoslanie aj so skrytou kópiou, nedostupný server, koncepty, priečinky, migrácia), e2e sprievodca → pošta → odoslanie → nastavenia konta. Integračný test prihlásenia s IMAP/SMTP tokenom teraz používa Google. **Overené naostro (2026-10-29, testovacie konto Outlook.com, s ktorým IMAP nefungoval):** prihlásenie a súhlas (Microsoft ukazuje „unverified“ – vydavateľ ešte nie je overený), načítanie priečinkov a správ, odoslanie do Gmailu (prvá správa z nového konta skončila v Spame), kópia v Odoslaných, hviezdička, neprečítané, presun do Archívu – zmeny viditeľné na outlook.com.
+
 ## Licencie závislostí (overené 2026-10-21 cez `npm view`)
 
 Všetky sú kompatibilné s MIT.

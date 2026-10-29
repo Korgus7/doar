@@ -41,6 +41,8 @@ export interface AccountRow {
   display_name: string
   password_storage: 'os' | 'session'
   auth_type: 'password' | 'oauth2'
+  /** 'graph' = Microsoft Graph namiesto IMAP/SMTP. */
+  protocol?: 'imap' | 'graph'
 }
 
 export interface SyncDeps {
