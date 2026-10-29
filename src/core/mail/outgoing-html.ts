@@ -7,7 +7,9 @@ import sanitizeHtml from 'sanitize-html'
  * vie vytvoriť. Textová podoba (multipart/alternative) zachová štruktúru – odseky, zoznamy, citácie, odkazy.
  */
 
-const TAGS = ['p', 'br', 'strong', 'b', 'em', 'i', 'u', 's', 'a', 'ul', 'ol', 'li', 'blockquote', 'h1', 'h2', 'h3', 'hr', 'code', 'pre', 'img']
+const TAGS = ['p', 'br', 'strong', 'b', 'em', 'i', 'u', 's', 'a', 'ul', 'ol', 'li', 'blockquote', 'h1', 'h2', 'h3', 'hr', 'code', 'pre', 'img', 'span']
+/** Farba písma a pozadia z editora: len `color` a `background-color` v tvare #rrggbb na značke span. */
+const SPAN_STYLES = { span: { color: [/^#[0-9a-f]{6}$/i], 'background-color': [/^#[0-9a-f]{6}$/i] } }
 
 /** Obrázok v správe (logo v podpise): len vložený obrázok data: (PNG, JPEG, GIF, WebP), nie odkaz na internet. */
 const IMG_SRC = /^data:image\/(png|jpe?g|gif|webp);base64,[a-z0-9+/=\s]+$/i
@@ -26,11 +28,33 @@ function cleanImg(attribs: Record<string, string>): Record<string, string> {
   return out
 }
 
+/**
+ * Farba písma a pozadia z editora: prehliadač ju zapíše ako `color: rgb(180, 35, 24)` – prevedie sa na #rrggbb,
+ * všetko ostatné zo štýlu sa zahodí.
+ */
+function toHex(v: string): string | null {
+  const s = v.trim().toLowerCase()
+  if (/^#[0-9a-f]{6}$/.test(s)) return s
+  const m = /^rgb\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})\s*\)$/.exec(s)
+  return m ? `#${m.slice(1, 4).map((n) => Math.min(255, Number(n)).toString(16).padStart(2, '0')).join('')}` : null
+}
+function cleanSpan(attribs: Record<string, string>): Record<string, string> {
+  const out: string[] = []
+  for (const decl of (attribs['style'] ?? '').split(';')) {
+    const i = decl.indexOf(':')
+    if (i < 0) continue
+    const prop = decl.slice(0, i).trim().toLowerCase()
+    const hex = toHex(decl.slice(i + 1))
+    if (hex && (prop === 'color' || prop === 'background-color') && !out.some((x) => x.startsWith(`${prop}:`))) out.push(`${prop}:${hex}`)
+  }
+  return out.length ? { style: out.join(';') } : {}
+}
+
 /** Smer textu (dir) – editor ho dáva každému odseku, aby sa hebrejčina zobrazila sprava doľava aj u príjemcu. */
 const DIR_TAGS = ['p', 'li', 'ul', 'ol', 'blockquote', 'h1', 'h2', 'h3', 'pre']
 const DIR_VALUES = ['ltr', 'rtl', 'auto']
 const withDir = (extra: Record<string, string[]> = {}): Record<string, string[]> => {
-  const out: Record<string, string[]> = { a: ['href'], img: ['src', 'alt', 'width', 'height'] }
+  const out: Record<string, string[]> = { a: ['href'], img: ['src', 'alt', 'width', 'height'], span: ['style'] }
   for (const t of DIR_TAGS) out[t] = ['dir', ...(extra[t] ?? [])]
   return out
 }
@@ -41,16 +65,33 @@ function cleanDir(attribs: Record<string, string>): Record<string, string> {
 }
 const dirTransforms: Record<string, (tagName: string, attribs: Record<string, string>) => { tagName: string; attribs: Record<string, string> }> = {
   ...Object.fromEntries(DIR_TAGS.map((t) => [t, (tagName: string, attribs: Record<string, string>) => ({ tagName, attribs: cleanDir(attribs) })])),
-  img: (tagName, attribs) => ({ tagName, attribs: cleanImg(attribs) })
+  img: (tagName, attribs) => ({ tagName, attribs: cleanImg(attribs) }),
+  span: (tagName, attribs) => ({ tagName, attribs: cleanSpan(attribs) })
 }
 
 const QUOTE_STYLE = 'margin:0 0 0 0.8ex;border-left:2px solid #c9d1dc;padding-left:1ex;color:#4a5361'
 
+/**
+ * Pozadie celej správy: editor ho posiela ako obal `<div data-doar-bg="#rrggbb">…</div>`; v odoslanej správe
+ * je ten istý atribút na hlavnom bloku hneď za <body> (koncept zo servera si ho tak zachová).
+ */
+const PAGE_BG = /^(?:\s|<!doctype[^>]*>|<html[^>]*>|<head[^>]*>[\s\S]*?<\/head>|<body[^>]*>)*<div data-doar-bg="(#[0-9a-f]{6})"/i
+export function pageBackgroundOf(html: string): string | null {
+  return PAGE_BG.exec(String(html ?? ''))?.[1]?.toLowerCase() ?? null
+}
+
 /** Prečistí HTML z editora (aj koncept z iného programu) na značky, ktoré Doar vie upravovať a odoslať. */
 export function sanitizeComposeHtml(html: string): string {
+  const bg = pageBackgroundOf(html)
+  const clean = cleanCompose(html)
+  return bg ? `<div data-doar-bg="${bg}">${clean}</div>` : clean
+}
+
+function cleanCompose(html: string): string {
   return sanitizeHtml(String(html ?? '').slice(0, 5_000_000), {
     allowedTags: TAGS,
     allowedAttributes: withDir(),
+    allowedStyles: SPAN_STYLES,
     transformTags: dirTransforms,
     allowedSchemes: ['http', 'https', 'mailto'],
     allowedSchemesByTag: { img: ['data'] },
@@ -63,9 +104,11 @@ export function sanitizeComposeHtml(html: string): string {
 
 /** HTML na odoslanie: prečistené, s jednoduchým štýlom, ktorý funguje aj v programoch bez CSS v hlavičke. */
 export function outgoingHtml(html: string): string {
-  const body = sanitizeHtml(sanitizeComposeHtml(html), {
+  const bg = pageBackgroundOf(html)
+  const body = sanitizeHtml(cleanCompose(html), {
     allowedTags: TAGS,
     allowedAttributes: withDir({ blockquote: ['style'], p: ['style'] }),
+    allowedStyles: SPAN_STYLES,
     allowedSchemes: ['http', 'https', 'mailto'],
     allowedSchemesByTag: { img: ['data'] },
     transformTags: {
@@ -74,7 +117,10 @@ export function outgoingHtml(html: string): string {
       p: (tagName, attribs) => ({ tagName, attribs: { ...cleanDir(attribs), style: 'margin:0 0 0.6em' } })
     }
   })
-  return `<!doctype html><html><head><meta charset="utf-8"></head><body><div style="font-family:Segoe UI,Arial,sans-serif;font-size:14px;line-height:1.5">${body}</div></body></html>`
+  const font = 'font-family:Segoe UI,Arial,sans-serif;font-size:14px;line-height:1.5'
+  if (!bg) return `<!doctype html><html><head><meta charset="utf-8"></head><body><div style="${font}">${body}</div></body></html>`
+  // Farba aj na <body> (programy, ktoré ho zobrazia celé) aj na hlavnom bloku (Gmail štýl <body> zahodí).
+  return `<!doctype html><html><head><meta charset="utf-8"></head><body style="margin:0;background-color:${bg}"><div data-doar-bg="${bg}" style="background-color:${bg};color:#1f2328;padding:16px 20px;${font}">${body}</div></body></html>`
 }
 
 const ENTITIES: Record<string, string> = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ' }

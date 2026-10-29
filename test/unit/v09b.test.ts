@@ -162,3 +162,33 @@ describe('poradie kont', () => {
     expect(listAccounts(db).map((a) => a.id)).toEqual([3, 1, 2])
   })
 })
+
+describe('farba písma a pozadia', () => {
+  it('ponechá len color a background-color v tvare #rrggbb na span', () => {
+    const h = '<p>a <span style="color:#b42318">červené</span> <span style="color:red;background:url(x)">x</span> <span style="position:fixed">y</span></p>'
+    expect(sanitizeComposeHtml(h)).toBe('<p>a <span style="color:#b42318">červené</span> <span>x</span> <span>y</span></p>')
+    expect(outgoingHtml(h)).toContain('<span style="color:#b42318">červené</span>')
+    expect(outgoingHtml(h)).not.toMatch(/url\(|position|color:red/)
+    // Prehliadač (editor) zapisuje farbu ako rgb(…).
+    expect(sanitizeComposeHtml('<p><span style="color: rgb(180, 35, 24);">D</span></p>')).toBe('<p><span style="color:#b42318">D</span></p>')
+    // Farba pozadia (zvýraznenie), aj spolu s farbou písma; iné vlastnosti preč.
+    expect(sanitizeComposeHtml('<p><span style="background-color: rgb(242, 196, 15); font-size: 40px">Z</span></p>')).toBe('<p><span style="background-color:#f2c40f">Z</span></p>')
+    expect(outgoingHtml('<p><span style="color:#000000;background-color:#ffffff;background:url(x)">B</span></p>')).toContain('<span style="color:#000000;background-color:#ffffff">B</span>')
+  })
+})
+
+describe('pozadie celej správy', () => {
+  it('obal z editora prejde čistením, pri odoslaní je farba na celej správe a koncept si ju zachová', () => {
+    const fromEditor = '<div data-doar-bg="#FFF6CC"><p>Ahoj <span style="color:#e31e24">svet</span></p></div>'
+    expect(sanitizeComposeHtml(fromEditor)).toBe('<div data-doar-bg="#fff6cc"><p>Ahoj <span style="color:#e31e24">svet</span></p></div>')
+    const out = outgoingHtml(fromEditor)
+    expect(out).toContain('<body style="margin:0;background-color:#fff6cc">')
+    expect(out).toContain('<div data-doar-bg="#fff6cc" style="background-color:#fff6cc;')
+    // Koncept zo servera (celá odoslaná podoba) → editor dostane ten istý obal.
+    expect(sanitizeComposeHtml(out)).toBe('<div data-doar-bg="#fff6cc"><p>Ahoj <span style="color:#e31e24">svet</span></p></div>')
+    // Bez pozadia sa nič nemení; obal v citovanej správe (nie na začiatku) sa nepoužije; neplatná farba nie.
+    expect(outgoingHtml('<p>x</p>')).toContain('<body><div style="font-family')
+    expect(sanitizeComposeHtml('<p>a</p><blockquote><div data-doar-bg="#000000"><p>b</p></div></blockquote>')).toBe('<p>a</p><blockquote><p>b</p></blockquote>')
+    expect(sanitizeComposeHtml('<div data-doar-bg="red"><p>c</p></div>')).toBe('<p>c</p>')
+  })
+})

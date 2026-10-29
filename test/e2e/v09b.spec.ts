@@ -149,6 +149,13 @@ test('konverzácie, rozšírené hľadanie a náhľad príloh', async () => {
   await win.keyboard.press('Escape')
   const [pdfWin] = await Promise.all([app.waitForEvent('window'), reader.getByRole('button', { name: /zmluva\.pdf/ }).click()])
   await expect.poll(() => pdfWin.url()).toMatch(/zmluva\.pdf$/)
+  // Prehliadač PDF sa naozaj načítal (nie prázdne okno): jeho rozhranie je zaregistrované a zobrazené.
+  await expect
+    .poll(async () => {
+      const viewer = pdfWin.frames().find((f) => f.url().startsWith('chrome-extension://'))
+      return viewer ? await viewer.evaluate(() => !!customElements.get('pdf-viewer') && !!document.querySelector('pdf-viewer')).catch(() => false) : false
+    }, { timeout: 15_000 })
+    .toBe(true)
   await pdfWin.close()
   await app.close()
 })
@@ -196,6 +203,23 @@ test('podpisy s logom a skupiny v adresári', async () => {
   await expect(body.locator('img:not(.ProseMirror-separator)')).toHaveCount(0)
   await c.getByLabel('Podpis').selectOption({ label: 'Pracovný' })
   await expect(body.locator('img:not(.ProseMirror-separator)')).toHaveCount(1)
+  // Farba písma: označený text na začiatku správy → červená z palety.
+  await body.click()
+  await c.keyboard.press('Control+Home')
+  await c.keyboard.type('Dôležité')
+  await c.keyboard.press('Shift+Home')
+  await c.getByRole('button', { name: 'Farba písma' }).click()
+  await c.getByRole('group', { name: 'Farba písma' }).getByRole('button', { name: 'Červená' }).click()
+  await expect(body.locator('span[style*="color"]')).toHaveText('Dôležité')
+  await expect(c.getByRole('group', { name: 'Farba písma' })).toHaveCount(0)
+  // Farba pozadia (zvýraznenie) na ten istý text.
+  await c.getByRole('button', { name: 'Farba pozadia' }).click()
+  await c.getByRole('group', { name: 'Farba pozadia' }).getByRole('button', { name: 'Žltá' }).click()
+  await expect(body.locator('span[style*="background-color"]')).toHaveText('Dôležité')
+  // Pozadie celej správy (svetlá žltá).
+  await c.getByRole('button', { name: 'Pozadie správy' }).click()
+  await c.getByRole('group', { name: 'Pozadie správy' }).getByRole('button', { name: 'Žltá (svetlá)' }).click()
+  await expect(c.locator('.area.paged')).toHaveCSS('background-color', 'rgb(255, 246, 204)')
   await c.getByLabel('Komu').fill(`${USER2}@doar.test`)
   await c.getByLabel('Predmet').fill('S logom')
   await Promise.all([c.waitForEvent('close'), c.getByRole('button', { name: /^Odoslať ➤/ }).click()])
@@ -204,6 +228,10 @@ test('podpisy s logom a skupiny v adresári', async () => {
   const sent = (await sources(USER2)).find((s) => s.includes('Subject: S logom'))!
   expect(sent).toMatch(/multipart\/related/)
   expect(sent).toMatch(/src=3D"cid:obrazok1\.|src="cid:obrazok1\./)
+  const html = sent.replace(/=\r?\n/g, '')
+  expect(html).toMatch(/style=(3D)?"color:#e31e24"/)
+  expect(html).toMatch(/style=(3D)?"background-color:#f2c40f"/)
+  expect(html).toMatch(/<body style=(3D)?"margin:0;background-color:#fff6cc">/)
 
   // Skupiny v adresári.
   await win.getByRole('button', { name: 'Adresár' }).click()

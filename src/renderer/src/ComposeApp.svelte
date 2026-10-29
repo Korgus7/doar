@@ -639,7 +639,7 @@
   {/if}
 
   {#if format === 'html' && ready}
-    <RichEditor bind:this={editorRef} {html} label={t('compose.body')} disabled={sending} onchange={(h) => (html = h)} />
+    <RichEditor bind:this={editorRef} {html} label={t('compose.body')} disabled={sending} pageBackground onchange={(h) => (html = h)} />
   {:else if format === 'plain'}
     <textarea bind:this={bodyEl} bind:value={body} aria-label={t('compose.body')} spellcheck="true" dir="auto" disabled={sending}></textarea>
   {/if}

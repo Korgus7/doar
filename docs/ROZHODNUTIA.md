@@ -334,6 +334,15 @@ Používateľ si vybral sadu funkcií naraz („nebudeme robiť verziu zakaždý
 - Overené: unit 210, integračné 129, e2e 28 (nové e2e: poradie kont ponukou aj ťahaním, konverzácie zapnúť/prepnúť správu/vypnúť, filter s prílohou a text `od:… je:neprecitane`, náhľad obrázka, textu a PDF, dva podpisy s logom a ich výmena, logo u príjemcu ako Content-ID, skupina a napísanie skupine, našepkanie skupiny). **Neoverené naostro:** PDF náhľad a logo v podpise vo Windows a u príjemcu v Gmaile/Outlooku.
 - **Vydanie `v0.9.0` (2026-10-28):** prvá aj druhá časť 0.9 spolu s opravami z 0.8 (hlásenie pri databáze z novšej verzie, ikona na ploche pri novej verzii v inom priečinku a tlačidlo „Vytvoriť ikonu“, kontrola povolení Google, jedno prihlásenie pre poštu aj kontakty).
 
+## 2026-10-29 – oprava náhľadu PDF, farba písma (0.9.1)
+
+- **Náhľad PDF bol prázdny** (0.9.0): pravidlo, ktoré bráni rozhraniu ísť na internet, blokovalo aj vnútorné súbory vstavaného prehliadača PDF (`chrome://resources/…`). Povolené len `chrome://resources/` (súčasť Electronu, nie sieť). E2e test teraz overuje, že sa prehliadač PDF naozaj načítal (predtým len, že sa okno otvorilo).
+- **Farba písma a pozadia** v editore (správa aj podpis): dve tlačidlá „A“ (písmo, zvýraznenie) s paletou 10 farieb (červená, oranžová, žltá, zelená, modrá, ružová, fialová, hnedá, čierna, biela – výrazné, podľa používateľa) a „Bez farby“. Vlastné značky TipTap (bez novej knižnice). Jadro pred odoslaním ponechá na `span` len `color` a `background-color` v tvare #rrggbb (prehliadač zapisuje `rgb(…)` – prevedie sa). V tmavej téme sa čierny text v editore ukáže svetlý, odošle sa čierny.
+- **Pozadie celej správy** (okno správy, tlačidlo so štvorčekom): 10 svetlých odtieňov a 10 výrazných farieb. V HTML z editora obal `<div data-doar-bg="#rrggbb">`, pri odoslaní farba na `<body>` aj na hlavnom bloku (Gmail štýl `<body>` zahodí), text tmavý. Atribút ostáva v odoslanej podobe, takže koncept zo servera si pozadie zachová. Obal inde než na začiatku (napr. v citácii) sa ignoruje.
+- Adresár: kompaktnejšia karta kontaktu, tlačidlá karty vždy viditeľné dole, menšie tlačidlá v lištách.
+- Overené: unit 212, e2e 28 (nové: prehliadač PDF sa naozaj načíta, farba písma, zvýraznenia a pozadia správy až u príjemcu). Používateľ overil náhľad PDF vo Windows (dev).
+- **Vydanie `v0.9.1` (2026-10-29).**
+
 ## Licencie závislostí (overené 2026-10-21 cez `npm view`)
 
 Všetky sú kompatibilné s MIT.

@@ -1,21 +1,22 @@
 <script lang="ts">
   import { onMount, onDestroy, tick } from 'svelte'
-  import { Editor, Extension, Node, getHTMLFromFragment } from '@tiptap/core'
+  import { Editor, Extension, Mark, Node, getHTMLFromFragment } from '@tiptap/core'
   import StarterKit from '@tiptap/starter-kit'
-  import { t } from '../i18n/index.svelte'
+  import { t, type MessageKey } from '../i18n/index.svelte'
   import { textToHtml } from '../lib/compose-html'
   import type { Node as PmNode } from '@tiptap/pm/model'
 
   /**
    * Editor formátovaného textu (TipTap). Vie len to, čo sa bezpečne odošle e-mailom:
-   * tučné, kurzíva, podčiarknutie, prečiarknutie, zoznamy, citácia, odkazy, nadpis.
+   * tučné, kurzíva, podčiarknutie, prečiarknutie, farba písma, zoznamy, citácia, odkazy, nadpis.
    */
   let {
     html,
     disabled = false,
     onchange,
-    label
-  }: { html: string; disabled?: boolean; onchange: (html: string) => void; label: string } = $props()
+    label,
+    pageBackground = false
+  }: { html: string; disabled?: boolean; onchange: (html: string) => void; label: string; pageBackground?: boolean } = $props()
 
   /**
    * Smer textu podľa obsahu každého odseku a nadpisu (hebrejčina sprava doľava, slovenčina zľava).
@@ -65,6 +66,82 @@
     }
   })
 
+  /**
+   * Farba písma: len pevná paleta 10 výrazných farieb. Iné farby
+   * (napr. z vloženého textu) sa zahodia; jadro pred odoslaním povolí len farbu v tvare #rrggbb.
+   */
+  const COLORS = [
+    { key: 'red', hex: '#e31e24' },
+    { key: 'orange', hex: '#f7941d' },
+    { key: 'yellow', hex: '#f2c40f' },
+    { key: 'green', hex: '#00a651' },
+    { key: 'blue', hex: '#2f8fde' },
+    { key: 'pink', hex: '#e5177b' },
+    { key: 'purple', hex: '#7a2e93' },
+    { key: 'brown', hex: '#6b3a10' },
+    { key: 'black', hex: '#000000' },
+    { key: 'white', hex: '#ffffff' }
+  ] as const
+  /** Farba z HTML (#rrggbb alebo rgb(…)) → hex z palety, inak null. */
+  function paletteColor(value: string): string | null {
+    const v = value.trim().toLowerCase()
+    const rgb = /^rgb\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)$/.exec(v)
+    const hex = rgb ? `#${rgb.slice(1, 4).map((n) => Number(n).toString(16).padStart(2, '0')).join('')}` : v
+    return COLORS.find((c) => c.hex === hex)?.hex ?? null
+  }
+  /**
+   * Pozadie celej správy: svetlé odtiene a tie isté výrazné farby. V HTML z editora je to obal
+   * `<div data-doar-bg="#rrggbb">…</div>` – jadro ho prečistí a pri odoslaní dá farbu na pozadie celej správy.
+   */
+  const PAGE_LIGHT = [
+    { key: 'red', hex: '#fde4e4' },
+    { key: 'orange', hex: '#feecd6' },
+    { key: 'yellow', hex: '#fff6cc' },
+    { key: 'green', hex: '#dcf3e5' },
+    { key: 'blue', hex: '#dcebfa' },
+    { key: 'pink', hex: '#fbe0ed' },
+    { key: 'purple', hex: '#ebdff1' },
+    { key: 'brown', hex: '#efe4d9' },
+    { key: 'black', hex: '#e6e6e6' },
+    { key: 'white', hex: '#fffdf5' }
+  ] as const
+  const PAGE_RE = /^\s*<div data-doar-bg="(#[0-9a-f]{6})">([\s\S]*)<\/div>\s*$/i
+  let pageBg = $state<string | null>(null)
+  /** HTML zvonku (koncept, šablóna) → obsah editora; obal s pozadím sa preberie do pageBg. */
+  function unwrap(value: string): string {
+    const m = PAGE_RE.exec(value)
+    if (!m) return value
+    if (pageBackground) pageBg = m[1]!.toLowerCase()
+    return m[2]!
+  }
+  const wrap = (inner: string): string => (pageBackground && pageBg ? `<div data-doar-bg="${pageBg}">${inner}</div>` : inner)
+
+  /** Značka s farbou z palety: písmo (`color`) alebo pozadie/zvýraznenie (`background-color`). */
+  function colorMark(name: string, css: 'color' | 'background-color'): Mark {
+    const read = (el: HTMLElement): string | null => paletteColor(el.style.getPropertyValue(css))
+    return Mark.create({
+      name,
+      addAttributes() {
+        return {
+          color: {
+            default: null,
+            parseHTML: (el) => read(el as HTMLElement),
+            renderHTML: (attrs) => (attrs['color'] ? { style: `${css}:${attrs['color'] as string}` } : {})
+          }
+        }
+      },
+      parseHTML() {
+        // consuming: false – ten istý span môže niesť farbu písma aj pozadia.
+        return [{ tag: 'span[style]', consuming: false, getAttrs: (el) => (read(el as HTMLElement) ? null : false) }]
+      },
+      renderHTML({ HTMLAttributes }) {
+        return ['span', HTMLAttributes, 0]
+      }
+    })
+  }
+  const TextColor = colorMark('textColor', 'color')
+  const TextBackground = colorMark('textBackground', 'background-color')
+
   let el: HTMLDivElement | undefined = $state()
   let editor: Editor | null = $state(null)
   /** Zmena stavu editora → prekreslenie tlačidiel (aktívne formátovanie). */
@@ -84,13 +161,15 @@
           link: { openOnClick: false, autolink: true, protocols: ['mailto'], HTMLAttributes: { rel: null, target: null } }
         }),
         AutoDir,
-        InlineImage
+        InlineImage,
+        TextColor,
+        TextBackground
       ],
-      content: html,
+      content: unwrap(html),
       editable: !disabled,
 
       editorProps: { attributes: { 'aria-label': label, 'aria-multiline': 'true', role: 'textbox', spellcheck: 'true', class: 'doar-editor' } },
-      onUpdate: ({ editor: e }) => onchange(e.getHTML()),
+      onUpdate: ({ editor: e }) => onchange(wrap(e.getHTML())),
       onTransaction: () => tickCount++
     })
   })
@@ -106,11 +185,12 @@
   }
 
   export function getHTML(): string {
-    return editor?.getHTML() ?? html
+    return editor ? wrap(editor.getHTML()) : html
   }
 
   export function setHTML(next: string): void {
-    editor?.commands.setContent(next, { emitUpdate: true })
+    pageBg = null
+    editor?.commands.setContent(unwrap(next), { emitUpdate: true })
   }
 
   const leafText = (leaf: PmNode): string => (leaf.type.name === 'hardBreak' ? '\n' : '')
@@ -228,6 +308,29 @@
     return editor?.isActive(name, attrs) ?? false
   }
 
+  /** Otvorená paleta: farba písma alebo pozadia. */
+  type ColorKind = 'textColor' | 'textBackground' | 'page'
+  let colorOpen = $state<ColorKind | null>(null)
+  let colorWrap: HTMLSpanElement | undefined = $state()
+  const currentColor = (kind: ColorKind): string | null => {
+    void tickCount
+    if (kind === 'page') return pageBg
+    return (editor?.getAttributes(kind)['color'] as string | undefined) ?? null
+  }
+  function setColor(kind: ColorKind, hex: string | null): void {
+    if (!editor) return
+    if (kind === 'page') {
+      pageBg = hex
+      colorOpen = null
+      onchange(wrap(editor.getHTML()))
+      editor.commands.focus()
+      return
+    }
+    const chain = editor.chain().focus()
+    ;(hex ? chain.setMark(kind, { color: hex }) : chain.unsetMark(kind)).run()
+    colorOpen = null
+  }
+
   type Cmd = () => void
   const run = (fn: (c: ReturnType<Editor['chain']>) => ReturnType<Editor['chain']>): Cmd => () => {
     if (editor) fn(editor.chain().focus()).run()
@@ -267,12 +370,75 @@
   }
 </script>
 
+<svelte:window
+  onmousedown={(e) => {
+    if (colorOpen && colorWrap && !colorWrap.contains(e.target as globalThis.Node | null)) colorOpen = null
+  }}
+/>
+
 <div class="rich">
   <div class="tools" role="toolbar" aria-label={t('editor.toolbar')} tabindex="-1" onkeydown={onToolbarKey}>
     <button type="button" class:on={active('bold')} aria-pressed={active('bold')} title={`${t('editor.bold')} (Ctrl+B)`} aria-label={t('editor.bold')} {disabled} onclick={run((c) => c.toggleBold())}><b>B</b></button>
     <button type="button" class:on={active('italic')} aria-pressed={active('italic')} title={`${t('editor.italic')} (Ctrl+I)`} aria-label={t('editor.italic')} {disabled} onclick={run((c) => c.toggleItalic())}><i>I</i></button>
     <button type="button" class:on={active('underline')} aria-pressed={active('underline')} title={`${t('editor.underline')} (Ctrl+U)`} aria-label={t('editor.underline')} {disabled} onclick={run((c) => c.toggleUnderline())}><u>U</u></button>
     <button type="button" class:on={active('strike')} aria-pressed={active('strike')} title={t('editor.strike')} aria-label={t('editor.strike')} {disabled} onclick={run((c) => c.toggleStrike())}><s>S</s></button>
+    <span class="color-wrap" bind:this={colorWrap}>
+      {#each [{ kind: 'textColor', label: t('editor.color') }, { kind: 'textBackground', label: t('editor.background') }, ...(pageBackground ? [{ kind: 'page', label: t('editor.pageBackground') }] : [])] as p (p.kind)}
+        {@const kind = p.kind as ColorKind}
+        {@const cur = currentColor(kind)}
+        <button
+          type="button"
+          class="color-btn"
+          class:bg={kind === 'textBackground'}
+          title={p.label}
+          aria-label={p.label}
+          aria-haspopup="true"
+          aria-expanded={colorOpen === kind}
+          {disabled}
+          onclick={() => (colorOpen = colorOpen === kind ? null : kind)}
+        >
+          {#if kind === 'textColor'}
+            <span class="a">A</span><span class="bar" style:background={cur ?? 'var(--text)'}></span>
+          {:else if kind === 'page'}
+            <span class="page" style:background={cur ?? 'transparent'}></span>
+          {:else}
+            <span class="a hl" style:background={cur ?? 'transparent'}>A</span>
+          {/if}
+        </button>
+      {/each}
+      {#if colorOpen}
+        {@const kind = colorOpen}
+        {@const label = kind === 'textColor' ? t('editor.color') : kind === 'page' ? t('editor.pageBackground') : t('editor.background')}
+        <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+        <div
+          class="palette"
+          class:second={kind === 'textBackground'}
+          class:third={kind === 'page'}
+          role="group"
+          aria-label={label}
+          onkeydown={(e) => {
+            if (e.key === 'Escape') {
+              e.preventDefault()
+              e.stopPropagation()
+              colorOpen = null
+              editor?.commands.focus()
+            }
+          }}
+        >
+          {#if kind === 'page'}
+            {#each PAGE_LIGHT as c (c.key)}
+              {@const name = `${t(`editor.colors.${c.key}` as MessageKey)} (${t('editor.light')})`}
+              <button type="button" class="swatch" class:on={pageBg === c.hex} style:background={c.hex} title={name} aria-label={name} onclick={() => setColor(kind, c.hex)}></button>
+            {/each}
+          {/if}
+          {#each COLORS as c (c.key)}
+            {@const name = t(`editor.colors.${c.key}` as MessageKey)}
+            <button type="button" class="swatch" class:on={currentColor(kind) === c.hex} style:background={c.hex} title={name} aria-label={name} onclick={() => setColor(kind, c.hex)}></button>
+          {/each}
+          <button type="button" class="auto" onclick={() => setColor(kind, null)}>{t('editor.colorAuto')}</button>
+        </div>
+      {/if}
+    </span>
     <span class="sep" aria-hidden="true"></span>
     <button type="button" class:on={active('heading', { level: 2 })} aria-pressed={active('heading', { level: 2 })} title={t('editor.heading')} aria-label={t('editor.heading')} {disabled} onclick={run((c) => c.toggleHeading({ level: 2 }))}>H</button>
     <button type="button" class:on={active('bulletList')} aria-pressed={active('bulletList')} title={t('editor.bulletList')} aria-label={t('editor.bulletList')} {disabled} onclick={run((c) => c.toggleBulletList())}>•≡</button>
@@ -307,6 +473,8 @@
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div
     class="area"
+    class:paged={pageBackground && !!pageBg}
+    style:background={pageBackground && pageBg ? pageBg : undefined}
     bind:this={el}
     onkeydown={(e) => {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
@@ -348,6 +516,90 @@
   .tools button.on {
     background: var(--accent-soft);
     border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+  }
+  .color-wrap {
+    position: relative;
+    display: inline-flex;
+  }
+  .tools .color-btn {
+    display: inline-flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 1px;
+  }
+  .color-btn .a {
+    font-weight: 600;
+    line-height: 1;
+  }
+  .color-btn .a.hl {
+    padding: 0 0.22rem;
+    border: 1px solid var(--border);
+    border-radius: 2px;
+    color: var(--text);
+  }
+  .palette.second {
+    inset-inline-start: 2.15rem;
+  }
+  .palette.third {
+    inset-inline-start: 4.3rem;
+  }
+  .color-btn .page {
+    width: 0.95rem;
+    height: 0.95rem;
+    border: 1.5px solid var(--text);
+    border-radius: 2px;
+  }
+  /* S pozadím správy sa náhľad v editore ukáže ako u príjemcu: tmavý text na zvolenej farbe. */
+  .area.paged {
+    color: #1f2328;
+  }
+  .color-btn .bar {
+    width: 0.95rem;
+    height: 3px;
+    border-radius: 1px;
+  }
+  .palette {
+    position: absolute;
+    top: calc(100% + 4px);
+    inset-inline-start: 0;
+    z-index: 20;
+    display: grid;
+    grid-template-columns: repeat(5, 1.6rem);
+    gap: 0.3rem;
+    padding: 0.45rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--surface);
+    box-shadow: 0 6px 20px rgb(0 0 0 / 18%);
+  }
+  .tools .palette .swatch {
+    min-width: 0;
+    width: 1.6rem;
+    height: 1.6rem;
+    border: 1px solid rgb(0 0 0 / 15%);
+  }
+  .tools .palette .swatch:hover:not(:disabled) {
+    filter: brightness(1.15);
+  }
+  .tools .palette .swatch.on {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+  }
+  .tools .palette .auto {
+    grid-column: 1 / -1;
+    height: 1.8rem;
+    font-size: 0.82rem;
+    border: 1px solid var(--border);
+  }
+  /* V tmavej téme by čierny text na tmavom pozadí nebolo vidieť – v editore sa ukáže svetlý (odošle sa čierny). */
+  @media (prefers-color-scheme: dark) {
+    :global(:root:not([data-theme='light'])) .area :global(.doar-editor span[style*='rgb(0, 0, 0)']) {
+      filter: invert(1);
+    }
+  }
+  :global(:root[data-theme='dark']) .area :global(.doar-editor span[style*='rgb(0, 0, 0)']) {
+    filter: invert(1);
   }
   .sep {
     width: 1px;

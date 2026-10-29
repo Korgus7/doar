@@ -364,8 +364,10 @@ function hardenSecurity(): void {
       u.startsWith('data:') ||
       u.startsWith('blob:') ||
       u.startsWith('devtools:') ||
-      // Vstavaný prehliadač PDF (náhľad prílohy) – súčasť Electronu, nie sieť.
+      // Vstavaný prehliadač PDF (náhľad prílohy) a jeho vnútorné súbory (skripty, štýly) – súčasť Electronu, nie sieť.
+      // Bez chrome://resources/ ostane okno náhľadu prázdne.
       u.startsWith('chrome-extension://mhjfbmdgcfjbbpaeojofohoefgiehjai/') ||
+      u.startsWith('chrome://resources/') ||
       (DEV_URL !== undefined && (u.startsWith(DEV_URL) || u.startsWith(DEV_URL.replace(/^http/, 'ws'))))
     cb({ cancel: !allowed })
   })
