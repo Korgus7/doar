@@ -11,6 +11,8 @@ import { BlobStore as Blobs } from '../store/blobs'
 import { indexInfo } from '../mail/parse'
 import { classifyError } from '../mail/connection-test'
 import { logger } from '../log'
+import type { GraphClient, GraphError } from '../graph/client'
+import { graphFolderTree, wellKnownIds } from '../graph/folders'
 
 const log = logger('export')
 
@@ -53,6 +55,8 @@ export interface ExportDeps {
   blobs: BlobStore
   /** Nové nepripojené IMAP spojenie pre konto. */
   newClient(accountId: number): Promise<ImapFlow>
+  /** Konto cez Microsoft Graph (Outlook.com, Microsoft 365): klient Graph namiesto IMAP. */
+  graphClient?(accountId: number): GraphClient
   fs?: FsOps
 }
 
@@ -68,6 +72,8 @@ export interface ExportRun {
 
 interface Item {
   uid: number
+  /** Graph: ID správy u poskytovateľa (uid je potom len poradie). */
+  remoteId?: string
   size: number
   internalDate: Date | null
   flags: Set<string>
@@ -80,6 +86,8 @@ interface Item {
 
 interface FolderSnap {
   path: string
+  /** Graph: priečinok je ID v Graph (path = to isté ID). */
+  graph?: boolean
   segments: string[]
   specialUse: SpecialUseFlag | null
   uidvalidity: number
@@ -139,8 +147,11 @@ const sleep = (ms: number, signal: AbortSignal): Promise<void> =>
 export async function exportAccount(deps: ExportDeps, run: ExportRun): Promise<ExportSummary> {
   const fs = deps.fs ?? realFs
   const startedAt = new Date().toISOString()
-  const acc = deps.db.prepare('SELECT email, provider_key FROM accounts WHERE id = ?').get(run.accountId) as { email: string; provider_key: string | null } | undefined
+  const acc = deps.db.prepare('SELECT email, provider_key, protocol FROM accounts WHERE id = ?').get(run.accountId) as
+    | { email: string; provider_key: string | null; protocol: 'imap' | 'graph' }
+    | undefined
   if (!acc) throw new ExportFailure('NO_ACCOUNT', 'Konto neexistuje')
+  const graphMode = acc.protocol === 'graph'
   const partPath = `${run.path}.part`
   const progress: ExportProgress = {
     jobId: run.jobId,
@@ -189,11 +200,7 @@ export async function exportAccount(deps: ExportDeps, run: ExportRun): Promise<E
     throw new ExportFailure(code, 'Nepodarilo sa pripojiť k serveru')
   }
 
-  const folders: FolderSnap[] = []
-  let partCreated = false
-  try {
-    // ---------- 1. snímka ----------
-    emit('scan', true)
+  async function snapshotImap(): Promise<void> {
     const c0 = await connect()
     const list = selectFolders(await c0.list(), gmail)
     progress.foldersTotal = list.length
@@ -237,11 +244,95 @@ export async function exportAccount(deps: ExportDeps, run: ExportRun): Promise<E
       progress.messagesTotal += folders.at(-1)?.items.length ?? 0
       emit()
     }
+  }
+
+  /** Graph: strom priečinkov a zoznam správ priamo zo servera (nie z lokálnej databázy – môže byť neúplná). */
+  async function snapshotGraph(): Promise<void> {
+    const known = await gcall((g) => wellKnownIds(g))
+    const tree = await gcall((g) => graphFolderTree(g, known))
+    const byId = new Map(tree.map((f) => [f.id, f]))
+    const segments = (id: string): string[] => {
+      const out: string[] = []
+      for (let f = byId.get(id), i = 0; f && i < 64; f = f.parent ? byId.get(f.parent) : undefined, i++) out.unshift(f.name)
+      return out
+    }
+    const flagOf: Record<string, SpecialUseFlag> = { inbox: '\\Inbox', sent: '\\Sent', drafts: '\\Drafts', trash: '\\Trash', junk: '\\Junk', archive: '\\Archive' }
+    const ordered = [...tree].sort((a, b) => (a.specialUse === 'inbox' ? -1 : b.specialUse === 'inbox' ? 1 : segments(a.id).join('/').localeCompare(segments(b.id).join('/'))))
+    progress.foldersTotal = ordered.length
+    emit(undefined, true)
+    for (const f of ordered) {
+      isAbort(run.signal)
+      type M = { id: string; receivedDateTime?: string; isRead?: boolean; isDraft?: boolean; flag?: { flagStatus?: string } }
+      const list = await gcall((g) => g.getAll<M>(`/me/mailFolders/${encodeURIComponent(f.id)}/messages?$select=id,receivedDateTime,isRead,isDraft,flag&$top=500`))
+      const items: Item[] = list.map((m, i) => {
+        const d = m.receivedDateTime ? new Date(m.receivedDateTime) : null
+        const flags = new Set<string>()
+        if (m.isRead) flags.add('\\Seen')
+        if (m.flag?.flagStatus === 'flagged') flags.add('\\Flagged')
+        if (m.isDraft) flags.add('\\Draft')
+        return { uid: i + 1, remoteId: m.id, size: 0, internalDate: d && !Number.isNaN(d.getTime()) ? d : null, flags, labels: undefined, sha: null, localId: null, localHasBody: false, state: 'pending' }
+      })
+      folders.push({ path: f.id, graph: true, segments: segments(f.id), specialUse: f.specialUse ? (flagOf[f.specialUse] ?? null) : null, uidvalidity: 0, items })
+      progress.foldersDone++
+      progress.messagesTotal += items.length
+      emit()
+    }
+  }
+
+  // Graph: požiadavka s opakovaním pri výpadku spojenia (ako pri IMAP).
+  let graph: GraphClient | null = null
+  const gcall = async <T>(fn: (g: GraphClient) => Promise<T>): Promise<T> => {
+    if (!graph) {
+      if (!deps.graphClient) throw new ExportFailure('GRAPH_UNSUPPORTED', 'Záloha cez Microsoft Graph nie je dostupná')
+      graph = deps.graphClient(run.accountId)
+    }
+    for (let attempt = 0; ; attempt++) {
+      isAbort(run.signal)
+      try {
+        return await fn(graph)
+      } catch (e) {
+        const code = (e as GraphError).code ?? 'UNKNOWN'
+        if ((code === 'NO_NETWORK' || code === 'TIMEOUT') && attempt < RECONNECT_DELAYS.length) {
+          await sleep(RECONNECT_DELAYS[attempt]!, run.signal)
+          continue
+        }
+        throw e
+      }
+    }
+  }
+
+  const folders: FolderSnap[] = []
+  let partCreated = false
+  try {
+    // ---------- 1. snímka ----------
+    emit('scan', true)
+    if (graphMode) await snapshotGraph()
+    else await snapshotImap()
     await run.afterSnapshot?.()
 
     // ---------- 2. kontrola lokálnej kópie ----------
     emit('check', true)
     for (const f of folders) {
+      if (f.graph) {
+        const rows = deps.db
+          .prepare(
+            `SELECT m.id, m.remote_id AS remote, m.blob_sha256 AS sha, m.answered FROM messages m JOIN folders fo ON fo.id = m.folder_id
+             WHERE fo.account_id = ? AND fo.path = ? AND m.remote_id IS NOT NULL`
+          )
+          .all(run.accountId, f.path) as { id: number; remote: string; sha: string | null; answered: number }[]
+        const byRemote = new Map(rows.map((r) => [r.remote, r]))
+        for (const it of f.items) {
+          const r = byRemote.get(it.remoteId!)
+          if (!r) continue
+          it.localId = r.id
+          it.localHasBody = !!r.sha
+          if (r.sha && deps.blobs.has(r.sha)) it.sha = r.sha
+          // „Odpovedané“ Graph nepozná – pamätá si ho Doar.
+          if (r.answered) it.flags.add('\\Answered')
+        }
+        progress.missing += f.items.filter((i) => !i.sha).length
+        continue
+      }
       const rows = deps.db
         .prepare(
           `SELECT m.id, m.uid, m.blob_sha256 AS sha FROM messages m JOIN folders fo ON fo.id = m.folder_id
@@ -261,7 +352,8 @@ export async function exportAccount(deps: ExportDeps, run: ExportRun): Promise<E
     emit(undefined, true)
 
     // Voľné miesto: odhad = veľkosť správ × 1,05 + réžia na blok metadát.
-    const estimate = Math.ceil(folders.reduce((s, f) => s + f.items.reduce((t, i) => t + i.size, 0), 0) * 1.05) + progress.messagesTotal * 1024
+    // Graph veľkosť správ v zozname neuvádza – odhad 100 kB na správu.
+    const estimate = Math.ceil(folders.reduce((s, f) => s + f.items.reduce((t, i) => t + (f.graph ? 100 * 1024 : i.size), 0), 0) * 1.05) + progress.messagesTotal * 1024
     const free = await fs.freeSpace(dirname(run.path)).catch(() => Number.POSITIVE_INFINITY)
     if (free < estimate) throw new ExportFailure('DISK_FULL', 'Na disku nie je dosť miesta pre zálohu')
 
@@ -269,6 +361,7 @@ export async function exportAccount(deps: ExportDeps, run: ExportRun): Promise<E
     emit('download', true)
     const download = async (f: FolderSnap, items: Item[]): Promise<void> => {
       if (!items.length) return
+      if (f.graph) return downloadGraph(items)
       for (let attempt = 0; ; attempt++) {
         isAbort(run.signal)
         const c = await connect()
@@ -317,6 +410,33 @@ export async function exportAccount(deps: ExportDeps, run: ExportRun): Promise<E
           }
           log.info('spojenie počas zálohy prerušené – skúšam znova', { account: run.accountId })
         }
+      }
+    }
+    /** Graph: originál každej správy cez /$value (zmazaná medzičasom = nedostupná). */
+    const downloadGraph = async (items: Item[]): Promise<void> => {
+      for (const it of items) {
+        isAbort(run.signal)
+        let raw: Buffer
+        try {
+          raw = await gcall(async (g) => (await g.request('GET', `/me/messages/${encodeURIComponent(it.remoteId!)}/$value`, { raw: true })).bytes!)
+        } catch (e) {
+          if (e instanceof Cancelled) throw e
+          const code = (e as GraphError).code
+          if (code === 'AUTH_FAILED' || code?.startsWith('OAUTH_')) throw new ExportFailure(code, 'Prihlásenie vypršalo')
+          it.state = code === 'NOT_FOUND' ? 'unavailable' : 'failed'
+          continue
+        }
+        it.sha = deps.blobs.put(raw)
+        progress.downloaded++
+        if (it.localId && !it.localHasBody) {
+          try {
+            deps.store.setBody(it.localId, it.sha, await indexInfo(raw))
+            it.localHasBody = true
+          } catch (e) {
+            log.warn('správu sa nepodarilo zaindexovať', { message: it.localId, error: e })
+          }
+        }
+        emit()
       }
     }
     for (const f of folders) {
@@ -425,7 +545,7 @@ export async function exportAccount(deps: ExportDeps, run: ExportRun): Promise<E
   } catch (e) {
     if (partCreated) await fs.unlink(partPath).catch(() => {})
     const cancelled = e instanceof Cancelled
-    const code = cancelled ? null : e instanceof ExportFailure ? e.code : (classifyError(e).code ?? 'UNKNOWN')
+    const code = cancelled ? null : e instanceof ExportFailure ? e.code : graphMode ? ((e as GraphError).code ?? 'UNKNOWN') : (classifyError(e).code ?? 'UNKNOWN')
     if (!cancelled) log.warn('záloha zlyhala', { account: run.accountId, code, error: e })
     const summaryFolders = folderSummary(folders)
     return {

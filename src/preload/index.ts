@@ -169,6 +169,9 @@ const api: DoarApi = {
   openAttachmentFile(path) {
     return ipcRenderer.invoke('open-attachment-file', path) as Promise<boolean>
   },
+  dragFile(path) {
+    if (typeof path === 'string') ipcRenderer.send('drag-attachment-file', path)
+  },
   showInFolder(path) {
     if (typeof path === 'string') ipcRenderer.send('show-in-folder', path)
   },

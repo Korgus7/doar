@@ -97,6 +97,32 @@ img{max-width:100%;height:auto}table{max-width:100%}.doar-plain{white-space:pre-
   )
 
   /** Odkazy v správe: nikdy nenavigovať v aplikácii; http/https/mailto otvoriť v systémovom prehliadači. */
+  /**
+   * Potiahnutie prílohy myšou von z Doaru (na plochu, do priečinka, do iného programu): jadro pripraví dočasnú
+   * kópiu už pri stlačení tlačidla myši, systémové ťahanie súboru spustí hlavný proces.
+   */
+  const dragFiles = new Map<string, Promise<string | null>>()
+  function prepareDrag(messageId: number, index: number): Promise<string | null> {
+    const key = `${messageId}:${index}`
+    let p = dragFiles.get(key)
+    if (!p) {
+      p = window.doar
+        .invoke('attachments.prepareOpen', { messageId, index })
+        .then((r) => r.path)
+        .catch(() => null)
+      dragFiles.set(key, p)
+      // Dočasná kópia sa môže medzitým zmazať (upratovanie) – nepamätať si ju dlho.
+      setTimeout(() => dragFiles.delete(key), 60_000)
+    }
+    return p
+  }
+  function onAttachmentDrag(e: DragEvent, messageId: number, index: number): void {
+    e.preventDefault()
+    void prepareDrag(messageId, index).then((path) => {
+      if (path) window.doar.dragFile(path)
+    })
+  }
+
   function onFrameLoad(): void {
     const doc = frame?.contentDocument
     if (!doc) return
@@ -312,10 +338,9 @@ img{max-width:100%;height:auto}table{max-width:100%}.doar-plain{white-space:pre-
         {#key view.id}<AiSummary messageId={view.id} />{/key}
       {/if}
     </header>
-    <iframe bind:this={frame} title={view.subject} sandbox="allow-same-origin" {srcdoc} onload={onFrameLoad}></iframe>
     {#if view.attachments.length}
       {@const v = view}
-      <footer>
+      <div class="atts" role="group" aria-label={t('reader.attachments', { n: v.attachments.length })}>
         <div class="att-head">
           <strong>{t('reader.attachments', { n: v.attachments.length })}</strong>
           {#if v.attachments.length > 1}
@@ -328,6 +353,9 @@ img{max-width:100%;height:auto}table{max-width:100%}.doar-plain{white-space:pre-
               <button
                 class="att"
                 class:blocked={isDangerousFile(a.filename)}
+                draggable={isDangerousFile(a.filename) ? undefined : 'true'}
+                onpointerdown={() => !isDangerousFile(a.filename) && prepareDrag(v.id, a.index)}
+                ondragstart={(e) => onAttachmentDrag(e, v.id, a.index)}
                 title={isDangerousFile(a.filename) ? t('attachments.openBlocked') : previewKind(a.filename, a.contentType) ? t('attachments.previewHint') : t('attachments.hint')}
                 aria-haspopup={previewKind(a.filename, a.contentType) ? 'dialog' : 'menu'}
                 onclick={(e) => {
@@ -348,8 +376,9 @@ img{max-width:100%;height:auto}table{max-width:100%}.doar-plain{white-space:pre-
             </li>
           {/each}
         </ul>
-      </footer>
+      </div>
     {/if}
+    <iframe bind:this={frame} title={view.subject} sandbox="allow-same-origin" {srcdoc} onload={onFrameLoad}></iframe>
   {/if}
 </section>
 
@@ -571,12 +600,13 @@ img{max-width:100%;height:auto}table{max-width:100%}.doar-plain{white-space:pre-
     background: #fbfaf7;
     min-height: 0;
   }
-  footer {
-    border-top: 1px solid var(--border);
-    padding: 0.6rem 1.25rem;
+  /* Prílohy nad textom správy – hneď viditeľné; dajú sa potiahnuť myšou na plochu alebo do priečinka. */
+  .atts {
+    border-bottom: 1px solid var(--border);
+    padding: 0.5rem 1.25rem;
     font-size: 0.85rem;
   }
-  footer ul {
+  .atts ul {
     list-style: none;
     padding: 0;
     margin: 0.3rem 0;

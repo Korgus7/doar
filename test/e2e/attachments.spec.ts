@@ -114,6 +114,31 @@ test('prílohy: uložiť, otvoriť (program nie), preposlať s prílohami a pril
   const opened = await app.evaluate(() => (globalThis as { opened?: string }).opened!)
   expect(existsSync(opened) && readFileSync(opened).equals(PDF)).toBe(true)
 
+  // Prílohy sú nad textom správy.
+  const above = await reader.evaluate((r) => {
+    const atts = r.querySelector('.atts')
+    const frame = r.querySelector('iframe')
+    return !!atts && !!frame && !!(atts.compareDocumentPosition(frame) & Node.DOCUMENT_POSITION_FOLLOWING)
+  })
+  expect(above).toBe(true)
+
+  // Potiahnutie prílohy von z Doaru: systémové ťahanie dočasnej kópie súboru (program sa ťahať nedá).
+  await app.evaluate(({ BrowserWindow }) => {
+    for (const w of BrowserWindow.getAllWindows()) {
+      w.webContents.startDrag = ((item: { file: string }) => {
+        ;(globalThis as { dragged?: string }).dragged = item.file
+      }) as typeof w.webContents.startDrag
+    }
+  })
+  const pdfButton = reader.getByRole('button', { name: /faktura\.pdf/ })
+  await expect(pdfButton).toHaveAttribute('draggable', 'true')
+  await pdfButton.dispatchEvent('pointerdown')
+  await pdfButton.dispatchEvent('dragstart')
+  await expect.poll(() => app.evaluate(() => (globalThis as { dragged?: string }).dragged ?? '')).toMatch(/otvorene-prilohy[\\/].+[\\/]faktura\.pdf$/)
+  const dragged = await app.evaluate(() => (globalThis as { dragged?: string }).dragged!)
+  expect(readFileSync(dragged).equals(PDF)).toBe(true)
+  await expect(reader.getByRole('button', { name: /setup\.exe/ })).not.toHaveAttribute('draggable', 'true')
+
   // Program sa otvoriť nedá – len uložiť.
   await reader.getByRole('button', { name: /setup\.exe/ }).click()
   await expect(menu.getByRole('menuitem', { name: /Otvoriť – nedá sa/ })).toBeDisabled()

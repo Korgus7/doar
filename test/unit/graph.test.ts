@@ -15,6 +15,7 @@ import { ArchiveManager } from '../../src/core/archive/archive'
 import type { OAuthService } from '../../src/core/oauth/oauth'
 import type { DraftSaveInput } from '../../src/shared/ipc'
 import { FakeGraph } from '../fixtures/graph-server'
+import { readMbox, parseEntry } from '../../src/core/import/mbox-reader'
 
 /** Kontá Outlook.com / Microsoft 365 cez Microsoft Graph – proti testovaciemu serveru Graph. */
 
@@ -23,6 +24,7 @@ let db: Db
 let store: MailStore
 let sync: SyncManager
 let h: Handlers
+let exportManager: ExportManager
 let accountId: number
 const newMail: number[][] = []
 
@@ -64,7 +66,7 @@ beforeAll(async () => {
   })
   h = createHandlers({
     files: new FileGrants(), db, blobs, store, sync, secrets: new MemorySecrets(true),
-    exports: new ExportManager({ db, store, blobs, emit, newClient: (id) => sync.newImapClient(id) }), sessionSecrets: new MemorySecrets(), emit,
+    exports: (exportManager = new ExportManager({ db, store, blobs, emit, newClient: (id) => sync.newImapClient(id), graphClient: (id) => sync.graphClient(id) })), sessionSecrets: new MemorySecrets(), emit,
     imports: new ImportManager({ db, store, blobs, emit, files: new FileGrants(), newClient: (id) => sync.newImapClient(id) }),
     archives: new ArchiveManager({ db, files: new FileGrants(), emit }),
     dataDir: dir, appVersion: 'test', sqlite: 'x',
@@ -187,7 +189,29 @@ describe('Graph: synchronizácia', () => {
     expect(graph.folders.get([...graph.folders.values()].find((f) => f.displayName === 'Faktúry 2026')!.id)!.parent).toBe(graph.folderId('deleteditems'))
   })
 
-  it('export a import cez IMAP: pre konto cez Graph zrozumiteľná chyba', async () => {
+  it('záloha mbox cez Graph: priečinky s cestou a úlohou, príznaky, chýbajúce originály sa stiahnu; import cez IMAP zatiaľ nie', async () => {
+    // Správa, ktorú Doar ešte nemá (pribudla po poslednej synchronizácii), a prečítaná s hviezdičkou.
+    const fresh = await graph.addMessage(graph.folderId('2026'), mime('Iba na serveri'))
+    const starred = graph.inFolder('inbox')[0]!
+    graph.update(starred.id, { isRead: true, flagged: true })
+    const dir = mkdtempSync(join(tmpdir(), 'doar-graph-export-'))
+    const path = join(dir, 'outlook.mbox')
+    const exports = exportManager
+    exports.allow(path)
+    const { jobId } = exports.start(accountId, path)
+    const summary = (await exports.wait(jobId))!
+    expect(summary).toMatchObject({ result: 'complete', errorCode: null, path })
+    // Chýbajúce originály (správa „Iba na serveri“, ak ju synchronizácia ešte nestihla) sa stiahnu počas zálohy.
+    expect(summary.totals).toMatchObject({ unavailable: 0, failed: 0 })
+    const entries: ReturnType<typeof parseEntry>[] = []
+    for await (const e of readMbox(path)) entries.push(parseEntry(e.raw))
+    const bySubject = (s: string) => entries.find((e) => e!.original.toString().includes(`Subject: ${s}`))!
+    expect(bySubject('Iba na serveri')).toMatchObject({ doar: true, hashOk: true, source: 'test@outlook.com', folderSegments: ['Projekty', '2026'], specialUse: null })
+    expect(bySubject(starred.subject)).toMatchObject({ folderSegments: ['Inbox'], specialUse: '\\Inbox' })
+    expect([...bySubject(starred.subject)!.flags].sort()).toEqual(['\\Flagged', '\\Seen'])
+    expect(bySubject('Cez Graph')).toMatchObject({ specialUse: '\\Sent' })
+    expect(entries).toHaveLength(graph.messages.size - graph.inFolder('outbox').length)
+    expect(fresh).toBeTruthy()
     await expect(sync.newImapClient(accountId)).rejects.toMatchObject({ code: 'GRAPH_UNSUPPORTED' })
   })
 })

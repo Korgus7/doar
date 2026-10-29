@@ -1131,6 +1131,8 @@ export interface DoarApi {
   chooseFolder(): Promise<string | null>
   /** Otvorí dočasný súbor prílohy v predvolenom programe (len súbory pripravené jadrom, nikdy spustiteľné). */
   openAttachmentFile(path: string): Promise<boolean>
+  /** Potiahnutie dočasnej kópie prílohy myšou von z Doaru (systémové ťahanie súboru). */
+  dragFile(path: string): void
   /**
    * Okno správy oznámi, ktorý koncept upravuje. Ak ho už upravuje iné okno, vráti false
    * (to okno sa zobrazí navrchu a toto sa má zavrieť).

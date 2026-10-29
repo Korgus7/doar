@@ -613,6 +613,14 @@ if (!gotLock) {
       if (!rel || rel.startsWith('..') || isAbsolute(rel) || isDangerousFile(path) || !picked(path)) return false
       return (await shell.openPath(path)) === ''
     })
+    // Potiahnutie prílohy z Doaru (na plochu, do priečinka): len dočasná kópia pripravená jadrom, nie spustiteľný súbor.
+    ipcMain.on('drag-attachment-file', (e, path: unknown) => {
+      if (!senderWindow(e) || typeof path !== 'string') return
+      const base = join(app.getPath('userData'), OPEN_ATTACHMENTS_DIR)
+      const rel = relative(base, path)
+      if (!rel || rel.startsWith('..') || isAbsolute(rel) || isDangerousFile(path) || !picked(path)) return
+      e.sender.startDrag({ file: path, icon: nativeImage.createFromPath(APP_ICON).resize({ width: 32, height: 32 }) })
+    })
     // Náhľad PDF prílohy: vstavaný prehliadač PDF v samostatnom okne – len dočasná kópia pripravená jadrom.
     ipcMain.handle('preview-pdf', async (e, path: unknown, title: unknown) => {
       if (!windowOf(e) || typeof path !== 'string' || !/\.pdf$/i.test(path)) return false

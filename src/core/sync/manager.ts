@@ -7,7 +7,7 @@ import type { CoreEvents, EventChannel, SyncStatus } from '../../shared/ipc'
 import type { ImapFlow } from 'imapflow'
 import { AccountSync, type AccountRow, type MovePayload, type SyncDeps } from './account-sync'
 import { GraphSync } from './graph-sync'
-import type { GraphFetch } from '../graph/client'
+import { GraphClient, type GraphFetch } from '../graph/client'
 import { createImapClient } from '../mail/imap'
 import type { OAuthService } from '../oauth/oauth'
 
@@ -87,6 +87,28 @@ export class SyncManager {
     return this.deps.clientFactory
       ? this.deps.clientFactory(row, pass, false)
       : createImapClient({ host: row.imap_host, port: row.imap_port, security: row.imap_security }, row.username, pass)
+  }
+
+  /** Klient Microsoft Graph pre konto cez Graph – pre dlhé úlohy mimo synchronizácie (záloha). */
+  graphClient(accountId: number): GraphClient {
+    const row = this.accountRow(accountId)
+    if (!row) throw Object.assign(new Error('Konto neexistuje'), { code: 'NO_ACCOUNT' })
+    if (row.protocol !== 'graph') throw Object.assign(new Error('Konto nie je cez Microsoft Graph'), { code: 'NOT_GRAPH' })
+    return new GraphClient(
+      async (o) => {
+        if (o?.fresh) this.deps.onAuthRejected?.(row)
+        const c = await this.deps.getPassword(row)
+        if (!c || typeof c === 'string') throw Object.assign(new Error('Chýba prihlásenie'), { code: 'OAUTH_EXPIRED' })
+        return c.accessToken
+      },
+      { base: this.graphOpts.graphBase, fetch: this.graphOpts.graphFetch }
+    )
+  }
+
+  /** Spôsob pripojenia konta (IMAP/SMTP alebo Microsoft Graph). */
+  protocolOf(accountId: number): 'imap' | 'graph' | null {
+    const row = this.accountRow(accountId)
+    return row ? (row.protocol ?? 'imap') : null
   }
 
   startAll(): void {

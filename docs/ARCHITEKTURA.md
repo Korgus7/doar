@@ -231,7 +231,7 @@ doar/
       mail/      connection-test.ts, imap.ts, smtp.ts, compose.ts, parse.ts, sanitize.ts, remote.ts
       providers/ known.ts, autoconfig.ts, discover.ts, net.ts (neskôr special-folders.ts)
       sync/      account-sync.ts (vrátane odosielacej fronty), graph-sync.ts, manager.ts
-      graph/     client.ts, test.ts
+      graph/     client.ts, folders.ts, test.ts
       export/    mboxrd.ts, export-account.ts, manager.ts
       import/    mbox-reader.ts, import-account.ts, manager.ts, sources/ (eml, dbx, pst, prevod)
       archive/   archive.ts

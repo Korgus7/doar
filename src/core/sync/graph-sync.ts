@@ -2,6 +2,7 @@ import type { FolderInfo, FolderRow, HeaderInput, OutboxRow } from '../store/mai
 import type { SpecialUse, SyncStatus } from '../../shared/ipc'
 import { OFFLINE_CODES } from '../../shared/ipc'
 import { GraphClient, type GraphError, type GraphFetch } from '../graph/client'
+import { graphFolderTree, wellKnownIds, type WellKnownIds } from '../graph/folders'
 import { indexInfo } from '../mail/parse'
 import { buildDraftRaw } from '../drafts'
 import { logger } from '../log'
@@ -22,16 +23,7 @@ const log = logger('graph-sync')
  */
 
 const SELECT = 'subject,from,toRecipients,ccRecipients,receivedDateTime,sentDateTime,isRead,isDraft,flag,internetMessageId,hasAttachments'
-const WELL_KNOWN: [SpecialUse, string][] = [
-  ['inbox', 'inbox'],
-  ['sent', 'sentitems'],
-  ['drafts', 'drafts'],
-  ['trash', 'deleteditems'],
-  ['junk', 'junkemail'],
-  ['archive', 'archive']
-]
-/** Priečinky, ktoré sa nezobrazujú (Pošta na odoslanie Outlooku – Doar má vlastnú frontu). */
-const HIDDEN_WELL_KNOWN = ['outbox']
+
 /** Odmietnutá požiadavka používateľa – rozhranie ju ukáže, stav synchronizácie sa nemení. */
 const USER_ERRORS = ['FOLDER_EXISTS', 'FOLDER_PROTECTED', 'FOLDER_INTO_ITSELF', 'INVALID_FOLDER_NAME', 'NO_TARGET', 'NOT_FOUND', 'REJECTED']
 const BODY_CHUNK = 10
@@ -123,8 +115,7 @@ export class GraphSync {
   private retryTimer: NodeJS.Timeout | null = null
   private missingBodies = new Set<number>()
   /** ID špeciálnych priečinkov v Graph (nemenia sa). */
-  private wellKnown: Map<string, SpecialUse> | null = null
-  private hiddenIds = new Set<string>()
+  private wellKnown: WellKnownIds | null = null
   status: SyncStatus
 
   constructor(
@@ -327,45 +318,23 @@ export class GraphSync {
     })
   }
 
-  private async specialIds(): Promise<Map<string, SpecialUse>> {
-    if (this.wellKnown) return this.wellKnown
-    const map = new Map<string, SpecialUse>()
-    for (const [use, name] of WELL_KNOWN) {
-      try {
-        map.set((await this.graph.get<{ id: string }>(`/me/mailFolders/${name}?$select=id`)).id, use)
-      } catch (e) {
-        if ((e as GraphError).code !== 'NOT_FOUND') throw e
-      }
-    }
-    for (const name of HIDDEN_WELL_KNOWN) {
-      try {
-        this.hiddenIds.add((await this.graph.get<{ id: string }>(`/me/mailFolders/${name}?$select=id`)).id)
-      } catch (e) {
-        if ((e as GraphError).code !== 'NOT_FOUND') throw e
-      }
-    }
-    this.wellKnown = map
-    return map
+  private async known(): Promise<WellKnownIds> {
+    if (!this.wellKnown) this.wellKnown = await wellKnownIds(this.graph)
+    return this.wellKnown
   }
 
   /** Strom priečinkov z Graph → lokálne priečinky (cesta = ID; nadradený = ID nadradeného, najvyššia úroveň bez neho). */
   private async syncFolderList(): Promise<void> {
-    const special = await this.specialIds()
-    const fields = '$select=id,displayName,parentFolderId,childFolderCount&$top=250'
-    const top = await this.graph.getAll<GraphFolder>(`/me/mailFolders?${fields}`)
-    const all: { f: GraphFolder; parent: string | null }[] = top.map((f) => ({ f, parent: null }))
-    for (let i = 0; i < all.length && i < 5000; i++) {
-      const { f } = all[i]!
-      if ((f.childFolderCount ?? 0) > 0) {
-        for (const c of await this.graph.getAll<GraphFolder>(`/me/mailFolders/${enc(f.id)}/childFolders?${fields}`)) all.push({ f: c, parent: f.id })
-      }
-    }
-    const infos: FolderInfo[] = all
-      .filter(({ f }) => !this.hiddenIds.has(f.id))
-      .map(({ f, parent }) => {
-        const use = special.get(f.id) ?? null
-        return { path: f.id, delimiter: null, name: f.displayName, parentPath: parent, specialUse: use, specialUseSource: use ? 'server' : null, selectable: true, subscribed: true }
-      })
+    const infos: FolderInfo[] = (await graphFolderTree(this.graph, await this.known())).map((f) => ({
+      path: f.id,
+      delimiter: null,
+      name: f.name,
+      parentPath: f.parent,
+      specialUse: f.specialUse,
+      specialUseSource: f.specialUse ? 'server' : null,
+      selectable: true,
+      subscribed: true
+    }))
     this.deps.store.syncFolders(this.account.id, infos)
     this.deps.emit('folders.changed', { accountId: this.account.id })
   }

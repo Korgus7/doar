@@ -253,7 +253,13 @@ export class FakeGraph {
         const filter = u.searchParams.get('$filter') ?? ''
         const m = /^internetMessageId eq '((?:[^']|'')*)'$/.exec(filter)
         const want = m ? m[1]!.replace(/''/g, "'") : null
-        return send(200, { value: [...this.messages.values()].filter((x) => x.folder === f.id && (want === null || x.internetMessageId === want)).map((x) => ({ id: x.id })) })
+        const list = [...this.messages.values()].filter((x) => x.folder === f.id && (want === null || x.internetMessageId === want))
+        // Stránkovanie ako Graph ($top + @odata.nextLink so $skip).
+        const top = Number(u.searchParams.get('$top') ?? '10')
+        const skip = Number(u.searchParams.get('$skip') ?? '0')
+        const page = list.slice(skip, skip + Math.min(top, this.pageSize)).map((x) => (want === null ? this.json(x) : { id: x.id }))
+        const next = skip + page.length < list.length ? `${this.base}${path}?${new URLSearchParams({ ...Object.fromEntries(u.searchParams), $skip: String(skip + page.length) })}` : undefined
+        return send(200, { value: page, ...(next ? { '@odata.nextLink': next } : {}) })
       }
       return fail(404, 'ResourceNotFound')
     }

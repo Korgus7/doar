@@ -125,7 +125,7 @@ function init(dataDir: string, appVersion: string): void {
       } satisfies CoreToMain)
     }
   })
-  exports = new ExportManager({ db, store, blobs, emit, newClient: (id) => sync.newImapClient(id) })
+  exports = new ExportManager({ db, store, blobs, emit, newClient: (id) => sync.newImapClient(id), graphClient: (id) => sync.graphClient(id) })
   imports = new ImportManager({
     db,
     store,

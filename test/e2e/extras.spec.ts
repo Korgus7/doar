@@ -189,8 +189,8 @@ test('pravidlá, šablóny a odoslať neskôr', async () => {
   await c1.getByRole('button', { name: 'Uložiť túto správu ako šablónu' }).click()
   await expect(c1.getByText('Šablóna „Potvrdenie“ je uložená.')).toBeVisible()
   c1.once('dialog', (d) => void d.accept())
-  await c1.getByRole('button', { name: /Zahodiť/ }).click()
-  await expect.poll(() => c1.isClosed()).toBe(true)
+  // Okno sa po kliknutí zavrie – kliknutie môže skončiť chybou „page closed“, rozhoduje zatvorenie okna.
+  await Promise.all([c1.waitForEvent('close'), c1.getByRole('button', { name: /Zahodiť/ }).click().catch(() => {})])
 
   const c2 = await openCompose()
   await c2.getByRole('button', { name: 'Šablóny' }).click()
