@@ -101,7 +101,7 @@ test('nastavenia: názov, farba, podpis v novej správe, server, upozornenia, od
   // Ponuka ☰: položky, ktoré boli dole v paneli; „Pridať konto…“ otvorí sprievodcu.
   await win.getByRole('button', { name: 'Ponuka' }).click()
   const menu = win.getByRole('menu', { name: 'Ponuka' })
-  await expect(menu.getByRole('menuitem')).toHaveText([/^Pridať konto…/, /^Zálohovať konto…/, /^Obnoviť zo zálohy…/, /^Importovať z iného programu…/, /^Otvoriť archív…/, /^Otvoriť správu zo súboru \(\.eml\)…/, /Zoskupiť do konverzácií/, /^Nastavenia…/, /^Skontrolovať aktualizácie…/, /^O aplikácii Doar Mail/])
+  await expect(menu.getByRole('menuitem')).toHaveText([/^Pridať konto…/, /^Zálohovať konto…/, /^Obnoviť zo zálohy…/, /^Importovať z iného programu…/, /^Otvoriť archív…/, /^Otvoriť správu zo súboru \(\.eml\)…/, /Zoskupiť do konverzácií/, /^Nastavenia…/, /^Skontrolovať aktualizácie…/, /^O aplikácii Doar/])
   await menu.getByRole('menuitem', { name: 'Pridať konto…' }).click()
   await expect(win.getByRole('heading', { name: 'Pridať konto' })).toBeVisible()
   await win.getByRole('button', { name: 'Zrušiť' }).click()
@@ -111,7 +111,7 @@ test('nastavenia: názov, farba, podpis v novej správe, server, upozornenia, od
   await win.getByRole('button', { name: 'Nastavenia', exact: true }).click()
   win.once('dialog', (d) => void d.accept())
   await dlg.getByRole('button', { name: 'Odstrániť konto…' }).click()
-  await expect(win.getByRole('heading', { name: 'Vitajte v Doar Mail' })).toBeVisible({ timeout: 15_000 })
+  await expect(win.getByRole('heading', { name: 'Vitajte v programe Doar' })).toBeVisible({ timeout: 15_000 })
   const imap = new ImapFlow({ host: '127.0.0.1', port: srv!.ports.imaps, secure: true, auth: { user: `${USER}@doar.test`, pass: srv!.password }, tls: { ca: readFileSync(process.env['DOAR_TEST_CA']!) }, logger: false })
   await imap.connect()
   const st = await imap.status('INBOX', { messages: true })

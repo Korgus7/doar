@@ -1,4 +1,4 @@
-# Doar Mail
+# Doar
 
 Jednoduchý, rýchly a bezplatný e-mailový klient pre desktop – v duchu Outlook Expressu a starej aplikácie Pošta pre Windows.
 
@@ -30,9 +30,9 @@ npm install
 npm run dev
 ```
 
-Balík pre Windows: `npm run dist` → `dist\Doar-Mail-<verzia>-win-x64.zip` (rozbaliť a spustiť `Doar Mail.exe`; odkazy v ponuke Štart a na ploche si vytvorí sám).
+Balík pre Windows: `npm run dist` → `dist\Doar-<verzia>-win-x64.zip` (rozbaliť a spustiť `Doar.exe`; odkazy v ponuke Štart a na ploche si vytvorí sám).
 
-Vydanie novej verzie: zvýšiť `version` v `package.json` → `npm run dist` → na GitHube *Releases → Draft a new release* (značka `v<verzia>`) a priložiť `dist\Doar-Mail-<verzia>-win-x64.zip` aj `dist\doar-mail-update.json`. Nainštalované Doar Mail novú verziu ponúknu samy (repozitár musí byť verejný). Stránka na stiahnutie: `site/` (stačí nahrať na web, najnovšie vydanie si nájde sama).
+Vydanie novej verzie: zvýšiť `version` v `package.json` → `npm run dist` → na GitHube *Releases → Draft a new release* (značka `v<verzia>`) a priložiť `dist\Doar-<verzia>-win-x64.zip` aj `dist\doar-update.json`. Nainštalovaný Doar novú verziu ponúkne sám (repozitár musí byť verejný). Stránka na stiahnutie: `site/` (stačí nahrať na web, najnovšie vydanie si nájde sama).
 
 Testy: `npm test` (unit), `npm run test:e2e` (rozhranie). Integračné testy proti testovaciemu IMAP/SMTP serveru vyžadujú Linux alebo WSL s balíkmi `dovecot-imapd dovecot-lmtpd`: `npm run test:integration`.
 

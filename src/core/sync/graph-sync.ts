@@ -3,6 +3,7 @@ import type { SpecialUse, SyncStatus } from '../../shared/ipc'
 import { OFFLINE_CODES } from '../../shared/ipc'
 import { GraphClient, type GraphError, type GraphFetch } from '../graph/client'
 import { graphFolderTree, wellKnownIds, type WellKnownIds } from '../graph/folders'
+import { createLargeDraft, sendLarge } from '../graph/large'
 import { indexInfo } from '../mail/parse'
 import { buildDraftRaw } from '../drafts'
 import { logger } from '../log'
@@ -17,7 +18,8 @@ const log = logger('graph-sync')
  * - priečinky: zoznam /me/mailFolders (cesta v databáze = ID priečinka v Graph),
  * - správy: „delta“ priečinka (len zmeny od minule), originál správy (.eml) cez /$value,
  * - zmeny: PATCH (prečítané, hviezdička), /move, DELETE, koncept = správa v MIME do Konceptov,
- * - odoslanie: /sendMail s celou správou v MIME (server sám uloží kópiu do Odoslaných),
+ * - odoslanie: /sendMail s celou správou v MIME (server sám uloží kópiu do Odoslaných); väčšia než ~3 MB
+ *   po častiach (graph/large.ts: koncept, prílohy po kúskoch, /send),
  * - nová pošta: doručená pošta sa kontroluje každú minútu (Graph neponúka IDLE pre desktop).
  * ID správ sú nemenné (ImmutableId) – platia aj po presune.
  */
@@ -28,7 +30,8 @@ const SELECT = 'subject,from,toRecipients,ccRecipients,receivedDateTime,sentDate
 const USER_ERRORS = ['FOLDER_EXISTS', 'FOLDER_PROTECTED', 'FOLDER_INTO_ITSELF', 'INVALID_FOLDER_NAME', 'NO_TARGET', 'NOT_FOUND', 'REJECTED']
 const BODY_CHUNK = 10
 const PERIODIC_MS = 5 * 60_000
-const INBOX_POLL_MS = 60_000
+/** Graph nemá IDLE – doručená pošta sa zisťuje každých 20 s (delta, len zmeny; ďaleko pod limitmi Microsoftu). */
+const INBOX_POLL_MS = 20_000
 const MAX_BACKOFF_MS = 5 * 60_000
 /** Graph prijme požiadavku najviac do 4 MB; MIME ide v base64 (+33 %). */
 const MAX_MIME_BYTES = Math.floor((4 * 1024 * 1024 * 3) / 4) - 16 * 1024
@@ -638,10 +641,13 @@ export class GraphSync {
       if (!row || row.deleted || row.account_id !== this.account.id || row.server_rev >= row.rev) return
       const rev = row.rev
       const raw = await buildDraftRaw(store, this.deps.blobs, row, { name: this.account.display_name, address: this.account.email })
-      if (raw.length > MAX_MIME_BYTES) throw err('GRAPH_TOO_LARGE', 'Koncept je pre server priveľký')
       const folder = await this.ensureSpecialFolder('drafts')
       touched.add(folder.id)
-      const created = (await this.graph.request('POST', '/me/messages', { body: raw.toString('base64'), contentType: 'text/plain' })).json as { id: string }
+      // Veľký koncept (s prílohami nad ~3 MB) sa poskladá po častiach.
+      const created =
+        raw.length > MAX_MIME_BYTES
+          ? { id: await createLargeDraft(this.graph, raw) }
+          : ((await this.graph.request('POST', '/me/messages', { body: raw.toString('base64'), contentType: 'text/plain' })).json as { id: string })
       const oldUid = row.server_folder_id === folder.id ? row.server_uid : null
       await this.removeDraftCopies(folder, row.message_id, oldUid, created.id)
       await this.syncFolder(folder)
@@ -754,14 +760,10 @@ export class GraphSync {
     this.emitOutbox()
     // Skrytá kópia ostáva v MIME – Graph podľa nej doručí a príjemcom ju nezobrazí.
     const raw = this.deps.blobs.read(r.blob_sha256)
-    if (raw.length > MAX_MIME_BYTES) {
-      store.setOutbox(r.id, { state: 'error', error: 'GRAPH_TOO_LARGE' })
-      log.warn('správa je pre Graph priveľká', { account: this.account.id, outbox: r.id, size: raw.length })
-      this.emitOutbox()
-      return
-    }
     try {
-      await this.graph.request('POST', '/me/sendMail', { body: raw.toString('base64'), contentType: 'text/plain' })
+      // Do ~3 MB celá správa v MIME naraz; väčšia po častiach (koncept, prílohy, odoslanie).
+      if (raw.length > MAX_MIME_BYTES) await sendLarge(this.graph, raw)
+      else await this.graph.request('POST', '/me/sendMail', { body: raw.toString('base64'), contentType: 'text/plain' })
       this.outboxBackoff = 0
       store.setOutbox(r.id, { state: 'sent', sentCopyState: 'done', smtpResponse: 'Graph 202', error: null })
       store.rememberAddresses((JSON.parse(r.recipients_json) as string[]).map((address) => ({ name: '', address })))

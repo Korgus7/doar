@@ -339,6 +339,8 @@ export class AccountSync {
   // ---------- sledovanie doručenej pošty (IDLE) ----------
 
   private watcherStarting = false
+  /** Sledovanie sa prerušilo – po obnovení skontrolovať doručenú poštu. */
+  private watcherLost = false
 
   private async startWatcher(): Promise<void> {
     // Už beží (alebo sa práve spúšťa) – napr. po „pripojení k sieti“ aj z naplánovaného pokusu.
@@ -350,6 +352,11 @@ export class AccountSync {
       await w.mailboxOpen('INBOX', { readOnly: true })
       this.watcher = w
       log.debug('sledovanie doručenej pošty spustené', { account: this.account.id })
+      // Po výpadku spojenia mohla medzitým prísť pošta – hneď skontrolovať (nečakať na pravidelnú synchronizáciu).
+      if (this.watcherLost) {
+        this.watcherLost = false
+        void this.requestInboxSync().catch(() => {})
+      }
       let debounce: NodeJS.Timeout | null = null
       const onChange = (): void => {
         if (debounce) clearTimeout(debounce)
@@ -363,7 +370,9 @@ export class AccountSync {
       }
       w.on('close', () => {
         if (this.watcher === w) this.watcher = null
-        if (!this.stopped) this.later(() => void this.startWatcher(), 30_000)
+        this.watcherLost = true
+        // Rýchly nový pokus (výpadok spojenia, server ukončil nečinné spojenie); ak sa nepodarí, ďalší o minútu.
+        if (!this.stopped) this.later(() => void this.startWatcher(), 5_000)
       })
       // IDLE hneď a stále znova: knižnica IDLE po udalosti (napr. zmena príznaku) ukončí a sama ho
       // neobnoví – ďalšia nová správa by sa potom neohlásila.

@@ -10,9 +10,9 @@ const VERSION = (JSON.parse(readPkg('package.json', 'utf8')) as { version: strin
 test('aplikácia sa spustí, rozhranie sa spojí s jadrom a vytvorí databázu', async () => {
   const { app, dataDir } = await launchApp()
   const win = await app.firstWindow()
-  await expect(win.getByRole('heading', { name: /Vitajte v Doar Mail|Welcome to Doar Mail/ })).toBeVisible()
+  await expect(win.getByRole('heading', { name: /Vitajte v programe Doar|Welcome to Doar/ })).toBeVisible()
   // Stavový riadok ukáže verziu SQLite až po odpovedi jadra.
-  await expect(win.getByRole('status')).toContainText(`Doar Mail ${VERSION} · SQLite`, { timeout: 15_000 })
+  await expect(win.getByRole('status')).toContainText(`Doar ${VERSION} · SQLite`, { timeout: 15_000 })
   expect(existsSync(join(dataDir, 'doar.db'))).toBe(true)
 
   // Bezpečnosť: rozhranie nemá Node.js ani require.
@@ -23,7 +23,7 @@ test('aplikácia sa spustí, rozhranie sa spojí s jadrom a vytvorí databázu',
 
   // Prepnutie jazyka na angličtinu.
   await win.getByRole('combobox').selectOption('en')
-  await expect(win.getByRole('heading', { name: 'Welcome to Doar Mail' })).toBeVisible()
+  await expect(win.getByRole('heading', { name: 'Welcome to Doar' })).toBeVisible()
   await win.screenshot({ path: 'test-results/start-en.png' })
 
   // Prepnutie jazyka z menu (Zobraziť → Jazyk / Language) – zmení rozhranie aj menu, bez reštartu.
@@ -35,14 +35,14 @@ test('aplikácia sa spustí, rozhranie sa spojí s jadrom a vytvorí databázu',
       }
     }, label)
   await clickLang('Slovenčina')
-  await expect(win.getByRole('heading', { name: 'Vitajte v Doar Mail' })).toBeVisible()
+  await expect(win.getByRole('heading', { name: 'Vitajte v programe Doar' })).toBeVisible()
   await expect.poll(() => app.evaluate(({ Menu }) => Menu.getApplicationMenu()?.items.map((i) => i.label).includes('Súbor'))).toBe(true)
   await clickLang('English')
-  await expect(win.getByRole('heading', { name: 'Welcome to Doar Mail' })).toBeVisible()
+  await expect(win.getByRole('heading', { name: 'Welcome to Doar' })).toBeVisible()
   await expect.poll(() => app.evaluate(({ Menu }) => Menu.getApplicationMenu()?.items.map((i) => i.label).includes('File'))).toBe(true)
 
   // Názov a ikona okna.
-  expect(await win.title()).toBe('Doar Mail')
+  expect(await win.title()).toBe('Doar')
   const icon = await app.evaluate(({ app: a, nativeImage }) => nativeImage.createFromPath(`${a.getAppPath()}/resources/icon.png`).getSize())
   expect(icon.width).toBe(512)
   await app.close()

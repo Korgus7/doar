@@ -107,14 +107,14 @@ const settings: AccountSettings = {
   providerKey: 'gmail'
 }
 
-/** „Prehliadač“: otvorí adresu prihlásenia, server presmeruje na spätné volanie Doar Mail. */
+/** „Prehliadač“: otvorí adresu prihlásenia, server presmeruje na spätné volanie Doar. */
 async function browse(url: string): Promise<{ status: number; html: string }> {
   const r = await fetch(url)
   return { status: r.status, html: await r.text() }
 }
 
 async function signIn(loginHint = USER): Promise<string> {
-  const { flowId, url } = await h['oauth.start']({ provider: 'google', loginHint, lang: 'sk', text: { title: 'Doar Mail', done: 'Prihlásenie hotové', failed: 'Nepodarilo sa' } })
+  const { flowId, url } = await h['oauth.start']({ provider: 'google', loginHint, lang: 'sk', text: { title: 'Doar', done: 'Prihlásenie hotové', failed: 'Nepodarilo sa' } })
   const page = await browse(url)
   expect(page.html).toContain('Prihlásenie hotové')
   await h['oauth.finish']({ flowId })

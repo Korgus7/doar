@@ -1,4 +1,5 @@
 import sanitizeHtml from 'sanitize-html'
+import { EDITOR_FONTS } from '../../shared/ipc'
 
 /**
  * Formátovaná správa z okna na písanie (editor TipTap) → bezpečné HTML na odoslanie a textová podoba.
@@ -7,9 +8,16 @@ import sanitizeHtml from 'sanitize-html'
  * vie vytvoriť. Textová podoba (multipart/alternative) zachová štruktúru – odseky, zoznamy, citácie, odkazy.
  */
 
-const TAGS = ['p', 'br', 'strong', 'b', 'em', 'i', 'u', 's', 'a', 'ul', 'ol', 'li', 'blockquote', 'h1', 'h2', 'h3', 'hr', 'code', 'pre', 'img', 'span']
-/** Farba písma a pozadia z editora: len `color` a `background-color` v tvare #rrggbb na značke span. */
-const SPAN_STYLES = { span: { color: [/^#[0-9a-f]{6}$/i], 'background-color': [/^#[0-9a-f]{6}$/i] } }
+const TAGS = ['p', 'br', 'strong', 'b', 'em', 'i', 'u', 's', 'a', 'ul', 'ol', 'li', 'blockquote', 'h1', 'h2', 'h3', 'hr', 'code', 'pre', 'img', 'span', 'table', 'tbody', 'tr', 'td']
+/** Formátovanie z editora: na span farba, zvýraznenie, veľkosť a písmo; na odseku a nadpise zarovnanie a zarážka. */
+const BLOCK_STYLE = { 'text-align': [/^(left|center|right|justify)$/], 'padding-left': [/^\d{1,3}px$/] }
+const SPAN_STYLES = {
+  span: { color: [/^#[0-9a-f]{6}$/i], 'background-color': [/^#[0-9a-f]{6}$/i], 'font-size': [/^\d{1,2}(\.\d)?(px|pt)$/], 'font-family': [/^'[A-Za-z ]+'$/] },
+  p: BLOCK_STYLE,
+  h1: BLOCK_STYLE,
+  h2: BLOCK_STYLE,
+  h3: BLOCK_STYLE
+}
 
 /** Obrázok v správe (logo v podpise): len vložený obrázok data: (PNG, JPEG, GIF, WebP), nie odkaz na internet. */
 const IMG_SRC = /^data:image\/(png|jpe?g|gif|webp);base64,[a-z0-9+/=\s]+$/i
@@ -29,8 +37,8 @@ function cleanImg(attribs: Record<string, string>): Record<string, string> {
 }
 
 /**
- * Farba písma a pozadia z editora: prehliadač ju zapíše ako `color: rgb(180, 35, 24)` – prevedie sa na #rrggbb,
- * všetko ostatné zo štýlu sa zahodí.
+ * Formátovanie textu z editora: farba (prehliadač ju zapíše ako `rgb(…)` – prevedie sa na #rrggbb), veľkosť
+ * (pt alebo px) a písmo zo zoznamu editora. Všetko ostatné zo štýlu sa zahodí.
  */
 function toHex(v: string): string | null {
   const s = v.trim().toLowerCase()
@@ -44,18 +52,52 @@ function cleanSpan(attribs: Record<string, string>): Record<string, string> {
     const i = decl.indexOf(':')
     if (i < 0) continue
     const prop = decl.slice(0, i).trim().toLowerCase()
+    if (prop === 'font-size') {
+      // Veľkosť písma z editora: pt (ako Outlook, 6–72) alebo px (8–96).
+      const m = /^\s*(\d{1,2}(?:\.\d)?)(pt|px)\s*$/i.exec(decl.slice(i + 1))
+      const n = m ? Number(m[1]) : 0
+      const unit = m?.[2]?.toLowerCase()
+      const ok = unit === 'pt' ? n >= 6 && n <= 72 : n >= 8 && n <= 96
+      if (ok && !out.some((x) => x.startsWith('font-size:'))) out.push(`font-size:${n}${unit}`)
+      continue
+    }
+    if (prop === 'font-family') {
+      // Písmo: len zo zoznamu editora (prvé uvedené).
+      const first = decl.slice(i + 1).split(',')[0]!.trim().replace(/^['"]|['"]$/g, '').toLowerCase()
+      const font = EDITOR_FONTS.find((f) => f.toLowerCase() === first)
+      if (font && !out.some((x) => x.startsWith('font-family:'))) out.push(`font-family:'${font}'`)
+      continue
+    }
     const hex = toHex(decl.slice(i + 1))
     if (hex && (prop === 'color' || prop === 'background-color') && !out.some((x) => x.startsWith(`${prop}:`))) out.push(`${prop}:${hex}`)
   }
   return out.length ? { style: out.join(';') } : {}
 }
 
+/** Zarovnanie a zarážka odseku alebo nadpisu z editora (Graph/Outlook ich zobrazia ako inline štýl). */
+function blockStyle(attribs: Record<string, string>): string {
+  const out: string[] = []
+  for (const decl of (attribs['style'] ?? '').split(';')) {
+    const i = decl.indexOf(':')
+    if (i < 0) continue
+    const prop = decl.slice(0, i).trim().toLowerCase()
+    const v = decl.slice(i + 1).trim().toLowerCase()
+    if (prop === 'text-align' && ['left', 'center', 'right', 'justify'].includes(v)) out.push(`text-align:${v}`)
+    if (prop === 'padding-left') {
+      const n = /^(\d{1,3})px$/.exec(v)
+      if (n && Number(n[1]) > 0 && Number(n[1]) <= 400) out.push(`padding-left:${Number(n[1])}px`)
+    }
+  }
+  return out.join(';')
+}
+const BLOCK_TAGS = ['p', 'h1', 'h2', 'h3']
+
 /** Smer textu (dir) – editor ho dáva každému odseku, aby sa hebrejčina zobrazila sprava doľava aj u príjemcu. */
 const DIR_TAGS = ['p', 'li', 'ul', 'ol', 'blockquote', 'h1', 'h2', 'h3', 'pre']
 const DIR_VALUES = ['ltr', 'rtl', 'auto']
 const withDir = (extra: Record<string, string[]> = {}): Record<string, string[]> => {
-  const out: Record<string, string[]> = { a: ['href'], img: ['src', 'alt', 'width', 'height'], span: ['style'] }
-  for (const t of DIR_TAGS) out[t] = ['dir', ...(extra[t] ?? [])]
+  const out: Record<string, string[]> = { a: ['href'], img: ['src', 'alt', 'width', 'height'], span: ['style'], td: ['colspan', 'rowspan', ...(extra['td'] ?? [])], table: [...(extra['table'] ?? [])] }
+  for (const t of DIR_TAGS) out[t] = ['dir', ...(BLOCK_TAGS.includes(t) ? ['style'] : []), ...(extra[t] ?? [])]
   return out
 }
 /** Ponechá len platnú hodnotu dir (ltr, rtl, auto). */
@@ -65,9 +107,34 @@ function cleanDir(attribs: Record<string, string>): Record<string, string> {
 }
 const dirTransforms: Record<string, (tagName: string, attribs: Record<string, string>) => { tagName: string; attribs: Record<string, string> }> = {
   ...Object.fromEntries(DIR_TAGS.map((t) => [t, (tagName: string, attribs: Record<string, string>) => ({ tagName, attribs: cleanDir(attribs) })])),
+  ...Object.fromEntries(
+    BLOCK_TAGS.map((t) => [
+      t,
+      (tagName: string, attribs: Record<string, string>) => {
+        const { style: _s, ...rest } = cleanDir(attribs)
+        const st = blockStyle(attribs)
+        return { tagName, attribs: st ? { ...rest, style: st } : rest }
+      }
+    ])
+  ),
   img: (tagName, attribs) => ({ tagName, attribs: cleanImg(attribs) }),
-  span: (tagName, attribs) => ({ tagName, attribs: cleanSpan(attribs) })
+  span: (tagName, attribs) => ({ tagName, attribs: cleanSpan(attribs) }),
+  // Tabuľka z editora: bunky môžu byť zlúčené (colspan/rowspan 2–20), iné atribúty nie. Bunka hlavičky (th) = bunka.
+  th: (_tagName, attribs) => ({ tagName: 'td', attribs: cleanCell(attribs) }),
+  td: (tagName, attribs) => ({ tagName, attribs: cleanCell(attribs) }),
+  table: (tagName) => ({ tagName, attribs: {} })
 }
+function cleanCell(attribs: Record<string, string>): Record<string, string> {
+  const out: Record<string, string> = {}
+  for (const k of ['colspan', 'rowspan']) {
+    const n = Number.parseInt(attribs[k] ?? '', 10)
+    if (n >= 2 && n <= 20) out[k] = String(n)
+  }
+  return out
+}
+/** Tabuľka v odoslanej správe: čiary a odsadenie ako inline štýl (Gmail a Outlook iné štýly nepoznajú). */
+const TABLE_STYLE = 'border-collapse:collapse;margin:0 0 0.6em'
+const CELL_STYLE = 'border:1px solid #9aa4b2;padding:4px 8px;vertical-align:top'
 
 const QUOTE_STYLE = 'margin:0 0 0 0.8ex;border-left:2px solid #c9d1dc;padding-left:1ex;color:#4a5361'
 
@@ -107,14 +174,19 @@ export function outgoingHtml(html: string): string {
   const bg = pageBackgroundOf(html)
   const body = sanitizeHtml(cleanCompose(html), {
     allowedTags: TAGS,
-    allowedAttributes: withDir({ blockquote: ['style'], p: ['style'] }),
-    allowedStyles: SPAN_STYLES,
+    allowedAttributes: withDir({ blockquote: ['style'], table: ['style'], td: ['style'] }),
+    allowedStyles: { ...SPAN_STYLES, p: { ...BLOCK_STYLE, margin: [/^0 0 0\.6em$/] } },
     allowedSchemes: ['http', 'https', 'mailto'],
     allowedSchemesByTag: { img: ['data'] },
     transformTags: {
       ...dirTransforms,
       blockquote: (tagName, attribs) => ({ tagName, attribs: { ...cleanDir(attribs), style: QUOTE_STYLE } }),
-      p: (tagName, attribs) => ({ tagName, attribs: { ...cleanDir(attribs), style: 'margin:0 0 0.6em' } })
+      table: (tagName) => ({ tagName, attribs: { style: TABLE_STYLE } }),
+      td: (tagName, attribs) => ({ tagName, attribs: { ...cleanCell(attribs), style: CELL_STYLE } }),
+      p: (tagName, attribs) => {
+        const st = blockStyle(attribs)
+        return { tagName, attribs: { ...cleanDir(attribs), style: `margin:0 0 0.6em${st ? `;${st}` : ''}` } }
+      }
     }
   })
   const font = 'font-family:Segoe UI,Arial,sans-serif;font-size:14px;line-height:1.5'
@@ -147,6 +219,9 @@ export function htmlToText(html: string): string {
   let href: string | null = null
   let linkText = ''
   let pre = false
+  /** Tabuľka: bunky riadka v jednom riadku textu oddelené „ | “. */
+  let cells = 0
+  let rowCells = 0
 
   const prefix = (): string => '> '.repeat(quote)
   const flush = (): void => {
@@ -178,7 +253,27 @@ export function htmlToText(html: string): string {
     }
     const close = m[1] === '/'
     const tag = m[2]!.toLowerCase()
+    // Odseky a zalomenia v bunke tabuľky: len medzera (bunka zostane v riadku tabuľky).
+    if (cells > 0 && ['p', 'h1', 'h2', 'h3', 'br'].includes(tag)) {
+      if (!close && line && !line.endsWith(' ')) line += ' '
+      continue
+    }
     switch (tag) {
+      case 'table':
+        flush()
+        if (close) blank()
+        break
+      case 'tr':
+        flush()
+        rowCells = 0
+        break
+      case 'td':
+        if (close) cells = Math.max(0, cells - 1)
+        else {
+          if (rowCells++ > 0) line = line.replace(/ +$/, '') + ' | '
+          cells++
+        }
+        break
       case 'br':
         flush()
         break

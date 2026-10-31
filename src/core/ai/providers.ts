@@ -77,7 +77,7 @@ function headers(ep: AiEndpoint): Record<string, string> {
   if (ep.provider === 'anthropic') return { 'content-type': 'application/json', 'x-api-key': ep.key ?? '', 'anthropic-version': '2023-06-01' }
   const h: Record<string, string> = { 'content-type': 'application/json' }
   if (ep.key) h['authorization'] = `Bearer ${ep.key}`
-  if (ep.provider === 'openrouter') h['x-title'] = 'Doar Mail'
+  if (ep.provider === 'openrouter') h['x-title'] = 'Doar'
   return h
 }
 

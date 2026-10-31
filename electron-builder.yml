@@ -1,12 +1,12 @@
-# Balík Doar Mail pre Windows (electron-builder). Zostavenie: npm run dist → dist\Doar-Mail-<verzia>-win-x64.zip
+# Balík Doar pre Windows (electron-builder). Zostavenie: npm run dist → dist\Doar-<verzia>-win-x64.zip
 #
 # Prečo nie inštalátor (.exe): Windows (inteligentná kontrola aplikácií) blokuje nepodpísané programy,
 # ktoré nepozná. Originálny Electron pozná a púšťa – preto ho necháme bit po bite nezmenený
-# (bez vloženej ikony a bez kontrolného súčtu asar) a len ho premenujeme na „Doar Mail.exe“.
-# Ikonu v ponuke Štart a na ploche si Doar Mail vytvorí sám pri prvom spustení (odkazy s vlastnou ikonou).
+# (bez vloženej ikony a bez kontrolného súčtu asar) a len ho premenujeme na „Doar.exe“.
+# Ikonu v ponuke Štart a na ploche si Doar vytvorí sám pri prvom spustení (odkazy s vlastnou ikonou).
 # Podpísaný inštalátor príde, keď bude certifikát.
 appId: sk.doar.app
-productName: Doar Mail
+productName: Doar
 copyright: Copyright © 2026 Milan Caputa
 directories:
   output: dist
@@ -33,12 +33,12 @@ win:
   target:
     - target: zip
       arch: [x64]
-  artifactName: Doar-Mail-${version}-win-${arch}.${ext}
+  artifactName: Doar-${version}-win-${arch}.${ext}
 # Balík pre Microsoft Store (npm run dist:store → dist\*.appx). Podpisuje ho Store, preto ho Windows neblokuje.
 # Verzia zo Store sa aktualizuje cez Store (vlastné aktualizácie a odkazy sa v nej vypnú – process.windowsStore).
 # identityName a publisher sa doplnia z Partner Center (Product identity) po rezervovaní názvu aplikácie.
 appx:
-  displayName: Doar Mail
+  displayName: Doar
   backgroundColor: transparent
   languages: [sk-SK, cs-CZ, en-US, de-DE, es-ES, fr-FR, he-IL, hu-HU, ru-RU]
-  artifactName: Doar-Mail-${version}-store.${ext}
+  artifactName: Doar-${version}-store.${ext}

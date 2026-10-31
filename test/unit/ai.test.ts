@@ -158,7 +158,7 @@ describe('AI – OpenAI-kompatibilné (OpenRouter, lokálny server)', () => {
     const r = await streamChat(ep, { system: 'SYS', user: 'U', maxTokens: 99 }, { fetch })
     expect(r).toEqual({ text: 'Ahoj svet', stop: 'stop' })
     expect(calls[0]!.url).toBe('https://openrouter.ai/api/v1/chat/completions')
-    expect(calls[0]!.headers).toMatchObject({ authorization: 'Bearer sk-or-1', 'x-title': 'Doar Mail' })
+    expect(calls[0]!.headers).toMatchObject({ authorization: 'Bearer sk-or-1', 'x-title': 'Doar' })
     expect(calls[0]!.body).toMatchObject({ model: 'x/y', max_tokens: 99, stream: true, messages: [{ role: 'system', content: 'SYS' }, { role: 'user', content: 'U' }] })
   })
 

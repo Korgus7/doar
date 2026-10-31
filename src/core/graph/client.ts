@@ -148,6 +148,51 @@ export class GraphClient {
     }
   }
 
+  /**
+   * Kúsok prílohy do „upload session“. Adresa od servera už obsahuje oprávnenie – token sa NEposiela
+   * (Graph by požiadavku odmietol). Povolená len https (alebo testovací server).
+   */
+  async uploadChunk(uploadUrl: string, chunk: Buffer, start: number, total: number): Promise<void> {
+    let ok = false
+    try {
+      const u = new URL(uploadUrl)
+      ok = u.protocol === 'https:' || u.origin === new URL(this.base).origin
+    } catch {
+      /* neplatná adresa */
+    }
+    if (!ok) throw gerr('PROTOCOL', 'Neočakávaná adresa na nahranie prílohy')
+    for (let attempt = 0; ; attempt++) {
+      let res: Response
+      try {
+        res = await this.fetchFn(uploadUrl, {
+          method: 'PUT',
+          headers: { 'content-type': 'application/octet-stream', 'content-length': String(chunk.length), 'content-range': `bytes ${start}-${start + chunk.length - 1}/${total}` },
+          body: chunk,
+          signal: AbortSignal.timeout(this.opts.timeoutMs ?? 120_000)
+        })
+      } catch {
+        if (attempt < 2) continue
+        throw gerr('NO_NETWORK', 'Server Microsoft nie je dostupný')
+      }
+      if (res.ok) {
+        await res.arrayBuffer().catch(() => null)
+        return
+      }
+      const text = await res.text().catch(() => '')
+      if ((res.status >= 500 || res.status === 429) && attempt < 2) {
+        await new Promise((r) => setTimeout(r, Math.min(Number(res.headers.get('retry-after')) || 2 ** attempt, 30) * 1000))
+        continue
+      }
+      let graphCode = ''
+      try {
+        graphCode = String((JSON.parse(text) as { error?: { code?: string } }).error?.code ?? '')
+      } catch {
+        /* nie JSON */
+      }
+      throw gerr(codeFor(res.status, graphCode), `Graph upload ${res.status} ${graphCode}`.trim(), { status: res.status, graphCode })
+    }
+  }
+
   async get<T>(path: string, headers?: Record<string, string>): Promise<T> {
     return (await this.request('GET', path, { headers })).json as T
   }

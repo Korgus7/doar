@@ -16,6 +16,11 @@ import type { OAuthService } from '../../src/core/oauth/oauth'
 import type { DraftSaveInput } from '../../src/shared/ipc'
 import { FakeGraph } from '../fixtures/graph-server'
 import { readMbox, parseEntry } from '../../src/core/import/mbox-reader'
+import { randomBytes } from 'node:crypto'
+import MailComposer from 'nodemailer/lib/mail-composer'
+import { simpleParser } from 'mailparser'
+import { GraphClient } from '../../src/core/graph/client'
+import { createLargeDraft, sendLarge } from '../../src/core/graph/large'
 
 /** Kontá Outlook.com / Microsoft 365 cez Microsoft Graph – proti testovaciemu serveru Graph. */
 
@@ -164,6 +169,47 @@ describe('Graph: synchronizácia', () => {
     gs().reconnectNow()
     await until(() => store.outboxRow(r2.outboxId)?.state === 'sent', 20_000)
   }, 40_000)
+
+  it('veľká správa (nad 3 MB): koncept v JSON, prílohy priamo aj po kúskoch bez tokenu, /send; chyba pred odoslaním koncept zmaže', async () => {
+    const client = new GraphClient(async () => graph.token, { base: graph.base })
+    const big = randomBytes(7 * 1024 * 1024 + 123)
+    const small = randomBytes(300 * 1024)
+    const logo = randomBytes(2000)
+    const node = new MailComposer({
+      from: 'test@outlook.com', to: 'Eva <eva@firma.sk>', bcc: 'tajna@firma.sk', subject: 'Veľká príloha', messageId: '<velka-1@doar>',
+      html: '<p>Ahoj <img src="cid:logo1"></p>',
+      attachments: [{ filename: 'video.bin', content: big }, { filename: 'zmluva.pdf', content: small, contentType: 'application/pdf' }, { filename: 'logo.png', content: logo, cid: 'logo1', contentType: 'image/png' }]
+    }).compile()
+    node.keepBcc = true // Doar necháva skrytú kópiu v MIME (Graph podľa nej doručí)
+    const raw = await node.build()
+    expect(raw.length).toBeGreaterThan(4 * 1024 * 1024)
+    const before = graph.sent.length
+    await sendLarge(client, raw)
+    expect(graph.sent).toHaveLength(before + 1)
+    expect(graph.maxChunk).toBeGreaterThan(0)
+    expect(graph.maxChunk).toBeLessThanOrEqual(4 * 1024 * 1024)
+    expect(graph.requests.some((r) => /createUploadSession/.test(r))).toBe(true)
+    const p = await simpleParser(graph.sent.at(-1)!, { keepCidLinks: true })
+    expect(p.subject).toBe('Veľká príloha')
+    expect(p.messageId).toBe('<velka-1@doar>')
+    expect(JSON.stringify(p.bcc)).toMatch(/tajna@firma\.sk/)
+    expect(p.html).toMatch(/cid:logo1/)
+    expect(p.attachments.find((a) => a.filename === 'video.bin')!.content.equals(big)).toBe(true)
+    expect(p.attachments.find((a) => a.filename === 'zmluva.pdf')!.content.equals(small)).toBe(true)
+    expect(p.attachments.find((a) => a.cid === 'logo1')!.content.equals(logo)).toBe(true)
+    expect(graph.inFolder('drafts').filter((m) => m.subject === 'Veľká príloha')).toHaveLength(0)
+    expect(graph.inFolder('sentitems').some((m) => m.internetMessageId === '<velka-1@doar>')).toBe(true)
+    // Server odmietol odoslanie (určite neodišla) → chyba, rozpracovaný koncept sa zmaže.
+    graph.failSend = 400
+    await expect(sendLarge(client, raw)).rejects.toMatchObject({ code: 'REJECTED' })
+    graph.failSend = null
+    expect(graph.inFolder('drafts').filter((m) => m.subject === 'Veľká príloha')).toHaveLength(0)
+    // Veľký koncept: zostane v Konceptoch.
+    const id = await createLargeDraft(client, raw)
+    expect(graph.inFolder('drafts').some((m) => m.id === id)).toBe(true)
+    expect(graph.jsonDrafts.get(id)!.attachments.map((a) => a.name).sort()).toEqual(['logo.png', 'video.bin', 'zmluva.pdf'])
+    graph.remove(id)
+  }, 60_000)
 
   it('koncept: verzia v Konceptoch, ďalšie uloženie nahradí predošlú; odoslaný koncept zmizne', async () => {
     const base = (over: Partial<DraftSaveInput> = {}): DraftSaveInput => ({ draftId: null, accountId, to: '', cc: '', bcc: '', subject: '', text: '', replyToMessage: null, attachments: [], ...over })

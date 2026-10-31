@@ -54,7 +54,7 @@ test('hebrejčina: rozhranie sprava doľava, hebrejská správa, písanie odpove
   await expect.poll(() => app.evaluate(({ Menu }) => Menu.getApplicationMenu()?.items.map((i) => i.label).includes('קובץ'))).toBe(true)
   // Klasické menu ostáva skryté aj po prestavaní (zmena jazyka) – všetko je v ponuke ☰.
   expect(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().map((w) => w.isMenuBarVisible()))).toEqual([false])
-  expect(await win.title()).toBe('Doar Mail')
+  expect(await win.title()).toBe('Doar')
 
   // Zrkadlové rozloženie: priečinky vpravo od zoznamu správ.
   const folders = await win.getByRole('navigation', { name: 'תיקיות' }).boundingBox()

@@ -17,7 +17,7 @@ export interface KnownProvider {
   needsAppPassword: boolean
   /** Heslom sa prihlásiť nedá vôbec. */
   unsupportedAuth: 'oauth2' | null
-  /** Prihlásenie cez účet poskytovateľa (OAuth), ak ho Doar Mail má nastavené. */
+  /** Prihlásenie cez účet poskytovateľa (OAuth), ak ho Doar má nastavené. */
   oauth: OAuthProvider | null
 }
 

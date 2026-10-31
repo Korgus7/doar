@@ -1,4 +1,4 @@
-# Stránka Doar Mail: tlačidlo „Stiahnuť“ si zisťuje najnovšie vydanie z GitHubu (api.github.com).
+# Stránka Doar: tlačidlo „Stiahnuť“ si zisťuje najnovšie vydanie z GitHubu (api.github.com).
 # Nahrádza bezpečnostnú hlavičku (CSP) nadradeného webu len pre tento priečinok.
 <IfModule mod_headers.c>
   Header unset Content-Security-Policy

@@ -12,7 +12,7 @@ const INTERVAL_MS = 12 * 60 * 60 * 1000
 
 interface Prefs {
   auto: boolean
-  /** Priečinky, z ktorých Doar Mail bežal (posledný = aktuálny) – na upratanie starých verzií. */
+  /** Priečinky, z ktorých Doar bežal (posledný = aktuálny) – na upratanie starých verzií. */
   history: string[]
 }
 
@@ -25,8 +25,8 @@ function codeOf(e: unknown): string {
 }
 
 /**
- * Aktualizácie Doar Mail (main proces). Kontroluje GitHub Releases; nič nesťahuje bez súhlasu používateľa.
- * Testovací zdroj: premenná prostredia DOAR_UPDATE_FEED = priečinok s doar-mail-update.json a zipom;
+ * Aktualizácie Doar (main proces). Kontroluje GitHub Releases; nič nesťahuje bez súhlasu používateľa.
+ * Testovací zdroj: premenná prostredia DOAR_UPDATE_FEED = priečinok s doar-update.json a zipom;
  * DOAR_UPDATE_API = náhradná adresa GitHub API (testy).
  */
 export class Updater {

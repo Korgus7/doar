@@ -17,7 +17,7 @@ test('aktualizácie: ručná kontrola, ponuka novej verzie, „Čo je nové“, 
   test.setTimeout(90_000)
   // Testovací zdroj aktualizácií: priečinok s manifestom (ako dist po npm run dist).
   const feed = mkdtempSync(join(tmpdir(), 'doar-e2e-feed-'))
-  writeFileSync(join(feed, 'doar-mail-update.json'), JSON.stringify({ app: 'doar-mail', version: '9.9.9', file: 'Doar-Mail-9.9.9-win-x64.zip', size: 1234, sha256: 'a'.repeat(64) }))
+  writeFileSync(join(feed, 'doar-update.json'), JSON.stringify({ app: 'doar', version: '9.9.9', file: 'Doar-9.9.9-win-x64.zip', size: 1234, sha256: 'a'.repeat(64) }))
   writeFileSync(join(feed, 'notes.txt'), 'Novinky v 9.9.9:\n- aktualizácie')
   const { app } = await launchApp({ LANG: 'sk_SK.UTF-8', DOAR_UPDATE_FEED: feed })
   const win = await app.firstWindow()
@@ -28,7 +28,7 @@ test('aktualizácie: ručná kontrola, ponuka novej verzie, „Čo je nové“, 
     const help = Menu.getApplicationMenu()?.items.find((i) => i.label === 'Pomocník')
     help?.submenu?.items.find((i) => i.label === 'Skontrolovať aktualizácie…')?.click()
   })
-  const banner = win.getByRole('status').filter({ hasText: 'Je k dispozícii Doar Mail 9.9.9' })
+  const banner = win.getByRole('status').filter({ hasText: 'Je k dispozícii Doar 9.9.9' })
   await expect(banner).toBeVisible({ timeout: 10_000 })
   await banner.getByRole('button', { name: 'Čo je nové' }).click()
   await expect(banner.getByText('- aktualizácie')).toBeVisible()
@@ -50,20 +50,20 @@ test('aktualizácie: ručná kontrola, ponuka novej verzie, „Čo je nové“, 
   await auto.check()
   await dlg.getByRole('button', { name: 'Skontrolovať teraz' }).click()
   await win.keyboard.press('Escape')
-  await expect(win.getByRole('status').filter({ hasText: 'Je k dispozícii Doar Mail 9.9.9' })).toBeVisible()
+  await expect(win.getByRole('status').filter({ hasText: 'Je k dispozícii Doar 9.9.9' })).toBeVisible()
   await app.close()
 })
 
 test('aktualizácie cez GitHub API: kontrola nie je zablokovaná ochranou okien pred internetom', async () => {
   test.setTimeout(90_000)
   // Náhrada GitHub API na lokálnom serveri: vydanie s manifestom a zipom.
-  const manifest = { app: 'doar-mail', version: '9.9.8', file: 'Doar-Mail-9.9.8-win-x64.zip', size: 4321, sha256: 'b'.repeat(64) }
+  const manifest = { app: 'doar', version: '9.9.8', file: 'Doar-9.9.8-win-x64.zip', size: 4321, sha256: 'b'.repeat(64) }
   const server = createServer((req, res) => {
     const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`
     if (req.url === '/repos/Korgus7/doar/releases/latest') {
       res.writeHead(200, { 'content-type': 'application/json' })
       res.end(JSON.stringify({ tag_name: 'v9.9.8', body: 'Novinky z GitHubu', html_url: 'https://github.com/Korgus7/doar/releases/tag/v9.9.8', assets: [
-        { name: 'doar-mail-update.json', browser_download_url: `${base}/m.json`, size: 100 },
+        { name: 'doar-update.json', browser_download_url: `${base}/m.json`, size: 100 },
         { name: manifest.file, browser_download_url: `${base}/z.zip`, size: manifest.size }
       ] }))
     } else if (req.url === '/m.json') {
@@ -84,7 +84,7 @@ test('aktualizácie cez GitHub API: kontrola nie je zablokovaná ochranou okien 
       const help = Menu.getApplicationMenu()?.items.find((i) => i.label === 'Pomocník')
       help?.submenu?.items.find((i) => i.label === 'Skontrolovať aktualizácie…')?.click()
     })
-    const banner = win.getByRole('status').filter({ hasText: 'Je k dispozícii Doar Mail 9.9.8' })
+    const banner = win.getByRole('status').filter({ hasText: 'Je k dispozícii Doar 9.9.8' })
     await expect(banner).toBeVisible({ timeout: 10_000 })
     await banner.getByRole('button', { name: 'Čo je nové' }).click()
     await expect(banner.getByText('Novinky z GitHubu')).toBeVisible()

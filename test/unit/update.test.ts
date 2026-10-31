@@ -56,7 +56,7 @@ const dir = mkdtempSync(join(tmpdir(), 'doar-update-'))
 const EXE = Buffer.from('MZ fake electron')
 const ASAR = Buffer.alloc(200_000, 7)
 const appZip = makeZip([
-  { name: 'Doar Mail.exe', data: EXE, store: true },
+  { name: 'Doar.exe', data: EXE, store: true },
   { name: 'resources/', data: Buffer.alloc(0), store: true },
   { name: 'resources/app.asar', data: ASAR },
   { name: 'resources/icon.ico', data: Buffer.from('ico') },
@@ -97,7 +97,7 @@ describe('aktualizácie – verzie a manifest', () => {
   })
 
   it('manifest: overenie polí (názov súboru bez ciest, SHA-256)', () => {
-    const ok = { app: 'doar-mail', version: '0.4.0', file: 'Doar-Mail-0.4.0-win-x64.zip', size: 10, sha256: 'a'.repeat(64) }
+    const ok = { app: 'doar', version: '0.4.0', file: 'Doar-0.4.0-win-x64.zip', size: 10, sha256: 'a'.repeat(64) }
     expect(parseManifest(ok).version).toBe('0.4.0')
     for (const bad of [{ ...ok, app: 'iny' }, { ...ok, file: '../x.zip' }, { ...ok, file: 'a\\b.zip' }, { ...ok, sha256: 'xyz' }, { ...ok, size: 0 }, null]) {
       expect(() => parseManifest(bad)).toThrow(expect.objectContaining({ code: 'UPDATE_BAD_MANIFEST' }))
@@ -106,7 +106,7 @@ describe('aktualizácie – verzie a manifest', () => {
 })
 
 describe('aktualizácie – GitHub a stiahnutie', () => {
-  const manifest = { app: 'doar-mail', version: '0.4.1', file: 'Doar-Mail-0.4.1-win-x64.zip', size: appZip.length, sha256: sha(appZip), platform: 'win32-x64' }
+  const manifest = { app: 'doar', version: '0.4.1', file: 'Doar-0.4.1-win-x64.zip', size: appZip.length, sha256: sha(appZip), platform: 'win32-x64' }
 
   it('najnovšie vydanie z GitHubu: manifest a zip z príloh vydania', async () => {
     const assets = [
@@ -132,7 +132,7 @@ describe('aktualizácie – GitHub a stiahnutie', () => {
     expect(existsSync(`${target}.part`)).toBe(false)
   })
 
-  it('vydanie bez manifestu Doar Mail → nič (nie chyba); GitHub nedostupný → chyba', async () => {
+  it('vydanie bez manifestu Doar → nič (nie chyba); GitHub nedostupný → chyba', async () => {
     const noAssets: FetchLike = () => Promise.resolve(new Response(JSON.stringify({ assets: [] }), { status: 200 })) as unknown as ReturnType<FetchLike>
     expect(await fromGithub(noAssets, 'Korgus7/doar')).toBeNull()
     const down: FetchLike = () => Promise.resolve(new Response('', { status: 503 })) as unknown as ReturnType<FetchLike>
@@ -172,14 +172,14 @@ describe('aktualizácie – rozbalenie a inštalácia vedľa bežiacej verzie', 
     writeFileSync(z, appZip)
     const out = join(dir, 'a')
     await extractZip(z, out)
-    expect(readFileSync(join(out, 'Doar Mail.exe')).equals(EXE)).toBe(true)
+    expect(readFileSync(join(out, 'Doar.exe')).equals(EXE)).toBe(true)
     expect(readFileSync(join(out, 'resources', 'app.asar')).equals(ASAR)).toBe(true)
     expect(readFileSync(join(out, 'locales', 'sk.pak'), 'utf8')).toBe('slovenčina')
     // Skutočný zip z nástroja (ak je k dispozícii).
     try {
       const src = join(dir, 'zsrc')
       mkdirSync(join(src, 'resources'), { recursive: true })
-      writeFileSync(join(src, 'Doar Mail.exe'), EXE)
+      writeFileSync(join(src, 'Doar.exe'), EXE)
       writeFileSync(join(src, 'resources', 'app.asar'), ASAR)
       execFileSync('zip', ['-qr', join(dir, 'tool.zip'), '.'], { cwd: src })
     } catch {
@@ -202,51 +202,52 @@ describe('aktualizácie – rozbalenie a inštalácia vedľa bežiacej verzie', 
     expect(existsSync(join(dir, 'evil.txt'))).toBe(false)
   })
 
-  it('inštalácia vedľa: …\\Doar Mail 0.4.1, bežiaca verzia sa nezmení; chýbajúci program → chyba', async () => {
+  it('inštalácia vedľa: …\\Doar 0.4.1, bežiaca verzia sa nezmení; chýbajúci program → chyba', async () => {
     const programs = join(dir, 'Programs')
-    const cur = join(programs, 'Doar Mail')
+    const cur = join(programs, 'Doar')
     mkdirSync(join(cur, 'resources'), { recursive: true })
-    writeFileSync(join(cur, 'Doar Mail.exe'), 'stara verzia')
+    writeFileSync(join(cur, 'Doar.exe'), 'stara verzia')
     writeFileSync(join(cur, 'resources', 'app.asar'), 'stara')
     const z = join(dir, 'upd.zip')
     writeFileSync(z, appZip)
-    const exe = await installBeside(z, join(cur, 'Doar Mail.exe'), '0.4.1')
-    expect(exe).toBe(join(programs, 'Doar Mail 0.4.1', 'Doar Mail.exe'))
-    expect(newInstallDir(join(cur, 'Doar Mail.exe'), '0.4.1')).toBe(join(programs, 'Doar Mail 0.4.1'))
+    const exe = await installBeside(z, join(cur, 'Doar.exe'), '0.4.1')
+    expect(exe).toBe(join(programs, 'Doar 0.4.1', 'Doar.exe'))
+    expect(newInstallDir(join(cur, 'Doar.exe'), '0.4.1')).toBe(join(programs, 'Doar 0.4.1'))
     expect(readFileSync(exe).equals(EXE)).toBe(true)
-    expect(readFileSync(join(cur, 'Doar Mail.exe'), 'utf8')).toBe('stara verzia')
-    expect(existsSync(join(programs, 'Doar Mail 0.4.1.part'))).toBe(false)
+    expect(readFileSync(join(cur, 'Doar.exe'), 'utf8')).toBe('stara verzia')
+    expect(existsSync(join(programs, 'Doar 0.4.1.part'))).toBe(false)
     // Opakovaná inštalácia tej istej verzie (napr. po prerušení) nahradí neúplný priečinok.
-    await installBeside(z, join(cur, 'Doar Mail.exe'), '0.4.1')
-    expect(looksLikeInstall(join(programs, 'Doar Mail 0.4.1'))).toBe(true)
+    await installBeside(z, join(cur, 'Doar.exe'), '0.4.1')
+    expect(looksLikeInstall(join(programs, 'Doar 0.4.1'))).toBe(true)
 
     const noExe = join(dir, 'noexe.zip')
     writeFileSync(noExe, makeZip([{ name: 'readme.txt', data: Buffer.from('x') }]))
-    await expect(installBeside(noExe, join(cur, 'Doar Mail.exe'), '0.4.2')).rejects.toMatchObject({ code: 'UPDATE_BAD_FILE' })
-    expect(existsSync(join(programs, 'Doar Mail 0.4.2'))).toBe(false)
+    await expect(installBeside(noExe, join(cur, 'Doar.exe'), '0.4.2')).rejects.toMatchObject({ code: 'UPDATE_BAD_FILE' })
+    expect(existsSync(join(programs, 'Doar 0.4.2'))).toBe(false)
   })
 
   it('upratanie: zostane bežiaca a jedna predošlá verzia; cudzie priečinky sa nemažú', async () => {
     const p = join(dir, 'P2')
-    const mk = (name: string, real = true): string => {
+    const mk = (name: string, real = true, exe = 'Doar.exe'): string => {
       const d = join(p, name)
       mkdirSync(join(d, 'resources'), { recursive: true })
       if (real) {
-        writeFileSync(join(d, 'Doar Mail.exe'), 'x')
+        writeFileSync(join(d, exe), 'x')
         writeFileSync(join(d, 'resources', 'app.asar'), 'x')
       }
       return d
     }
-    const v1 = mk('Doar Mail')
-    const v2 = mk('Doar Mail 0.4.1')
-    const v3 = mk('Doar Mail 0.4.2')
+    // Najstaršia je ešte „Doar Mail“ (do 0.10) – aj tú rozpozná ako inštaláciu.
+    const v1 = mk('Doar Mail', true, 'Doar Mail.exe')
+    const v2 = mk('Doar 0.4.1')
+    const v3 = mk('Doar 0.4.2')
     const foreign = mk('Moje dokumenty', false)
     const keep = await cleanupOld([foreign, v1, v2, v3], v3)
     expect(keep).toEqual([v2, v3])
     expect(existsSync(v1)).toBe(false)
     expect(existsSync(v2)).toBe(true)
     expect(existsSync(v3)).toBe(true)
-    expect(existsSync(foreign)).toBe(true) // nie je inštalácia Doar Mail → nezmaže sa
+    expect(existsSync(foreign)).toBe(true) // nie je inštalácia Doar → nezmaže sa
     expect(await cleanupOld([v3], v3)).toEqual([v3])
   })
 })

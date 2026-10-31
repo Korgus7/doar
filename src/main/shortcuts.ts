@@ -1,9 +1,9 @@
 import { app, shell } from 'electron'
-import { existsSync, readFileSync, writeFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
+import { basename, dirname, join } from 'node:path'
 
 /**
- * Doar Mail sa na Windowse dodáva ako priečinok (bez inštalátora – pozri electron-builder.yml).
+ * Doar sa na Windowse dodáva ako priečinok (bez inštalátora – pozri electron-builder.yml).
  * Odkazy s vlastnou ikonou si preto vytvorí sám:
  * - ponuka Štart: vždy (Windows na ňu viaže aj systémové oznámenia – AppUserModelID),
  * - plocha: pri prvom spustení a po spustení z iného priečinka (nová verzia rozbalená inam);
@@ -39,6 +39,7 @@ export function ensureShortcuts(name: string, appUserModelId: string): void {
       return false
     }
   }
+  removeLegacy()
   if (!existsSync(startMenu)) write(startMenu, 'create')
   else if (!pointsHere(startMenu)) write(startMenu, 'replace')
   const movedHere = !state.created || (state.target ?? '').toLowerCase() !== target.toLowerCase()
@@ -71,4 +72,18 @@ export function recreateShortcuts(name: string, appUserModelId: string): boolean
     }
   }
   return ok
+}
+
+/**
+ * Do 0.10 sa program volal „Doar Mail“ – jeho odkazy („Doar Mail.lnk“) by po premenovaní zostali vedľa nových
+ * a viedli na starú verziu. Zmažú sa len tie, ktoré naozaj vedú na „Doar Mail.exe“.
+ */
+function removeLegacy(): void {
+  for (const path of [join(app.getPath('desktop'), 'Doar Mail.lnk'), join(app.getPath('appData'), 'Microsoft', 'Windows', 'Start Menu', 'Programs', 'Doar Mail.lnk')]) {
+    try {
+      if (existsSync(path) && basename(shell.readShortcutLink(path).target).toLowerCase() === 'doar mail.exe') unlinkSync(path)
+    } catch {
+      // nevadí – starý odkaz len zostane
+    }
+  }
 }

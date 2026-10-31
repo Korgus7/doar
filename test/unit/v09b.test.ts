@@ -7,7 +7,7 @@ import { openDb, type Db } from '../../src/core/store/db'
 import { listAccounts, reorderAccounts, updateAccount } from '../../src/core/accounts'
 import { deleteSignature, listSignatures, readSignatureImage, saveSignature, setDefaultSignature } from '../../src/core/signatures'
 import { deleteGroup, groupAddresses, listContactsWithGroups, listGroups, saveContact, saveGroup, setGroupMembers, suggestGroups } from '../../src/core/contacts'
-import { inlineImages, outgoingHtml, sanitizeComposeHtml } from '../../src/core/mail/outgoing-html'
+import { htmlToText, inlineImages, outgoingHtml, sanitizeComposeHtml } from '../../src/core/mail/outgoing-html'
 import { composeMessage } from '../../src/core/mail/compose'
 import { FileGrants } from '../../src/core/files'
 import { previewKind } from '../../src/shared/ipc'
@@ -174,8 +174,38 @@ describe('farba písma a pozadia', () => {
     // Prehliadač (editor) zapisuje farbu ako rgb(…).
     expect(sanitizeComposeHtml('<p><span style="color: rgb(180, 35, 24);">D</span></p>')).toBe('<p><span style="color:#b42318">D</span></p>')
     // Farba pozadia (zvýraznenie), aj spolu s farbou písma; iné vlastnosti preč.
-    expect(sanitizeComposeHtml('<p><span style="background-color: rgb(242, 196, 15); font-size: 40px">Z</span></p>')).toBe('<p><span style="background-color:#f2c40f">Z</span></p>')
+    expect(sanitizeComposeHtml('<p><span style="background-color: rgb(242, 196, 15); line-height: 9">Z</span></p>')).toBe('<p><span style="background-color:#f2c40f">Z</span></p>')
     expect(outgoingHtml('<p><span style="color:#000000;background-color:#ffffff;background:url(x)">B</span></p>')).toContain('<span style="color:#000000;background-color:#ffffff">B</span>')
+    // Veľkosť písma: len px v rozsahu 8–48.
+    expect(sanitizeComposeHtml('<p><span style="font-size: 18px">V</span><span style="font-size: 200px">X</span><span style="font-size: 2em">Y</span></p>')).toBe('<p><span style="font-size:18px">V</span><span>X</span><span>Y</span></p>')
+    expect(outgoingHtml('<p><span style="font-size:24px;color:#e31e24">Z</span></p>')).toContain('<span style="font-size:24px;color:#e31e24">Z</span>')
+  })
+
+  it('lišta ako v Outlooku: veľkosť v pt, písmo zo zoznamu, zarovnanie a zarážka odseku', () => {
+    // pt (6–72, aj 10.5) z editora; px zo starších správ zostáva.
+    expect(sanitizeComposeHtml('<p><span style="font-size: 10.5pt">a</span><span style="font-size: 99pt">b</span></p>')).toBe('<p><span style="font-size:10.5pt">a</span><span>b</span></p>')
+    // Písmo: len zo zoznamu, prvé z rodiny, s úvodzovkami.
+    expect(sanitizeComposeHtml(`<p><span style="font-family: &quot;Comic Sans MS&quot;, cursive">c</span><span style="font-family: evil, Arial">d</span></p>`)).toBe(`<p><span style="font-family:'Comic Sans MS'">c</span><span>d</span></p>`)
+    expect(outgoingHtml(`<p><span style="font-family:'Georgia';font-size:14pt">e</span></p>`)).toContain(`<span style="font-family:'Georgia';font-size:14pt">e</span>`)
+    // Zarovnanie a zarážka na odseku a nadpise, iné štýly preč.
+    const blk = '<p style="text-align: center; padding-left: 80px; position: fixed">f</p><h2 style="text-align: justify">g</h2><p style="text-align: start; padding-left: 9999px">h</p>'
+    expect(sanitizeComposeHtml(blk)).toBe('<p style="text-align:center;padding-left:80px">f</p><h2 style="text-align:justify">g</h2><p>h</p>')
+    const out = outgoingHtml(blk)
+    expect(out).toContain('<p style="margin:0 0 0.6em;text-align:center;padding-left:80px">f</p>')
+    expect(out).not.toMatch(/position|9999/)
+    // Koncept zo servera → editor dostane späť len zarovnanie a zarážku.
+    expect(sanitizeComposeHtml('<p style="margin:0 0 0.6em;text-align:right">i</p>')).toBe('<p style="text-align:right">i</p>')
+  })
+})
+
+describe('tabuľka v editore', () => {
+  it('prejde čistením (zlúčené bunky, th → td), pri odoslaní s čiarami; textová podoba po riadkoch', () => {
+    const h = '<table class="doar-table" style="position:fixed" onclick="x()"><tbody><tr><th colspan="2" style="color:red"><p>Názov</p></th></tr><tr><td><p>a</p><p>b</p></td><td rowspan="99"><p>c</p></td></tr></tbody></table><p>Po</p>'
+    expect(sanitizeComposeHtml(h)).toBe('<table><tbody><tr><td colspan="2"><p>Názov</p></td></tr><tr><td><p>a</p><p>b</p></td><td><p>c</p></td></tr></tbody></table><p>Po</p>')
+    const out = outgoingHtml(h)
+    expect(out).toContain('<table style="border-collapse:collapse;margin:0 0 0.6em"><tbody><tr><td colspan="2" style="border:1px solid #9aa4b2;padding:4px 8px;vertical-align:top">')
+    expect(out).not.toMatch(/onclick|position|color:red/)
+    expect(htmlToText(h)).toBe('Názov\na b | c\n\nPo')
   })
 })
 

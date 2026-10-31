@@ -7,19 +7,25 @@ import { pipeline } from 'node:stream/promises'
 import { createInflateRaw } from 'node:zlib'
 
 /**
- * Aktualizácie Doar Mail – časť bez Electronu (testovateľná v Node.js).
+ * Aktualizácie Doar – časť bez Electronu (testovateľná v Node.js).
  *
- * Doar Mail sa dodáva ako priečinok s originálnym Electronom (pozri electron-builder.yml), bez inštalátora.
+ * Doar sa dodáva ako priečinok s originálnym Electronom (pozri electron-builder.yml), bez inštalátora.
  * Aktualizácia: nová verzia sa stiahne z GitHubu (Releases), overí (veľkosť + SHA-256 z manifestu),
- * rozbalí VEDĽA bežiacej verzie („Doar Mail 0.4.1“), odkazy sa presmerujú a aplikácia sa reštartuje z nového
+ * rozbalí VEDĽA bežiacej verzie („Doar 0.4.1“), odkazy sa presmerujú a aplikácia sa reštartuje z nového
  * priečinka. Bežiace súbory sa nikdy neprepisujú; predošlá verzia zostane na disku (návrat späť).
  */
 
-export const MANIFEST_NAME = 'doar-mail-update.json'
-export const EXE_NAME = 'Doar Mail.exe'
+/**
+ * Od 1.0 sa program volá „Doar“ (predtým „Doar Mail“). Nový manifest a nový názov programu – verzie do 0.10
+ * hľadajú „doar-mail-update.json“ a „Doar Mail.exe“, takže 1.0 im nemôže prísť ako aktualizácia (raz sa
+ * nainštaluje ručne). Staré inštalácie „Doar Mail …“ však 1.0 pri upratovaní rozpozná.
+ */
+export const MANIFEST_NAME = 'doar-update.json'
+export const EXE_NAME = 'Doar.exe'
+const LEGACY_EXE_NAME = 'Doar Mail.exe'
 
 export interface UpdateManifest {
-  app: 'doar-mail'
+  app: 'doar'
   version: string
   file: string
   size: number
@@ -64,7 +70,7 @@ export function parseManifest(json: unknown): UpdateManifest {
   const m = json as Partial<UpdateManifest> | null
   const ok =
     m &&
-    m.app === 'doar-mail' &&
+    m.app === 'doar' &&
     typeof m.version === 'string' &&
     /^\d+\.\d+\.\d+/.test(m.version) &&
     typeof m.file === 'string' &&
@@ -74,7 +80,7 @@ export function parseManifest(json: unknown): UpdateManifest {
     typeof m.sha256 === 'string' &&
     /^[0-9a-f]{64}$/.test(m.sha256)
   if (!ok) throw err('UPDATE_BAD_MANIFEST', 'Popis aktualizácie je neplatný')
-  return { app: 'doar-mail', version: m.version!, file: m.file!, size: m.size!, sha256: m.sha256!, platform: typeof m.platform === 'string' ? m.platform : 'win32-x64' }
+  return { app: 'doar', version: m.version!, file: m.file!, size: m.size!, sha256: m.sha256!, platform: typeof m.platform === 'string' ? m.platform : 'win32-x64' }
 }
 
 // ---------- zdroje (GitHub alebo priečinok na test) ----------
@@ -91,7 +97,7 @@ export type FetchLike = (url: string, init?: { headers?: Record<string, string>;
 const GH_HEADERS = { Accept: 'application/vnd.github+json', 'User-Agent': 'Doar-Mail-Updater', 'X-GitHub-Api-Version': '2022-11-28' }
 
 /**
- * Najnovšie vydanie na GitHube (bez predbežných). Vráti null, ak vydanie nemá manifest Doar Mail
+ * Najnovšie vydanie na GitHube (bez predbežných). Vráti null, ak vydanie nemá manifest Doar
  * (napr. vydanie len so zdrojovým kódom).
  */
 export async function fromGithub(fetch: FetchLike, repo: string, signal?: AbortSignal, api = 'https://api.github.com'): Promise<UpdateInfo | null> {
@@ -311,12 +317,12 @@ export async function extractZip(zipPath: string, destDir: string, onProgress?: 
 
 // ---------- inštalácia vedľa bežiacej verzie ----------
 
-/** Priečinok novej verzie vedľa bežiacej: …\Programs\Doar Mail 0.4.1 */
+/** Priečinok novej verzie vedľa bežiacej: …\Programs\Doar 0.4.1 */
 export function newInstallDir(currentExe: string, version: string): string {
-  return join(dirname(dirname(currentExe)), `Doar Mail ${version}`)
+  return join(dirname(dirname(currentExe)), `Doar ${version}`)
 }
 
-/** Vyzerá priečinok ako inštalácia Doar Mail? (len také sa smú mazať pri upratovaní) */
+/** Vyzerá priečinok ako inštalácia Doar (aj staršia „Doar Mail“)? (len také sa smú mazať pri upratovaní) */
 /**
  * Electron v main procese považuje súbory „*.asar“ za archívy (čítanie aj zápis cez fs) – pri rozbaľovaní
  * a mazaní inštalácie potrebujeme obyčajné súbory. Mimo Electronu (testy) nemá nastavenie žiadny vplyv.
@@ -335,12 +341,12 @@ async function withoutAsar<T>(fn: () => Promise<T>): Promise<T> {
 }
 
 export function looksLikeInstall(dir: string): boolean {
-  return existsSync(join(dir, EXE_NAME)) && existsSync(join(dir, 'resources', 'app.asar'))
+  return (existsSync(join(dir, EXE_NAME)) || existsSync(join(dir, LEGACY_EXE_NAME))) && existsSync(join(dir, 'resources', 'app.asar'))
 }
 
 /**
  * Rozbalí overený zip do nového priečinka (najprv do „.part“, potom premenuje) a overí obsah.
- * Vráti cestu k novému Doar Mail.exe.
+ * Vráti cestu k novému Doar.exe.
  */
 export function installBeside(zipPath: string, currentExe: string, version: string, onProgress?: (done: number, total: number) => void): Promise<string> {
   return withoutAsar(() => installBesideRaw(zipPath, currentExe, version, onProgress))
@@ -359,7 +365,7 @@ async function installBesideRaw(zipPath: string, currentExe: string, version: st
     if ((e as { code?: string }).code === 'EACCES' || (e as { code?: string }).code === 'EPERM') throw err('UPDATE_NOT_WRITABLE', 'Do priečinka programu sa nedá zapisovať')
     throw e
   }
-  if (!looksLikeInstall(part)) {
+  if (!existsSync(join(part, EXE_NAME)) || !looksLikeInstall(part)) {
     await rm(part, { recursive: true, force: true })
     throw err('UPDATE_BAD_FILE', 'V aktualizácii chýba program')
   }
@@ -371,7 +377,7 @@ async function installBesideRaw(zipPath: string, currentExe: string, version: st
 
 /**
  * Upratanie po aktualizácii: z histórie inštalácií zostane bežiaca a jedna predošlá (návrat späť);
- * staršie sa zmažú – len ak sú to naozaj inštalácie Doar Mail a nie je to bežiaci priečinok.
+ * staršie sa zmažú – len ak sú to naozaj inštalácie Doar a nie je to bežiaci priečinok.
  */
 export function cleanupOld(history: string[], currentDir: string): Promise<string[]> {
   return withoutAsar(() => cleanupOldRaw(history, currentDir))

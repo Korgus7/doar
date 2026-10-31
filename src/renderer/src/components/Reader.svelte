@@ -213,7 +213,7 @@ img{max-width:100%;height:auto}table{max-width:100%}.doar-plain{white-space:pre-
 
   // Samostatné okno: titulok okna = predmet správy.
   $effect(() => {
-    if (standalone && view) document.title = `${view.subject || t('list.noSubject')} – Doar Mail`
+    if (standalone && view) document.title = `${view.subject || t('list.noSubject')} – Doar`
   })
 
   $effect(() => {

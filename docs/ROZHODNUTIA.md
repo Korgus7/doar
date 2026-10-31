@@ -357,6 +357,26 @@ Používateľ si vybral sadu funkcií naraz („nebudeme robiť verziu zakaždý
 - Prílohy sú v okne správy hneď pod hlavičkou (nad textom), nie až na konci.
 - Prílohu sa dá potiahnuť myšou na plochu, do priečinka alebo do iného programu: jadro pripraví dočasnú kópiu (ako pri „Otvoriť“) už pri stlačení tlačidla myši, hlavný proces spustí systémové ťahanie súboru (`webContents.startDrag`) – len pre súbor v priečinku dočasných príloh Doaru. Programy (`.exe` a pod.) sa ťahať nedajú (ako sa nedajú otvoriť), len uložiť.
 
+## 2026-10-31 – lišta editora ako v Outlooku
+
+- Jeden riadok (okno na písanie je preto široké 940 px; v užšom okne sa lišta zalomí): písmo, veľkosť, Zväčšiť/Zmenšiť písmo (Ctrl+] / Ctrl+[), B I U S, zvýrazňovač, farba písma, odrážky, číslovanie, zmenšiť/zväčšiť zarážku, zarovnanie (doľava, na stred, doprava, do bloku), nadpis, citácia, odkaz (Ctrl+K), pozadie správy, zrušiť formátovanie. Ctrl+E/L/R sa nepoužívajú (kolidujú so skratkami Doaru).
+- Písma: Predvolené + 14 bežných (zoznam `EDITOR_FONTS` v `shared/ipc.ts`). Jadro povolí `font-family` len z tohto zoznamu.
+- Veľkosti v pt ako v Outlooku (8–72). Jadro povolí `font-size` v pt (6–72, aj 10,5) a v px (8–96, staršie správy).
+- Farby ako v Office: 10 farieb motívu × 5 odtieňov, 10 štandardných, „Viac farieb…“ (systémový výber farby). Zvýrazňovač: 15 farieb Office + Bez farby. Jadro povolí ľubovoľnú farbu v tvare `#rrggbb`.
+- Zarovnanie a zarážka sú inline štýly odseku/nadpisu (`text-align`, `padding-left` po 40 px). V zozname zarážka posúva položku o úroveň.
+
+## 2026-10-31 – verzia 1.0: názov „Doar“
+
+- Program sa volá len **Doar** (predtým „Doar Mail“): `productName`, okná, texty vo všetkých jazykoch, odkazy, stránka. Údaje ostávajú v `%APPDATA%\Doar` (cesta bola pevná už predtým) – kontá, pošta ani heslá sa nestratia.
+- Program je `Doar.exe`, balík `Doar-<verzia>-win-x64.zip`, manifest aktualizácie `doar-update.json` (`app: "doar"`), nové verzie sa rozbaľujú do `Doar <verzia>`.
+- Dôsledok: verzie do 0.10 hľadajú `doar-mail-update.json` a `Doar Mail.exe`, preto im 1.0 nepríde ako aktualizácia – nainštaluje sa raz ručne (rozbaliť zip, spustiť `Doar.exe`). Od 1.0 aktualizácie fungujú ako doteraz. Staré odkazy „Doar Mail.lnk“ (len ak vedú na `Doar Mail.exe`) sa zmažú a staré priečinky „Doar Mail …“ 1.0 pri upratovaní rozpozná.
+
+## 2026-10-31 – veľké správy cez Graph, nová pošta, tabuľka
+
+- Graph: správa nad ~3 MB (limit jednej požiadavky je 4 MB) sa poskladá po častiach – koncept v JSON, prílohy do 2 MB priamo, väčšie cez upload session po kúskoch 3,2 MB (bez tokenu, adresa je oprávnenie), potom `/send`. Príloha najviac 150 MB; celkový limit určuje schránka (server vráti chybu). Hlavičky In-Reply-To/References Graph nastaviť nedovolí – pri veľkej odpovedi to môže u príjemcu rozbiť vlákno. Chyba pred `/send` rozpracovaný koncept zmaže; nejasný výsledok `/send` sa neopakuje.
+- Nová pošta: IMAP už sledoval doručenú poštu cez IDLE (okamžite). Doplnené: po výpadku spojenia nový pokus o 5 s (predtým 30 s) a hneď kontrola doručenej pošty. Graph nemá IDLE – doručená pošta sa kontroluje každých 20 s (predtým 60 s).
+- Tabuľka v editore (mriežka do 10 × 8, pridať/odstrániť riadok a stĺpec, Tab = ďalšia bunka). Bez novej závislosti – prosemirror-tables je súčasť `@tiptap/pm`. Jadro povolí `table/tbody/tr/td` (colspan/rowspan 2–20), pri odoslaní doplní čiary inline štýlom; v textovej podobe sú bunky oddelené „ | “.
+
 ## Licencie závislostí (overené 2026-10-21 cez `npm view`)
 
 Všetky sú kompatibilné s MIT.

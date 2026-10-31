@@ -338,6 +338,9 @@ export interface SyncStatus {
 }
 
 /** Chyby spojenia, pri ktorých ide o nedostupnosť siete/servera (nie o zlé nastavenie) – opakuje sa samo. */
+/** Písma v editore (ako v Outlooku). Jadro pred odoslaním povolí len tieto. */
+export const EDITOR_FONTS = ['Aptos', 'Arial', 'Calibri', 'Cambria', 'Candara', 'Comic Sans MS', 'Consolas', 'Courier New', 'Georgia', 'Segoe UI', 'Tahoma', 'Times New Roman', 'Trebuchet MS', 'Verdana'] as const
+
 export const OFFLINE_CODES: readonly string[] = ['NO_NETWORK', 'HOST_NOT_FOUND', 'CONNECTION_REFUSED', 'TIMEOUT', 'PROTOCOL']
 
 export type OutboxState = 'draft' | 'queued' | 'sending' | 'sent' | 'error' | 'uncertain'
@@ -1160,7 +1163,7 @@ export type CoreToMain =
   | { kind: 'secret.delete'; id: number; key: string }
   | { kind: 'secret.status'; id: number }
   | { kind: 'ready' }
-  /** Jadro sa nedokázalo spustiť (DB_TOO_NEW = databáza z novšej verzie Doar Mail) – main to povie a nereštartuje ho. */
+  /** Jadro sa nedokázalo spustiť (DB_TOO_NEW = databáza z novšej verzie Doar) – main to povie a nereštartuje ho. */
   | { kind: 'fatal'; code: 'DB_TOO_NEW' | 'INIT_FAILED' }
   /** Nová pošta v doručenej pošte (main ukáže systémové oznámenie). Bez obsahu, ak to používateľ vypol. */
   | { kind: 'newMail'; accountEmail: string; count: number; messageId: number; from: string | null; subject: string | null }

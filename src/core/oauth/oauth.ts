@@ -1,6 +1,6 @@
 /**
  * Prihlásenie cez Microsoft a Google (OAuth 2.0, „installed app“): PKCE, prehliadač používateľa,
- * spätné volanie na 127.0.0.1 (náhodný port). Heslo Doar Mail nikdy nevidí.
+ * spätné volanie na 127.0.0.1 (náhodný port). Heslo Doar nikdy nevidí.
  *
  * Refresh token je v bezpečnom úložisku (ako heslá), prístupový token len v pamäti.
  * Bez Electronu – testovateľné v čistom Node.js (falošný autorizačný server).
@@ -35,7 +35,7 @@ export interface OAuthEndpoint {
 export type OAuthConfig = Record<OAuthProvider, OAuthEndpoint | null>
 
 /**
- * Registrácie aplikácie Doar Mail (verejné identifikátory, nie tajomstvá). Dajú sa prepísať
+ * Registrácie aplikácie Doar (verejné identifikátory, nie tajomstvá). Dajú sa prepísať
  * premennými prostredia DOAR_OAUTH_MICROSOFT_CLIENT_ID, DOAR_OAUTH_GOOGLE_CLIENT_ID, DOAR_OAUTH_GOOGLE_CLIENT_SECRET.
  */
 const BUILT_IN = {
@@ -232,7 +232,7 @@ export class OAuthService {
     const state = b64url(randomBytes(24))
     const verifier = b64url(randomBytes(48))
     const challenge = b64url(createHash('sha256').update(verifier).digest())
-    const text = input.text ?? { title: 'Doar Mail', done: 'OK', failed: 'Error' }
+    const text = input.text ?? { title: 'Doar', done: 'OK', failed: 'Error' }
     const lang = String(input.lang ?? 'en').slice(0, 10)
     let resolveCode!: (code: string) => void
     let rejectCode!: (e: Error) => void

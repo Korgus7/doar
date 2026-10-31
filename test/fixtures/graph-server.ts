@@ -2,12 +2,20 @@ import http from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { randomBytes } from 'node:crypto'
 import { simpleParser } from 'mailparser'
+import MailComposer from 'nodemailer/lib/mail-composer'
 
 /**
  * Testovací server Microsoft Graph (len to, čo Doar používa): priečinky (aj vnorené, špeciálne podľa
  * „well-known“ mien), delta správ s odkazmi na ďalšie zmeny, originál správy (/$value), PATCH príznakov,
  * presun, mazanie, koncept a odoslanie v MIME, $filter podľa internetMessageId. ID sú nemenné ako pri ImmutableId.
+ * Veľké správy: koncept v JSON, prílohy (priamo aj cez upload session po kúskoch bez tokenu), /send.
+ * Ako Graph odmietne požiadavku väčšiu než 4 MB (413).
  */
+
+interface JsonDraft {
+  json: Record<string, unknown>
+  attachments: { name: string; contentType: string; isInline: boolean; contentId?: string; content: Buffer; size: number; received: number }[]
+}
 
 interface Folder {
   id: string
@@ -50,6 +58,10 @@ export class FakeGraph {
   readonly sent: Buffer[] = []
   /** Napodobniť nedostupný server pri odoslaní (pred prijatím). */
   failSend: number | null = null
+  /** Koncepty vytvorené v JSON (veľké správy) a ich prílohy. */
+  readonly jsonDrafts = new Map<string, JsonDraft>()
+  /** Najväčší prijatý kúsok pri nahrávaní prílohy. */
+  maxChunk = 0
   /** Veľkosť stránky delta (pre test stránkovania). */
   pageSize = 50
   /** Zahodiť históriu zmien (delta odkazy prestanú platiť). */
@@ -189,6 +201,21 @@ export class FakeGraph {
       res.writeHead(status, { 'content-type': 'application/json' }).end(data === undefined ? '' : JSON.stringify(data))
     }
     const fail = (status: number, code: string): void => send(status, { error: { code, message: code } })
+    // Nahrávanie prílohy po kúskoch: adresa už je oprávnenie, token sa nesmie posielať.
+    if (u.pathname.startsWith('/upload/')) {
+      if (req.headers['authorization']) return fail(401, 'TokenNotAllowed')
+      const [, , draftId, idx] = u.pathname.split('/')
+      const a = this.jsonDrafts.get(decodeURIComponent(draftId!))?.attachments[Number(idx)]
+      const range = /^bytes (\d+)-(\d+)\/(\d+)$/.exec(String(req.headers['content-range'] ?? ''))
+      if (!a || !range || method !== 'PUT') return fail(400, 'BadUpload')
+      const [from, to, total] = [Number(range[1]), Number(range[2]), Number(range[3])]
+      if (from !== a.received || to - from + 1 !== body.length || total !== a.size || body.length > 4 * 1024 * 1024) return fail(400, 'BadRange')
+      body.copy(a.content, from)
+      a.received += body.length
+      this.maxChunk = Math.max(this.maxChunk, body.length)
+      return send(a.received === a.size ? 201 : 200, { nextExpectedRanges: [`${a.received}-`] })
+    }
+    if (body.length > 4 * 1024 * 1024) return fail(413, 'RequestEntityTooLarge')
     if (req.headers['authorization'] !== `Bearer ${this.token}`) return fail(401, 'InvalidAuthenticationToken')
     if (!/IdType="ImmutableId"/.test(String(req.headers['prefer'] ?? ''))) return fail(400, 'ImmutableIdRequired')
     const path = u.pathname.replace(/^\/v1\.0/, '')
@@ -266,6 +293,15 @@ export class FakeGraph {
 
     // --- správy ---
     if (parts[1] === 'messages') {
+      if (parts.length === 2 && method === 'POST' && String(req.headers['content-type']).startsWith('application/json')) {
+        // Koncept v JSON (veľká správa) – MIME sa poskladá až pri odoslaní.
+        const j = readJson()
+        const ea = (list: unknown): string[] => ((list as { emailAddress: { address: string } }[] | undefined) ?? []).map((r) => r.emailAddress.address)
+        const raw = Buffer.from(`Subject: ${String(j['subject'] ?? '')}\r\nTo: ${ea(j['toRecipients']).join(', ')}\r\nMessage-ID: ${String(j['internetMessageId'] ?? '')}\r\n\r\n`)
+        const id = await this.addMessage(this.folderId('drafts'), raw, { isRead: true, isDraft: true })
+        this.jsonDrafts.set(id, { json: j, attachments: [] })
+        return send(201, this.json(this.messages.get(id)!))
+      }
       if (parts.length === 2 && method === 'POST') {
         // Koncept v MIME (telo = base64).
         const id = await this.addMessage(this.folderId('drafts'), Buffer.from(body.toString('utf8'), 'base64'), { isRead: true, isDraft: true })
@@ -284,6 +320,43 @@ export class FakeGraph {
         if (flag?.flagStatus) m.flagged = flag.flagStatus === 'flagged'
         m.seq = ++this.seq
         return send(200, this.json(m))
+      }
+      const jd = this.jsonDrafts.get(m.id)
+      if (jd && parts[3] === 'attachments' && method === 'POST') {
+        const j = readJson()
+        if (parts[4] === 'createUploadSession') {
+          const it = j['AttachmentItem'] as { name: string; size: number; contentType?: string; isInline?: boolean; contentId?: string }
+          jd.attachments.push({ name: it.name, contentType: it.contentType ?? 'application/octet-stream', isInline: !!it.isInline, contentId: it.contentId, content: Buffer.alloc(it.size), size: it.size, received: 0 })
+          const origin = new URL(this.base).origin
+          return send(201, { uploadUrl: `${origin}/upload/${encodeURIComponent(m.id)}/${jd.attachments.length - 1}`, nextExpectedRanges: ['0-'] })
+        }
+        const content = Buffer.from(String(j['contentBytes']), 'base64')
+        jd.attachments.push({ name: String(j['name']), contentType: String(j['contentType'] ?? 'application/octet-stream'), isInline: !!j['isInline'], contentId: j['contentId'] as string | undefined, content, size: content.length, received: content.length })
+        return send(201, { id: `A${jd.attachments.length}` })
+      }
+      if (jd && parts[3] === 'send' && method === 'POST') {
+        if (this.failSend) return fail(this.failSend, 'ServiceUnavailable')
+        if (jd.attachments.some((a) => a.received !== a.size)) return fail(400, 'IncompleteAttachment')
+        const j = jd.json
+        const ea = (list: unknown): string => ((list as { emailAddress: { name?: string; address: string } }[] | undefined) ?? []).map((r) => (r.emailAddress.name ? `"${r.emailAddress.name}" <${r.emailAddress.address}>` : r.emailAddress.address)).join(', ')
+        const b = j['body'] as { contentType: string; content: string }
+        const node = new MailComposer({
+          from: 'test@outlook.com',
+          to: ea(j['toRecipients']),
+          cc: ea(j['ccRecipients']) || undefined,
+          bcc: ea(j['bccRecipients']) || undefined,
+          subject: String(j['subject'] ?? ''),
+          messageId: j['internetMessageId'] as string | undefined,
+          ...(b.contentType === 'html' ? { html: b.content } : { text: b.content }),
+          attachments: jd.attachments.map((a) => ({ filename: a.name, contentType: a.contentType, content: a.content, ...(a.isInline ? { cid: a.contentId, contentDisposition: 'inline' as const } : {}) }))
+        }).compile()
+        node.keepBcc = true // ako pri sendMail: skrytá kópia v uloženej podobe na kontrolu
+        const mime = await node.build()
+        this.sent.push(mime)
+        this.jsonDrafts.delete(m.id)
+        this.remove(m.id)
+        await this.addMessage(this.folderId('sentitems'), mime, { isRead: true })
+        return send(202)
       }
       if (parts.length === 3 && method === 'DELETE') {
         this.remove(m.id)

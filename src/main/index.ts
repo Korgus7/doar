@@ -16,12 +16,12 @@ import { incompletePath, isComposeMode, isDangerousFile, isUiLocale, OPEN_ATTACH
 const here = fileURLToPath(new URL('.', import.meta.url))
 const DEV_URL = process.env['ELECTRON_RENDERER_URL']
 /** Zobrazovaný názov aplikácie (okná, tlač, O aplikácii). */
-const APP_NAME = 'Doar Mail'
+const APP_NAME = 'Doar'
 /** Ikona okna a panela úloh (zdroj: resources/icon.svg). */
 const APP_ICON = join(app.getAppPath(), 'resources', 'icon.png')
 
 // Samostatný dátový priečinok (testy, prenosná verzia).
-// Dátový priečinok je vždy „Doar“ (nezávisle od zobrazovaného názvu „Doar Mail“), aby sa pri premenovaní nestratili kontá ani pošta.
+// Dátový priečinok je vždy „Doar“ (nezávisle od zobrazovaného názvu „Doar“), aby sa pri premenovaní nestratili kontá ani pošta.
 if (process.env['DOAR_DATA_DIR']) app.setPath('userData', process.env['DOAR_DATA_DIR'])
 else app.setPath('userData', join(app.getPath('appData'), 'Doar'))
 
@@ -44,7 +44,7 @@ let coreFatal = false
 
 /**
  * Jadro sa nespustilo: zrozumiteľná správa namiesto prázdnej úvodnej obrazovky. Pri databáze z novšej verzie
- * (bežal novší Doar Mail) ponúkne stiahnutie aktuálnej verzie; dáta sa nemenia.
+ * (bežal novší Doar) ponúkne stiahnutie aktuálnej verzie; dáta sa nemenia.
  */
 function showCoreFatal(code: 'DB_TOO_NEW' | 'INIT_FAILED'): void {
   const tooNew = code === 'DB_TOO_NEW'
@@ -253,7 +253,8 @@ function createComposeWindow(mode: ComposeMode, messageId?: number, to?: string)
   const parent = mainWindow
   const b = parent?.getBounds()
   const win = new BrowserWindow({
-    width: 820,
+    // Šírka tak, aby sa lišta editora (ako v Outlooku) zmestila do jedného riadku.
+    width: 940,
     height: 680,
     minWidth: 520,
     minHeight: 400,
