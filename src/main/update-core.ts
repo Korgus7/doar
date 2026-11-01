@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { createReadStream, createWriteStream, existsSync } from 'node:fs'
-import { mkdir, open, readFile, rename, rm, stat, unlink } from 'node:fs/promises'
+import { mkdir, open, readFile, rename, rm, rmdir, stat, unlink } from 'node:fs/promises'
 import { dirname, isAbsolute, join, normalize, sep } from 'node:path'
 import { Readable, Transform } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
@@ -348,12 +348,43 @@ export function looksLikeInstall(dir: string): boolean {
  * Rozbalí overený zip do nového priečinka (najprv do „.part“, potom premenuje) a overí obsah.
  * Vráti cestu k novému Doar.exe.
  */
-export function installBeside(zipPath: string, currentExe: string, version: string, onProgress?: (done: number, total: number) => void): Promise<string> {
-  return withoutAsar(() => installBesideRaw(zipPath, currentExe, version, onProgress))
+export interface InstallOptions {
+  /**
+   * Náhradné miesto (napr. %LOCALAPPDATA%\Programs), keď sa vedľa bežiacej verzie nedá zapisovať
+   * (Doar rozbalený do koreňa disku alebo do Program Files).
+   */
+  fallbackParent?: string
+  /** Dá sa v priečinku vytvoriť podpriečinok? (predvolene skutočný pokus; testy ho nahradia) */
+  canWrite?: (dir: string) => Promise<boolean>
 }
 
-async function installBesideRaw(zipPath: string, currentExe: string, version: string, onProgress?: (done: number, total: number) => void): Promise<string> {
-  const dir = newInstallDir(currentExe, version)
+/** Skúsi v priečinku vytvoriť a hneď zmazať pomocný podpriečinok. */
+export async function canCreateIn(dir: string): Promise<boolean> {
+  const probe = join(dir, `.doar-probe-${process.pid}-${Date.now()}`)
+  try {
+    await mkdir(dir, { recursive: true })
+    await mkdir(probe)
+    await rmdir(probe)
+    return true
+  } catch {
+    return false
+  }
+}
+
+export function installBeside(zipPath: string, currentExe: string, version: string, onProgress?: (done: number, total: number) => void, opts: InstallOptions = {}): Promise<string> {
+  return withoutAsar(async () => {
+    const canWrite = opts.canWrite ?? canCreateIn
+    const sibling = dirname(newInstallDir(currentExe, version))
+    if (!opts.fallbackParent || normalize(sibling).toLowerCase() === normalize(opts.fallbackParent).toLowerCase() || (await canWrite(sibling))) {
+      return installBesideRaw(zipPath, currentExe, version, onProgress, sibling)
+    }
+    if (!(await canWrite(opts.fallbackParent))) throw err('UPDATE_NOT_WRITABLE', 'Do priečinka programu sa nedá zapisovať')
+    return installBesideRaw(zipPath, currentExe, version, onProgress, opts.fallbackParent)
+  })
+}
+
+async function installBesideRaw(zipPath: string, currentExe: string, version: string, onProgress: ((done: number, total: number) => void) | undefined, parent: string): Promise<string> {
+  const dir = join(parent, `Doar ${version}`)
   if (normalize(dir) === normalize(dirname(currentExe))) throw err('UPDATE_SAME_DIR', 'Táto verzia už beží')
   const part = `${dir}.part`
   await rm(part, { recursive: true, force: true })

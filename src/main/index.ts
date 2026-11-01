@@ -1,7 +1,7 @@
 import { app, BrowserWindow, clipboard, dialog, ipcMain, MessageChannelMain, nativeImage, nativeTheme, Notification, powerMonitor, session, shell, utilityProcess, type UtilityProcess } from 'electron'
 import { deflateSync } from 'node:zlib'
 import { basename, join, relative, isAbsolute } from 'node:path'
-import { renameSync, statSync, writeFileSync, rmSync } from 'node:fs'
+import { mkdirSync, readFileSync, renameSync, statSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { randomUUID } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
@@ -395,11 +395,19 @@ if (!gotLock) {
     buildMenu(uiLocale, () => mainWindow, DEV_URL !== undefined)
     // Windows: oznámenia sa zobrazia pod menom aplikácie (nie „electron.app.Electron“).
     if (process.platform === 'win32') app.setAppUserModelId('sk.doar.app')
+    // Aktualizácie (GitHub Releases) – nič sa nestiahne bez súhlasu používateľa.
+    updater = new Updater(() => [...appWindows])
+    // Starý odkaz spustil staršiu verziu, hoci je nainštalovaná novšia → spustiť novšiu a skončiť
+    // (ešte pred odkazmi, aby ich staršia verzia nepresmerovala na seba).
+    const newer = updater.newerInstalled()
+    if (newer) {
+      app.relaunch({ execPath: newer, args: [] })
+      app.exit(0)
+      return
+    }
     // Balík bez inštalátora: odkazy v ponuke Štart a na ploche si aplikácia vytvorí sama.
     // Verzia z Microsoft Store má odkaz v ponuke Štart od Windowsu – vlastné odkazy netreba.
     if (!process.windowsStore) ensureShortcuts(APP_NAME, 'sk.doar.app')
-    // Aktualizácie (GitHub Releases) – nič sa nestiahne bez súhlasu používateľa.
-    updater = new Updater(() => [...appWindows])
     ipcMain.handle('update-state', () => updater!.getState())
     ipcMain.on('update-cmd', (e, cmd: unknown) => {
       if (!mainWindow || e.sender !== mainWindow.webContents || !updater) return
@@ -570,14 +578,48 @@ if (!gotLock) {
       for (const p of out) allow(p, 'read')
       return out
     })
+    /** Súbory, ktoré používateľ priložil (dialóg alebo pretiahnutie) – len tie smie okno čítať na zmenšenie obrázka. */
+    const attached = new Set<string>()
+    const attachedKey = (p: string): string => p.toLowerCase()
     ipcMain.handle('choose-attach-files', async (e) => {
       const w = windowOf(e)
       if (!w) return []
       const r = await dialog.showOpenDialog(w, { properties: ['openFile', 'multiSelections'] })
       if (r.canceled) return []
       const out = r.filePaths.map(picked).filter((f): f is PickedFile => f !== null)
-      for (const f of out) allow(f.path, 'read')
+      for (const f of out) {
+        allow(f.path, 'read')
+        attached.add(attachedKey(f.path))
+      }
       return out
+    })
+    // Zmenšenie obrázkov v prílohách (ako v Outlooku): okno dostane obsah priloženého obrázka, zmenší ho
+    // (otočenie podľa EXIF rieši prehliadač) a vráti ho – uloží sa do dočasného priečinka ako nová príloha.
+    const RESIZED_DIR = join(app.getPath('temp'), 'doar-resized')
+    rmSync(RESIZED_DIR, { recursive: true, force: true })
+    ipcMain.handle('read-image-file', (e, path: unknown) => {
+      if (!windowOf(e) || typeof path !== 'string' || !attached.has(attachedKey(path)) || !/\.(jpe?g|png|webp|bmp)$/i.test(path)) return null
+      try {
+        if (statSync(path).size > 60 * 1024 * 1024) return null
+        return new Uint8Array(readFileSync(path))
+      } catch {
+        return null
+      }
+    })
+    ipcMain.handle('save-resized-image', (e, name: unknown, bytes: unknown) => {
+      if (!windowOf(e) || typeof name !== 'string' || !(bytes instanceof Uint8Array) || bytes.length === 0 || bytes.length > 40 * 1024 * 1024) return null
+      const safe = `${name.replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_').replace(/\.[^.]*$/, '').slice(0, 150) || 'obrazok'}.jpg`
+      try {
+        const dir = join(RESIZED_DIR, randomUUID())
+        mkdirSync(dir, { recursive: true })
+        const path = join(dir, safe)
+        writeFileSync(path, bytes)
+        allow(path, 'read')
+        attached.add(attachedKey(path))
+        return picked(path)
+      } catch {
+        return null
+      }
     })
     ipcMain.handle('dropped-files', (e, paths: unknown) => {
       if (!windowOf(e) || !Array.isArray(paths)) return []
@@ -586,7 +628,10 @@ if (!gotLock) {
         .slice(0, 100)
         .map(picked)
         .filter((f): f is PickedFile => f !== null)
-      for (const f of out) allow(f.path, 'read')
+      for (const f of out) {
+        allow(f.path, 'read')
+        attached.add(attachedKey(f.path))
+      }
       return out
     })
     ipcMain.handle('choose-save-path', async (e, name: unknown) => {

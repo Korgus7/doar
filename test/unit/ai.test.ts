@@ -249,6 +249,14 @@ describe('AI – zadania', () => {
     expect(restoreSegment(s.segments[0]!, 'A <t9>B</t9> & C')).toBe('A B &amp; C')
   })
 
+  it('napísať podľa pokynu (nová správa): pokyn je zadanie, rozpísaný text len kontext', () => {
+    const p = buildPrompt({ requestId: 'x', task: 'write', instruction: 'napíš vianočný pozdrav kolegom', text: 'Milí kolegovia,', lang: 'sk' }, null)
+    expect(p.user).toMatch(/Write the body of an e-mail according to the user's instruction/)
+    expect(p.user).toContain('<instruction>\nnapíš vianočný pozdrav kolegom\n</instruction>')
+    expect(p.user).toContain('<draft>\nMilí kolegovia,\n</draft>')
+    expect(buildPrompt({ requestId: 'x', task: 'write', instruction: 'pozdrav', lang: 'sk' }, null).user).not.toContain('<draft>')
+  })
+
   it('výstup bez obalu ``` a medzier', () => {
     expect(cleanOutput('```\nText\n```')).toBe('Text')
     expect(cleanOutput('\r\n  Ahoj\r\nsvet  ')).toBe('Ahoj\nsvet')
@@ -346,6 +354,7 @@ describe('AI – služba v jadre', () => {
     await expect(ai.run({ requestId: 'a', task: 'rewrite', text: 'x', style: 'translate', targetLang: 'xx', lang: 'sk' })).rejects.toMatchObject({ code: 'AI_BAD_TASK' })
     await expect(ai.run({ requestId: 'a', task: 'reply', lang: 'sk' })).rejects.toMatchObject({ code: 'AI_NO_MESSAGE' })
     await expect(ai.run({ requestId: 'a', task: 'translate', messageId: 7, targetLang: 'xx', lang: 'sk' })).rejects.toMatchObject({ code: 'AI_BAD_TASK' })
+    await expect(ai.run({ requestId: 'a', task: 'write', instruction: '  ', lang: 'sk' })).rejects.toMatchObject({ code: 'AI_NO_INSTRUCTION' })
     await expect(ai.run({ requestId: 'a', task: 'translate', targetLang: 'de', lang: 'sk' })).rejects.toMatchObject({ code: 'AI_NO_MESSAGE' })
     expect(calls).toHaveLength(0)
   })

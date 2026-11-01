@@ -5,6 +5,24 @@ import { join } from 'node:path'
 import { ImapFlow } from 'imapflow'
 import { addAccountViaWizard, launchApp, testServer } from './helpers'
 
+/** Jednofarebný 24-bitový BMP (testovacia „fotka“ ľubovoľnej veľkosti bez ďalších knižníc). */
+function bmp(w: number, h: number): Buffer {
+  const row = Math.ceil((w * 3) / 4) * 4
+  const size = 54 + row * h
+  const b = Buffer.alloc(size, 0)
+  b.fill(0x80, 54)
+  b.write('BM', 0)
+  b.writeUInt32LE(size, 2)
+  b.writeUInt32LE(54, 10)
+  b.writeUInt32LE(40, 14)
+  b.writeInt32LE(w, 18)
+  b.writeInt32LE(h, 22)
+  b.writeUInt16LE(1, 26)
+  b.writeUInt16LE(24, 28)
+  b.writeUInt32LE(row * h, 34)
+  return b
+}
+
 /** Verzia 0.9 (druhá časť): konverzácie, rozšírené hľadanie, náhľad príloh, podpisy s logom, skupiny v adresári. */
 
 const srv = testServer()
@@ -248,6 +266,25 @@ test('podpisy s logom a skupiny v adresári', async () => {
   await c.getByRole('button', { name: 'Tabuľka', exact: true }).click()
   await c.getByRole('group', { name: 'Tabuľka' }).getByRole('button', { name: 'Pridať riadok' }).click()
   await expect(body.locator('table tr')).toHaveCount(3)
+  // Fotka do textu (tlačidlo Vložiť obrázok): veľká sa zmenší na 1600 px a vloží ako JPEG, zobrazená na 800 px.
+  await c.keyboard.press('Control+End')
+  await c.locator('input[type=file][accept^="image/"]').setInputFiles({ name: 'foto.bmp', mimeType: 'image/bmp', buffer: bmp(2400, 1200) })
+  const photo = body.locator('img[src^="data:image/jpeg"]')
+  await expect(photo).toHaveCount(1)
+  await expect(photo).toHaveAttribute('width', '800')
+  expect(await photo.evaluate((img: HTMLImageElement) => img.naturalWidth)).toBe(1600)
+  // Zmena veľkosti: kliknutím sa obrázok označí → rýchla veľkosť; potom ťahanie rohového úchytu.
+  await photo.click()
+  await body.locator('.img-wrap.selected .img-sizes button', { hasText: 'Stredný' }).click()
+  await expect(photo).toHaveAttribute('width', '480')
+  const handle = body.locator('.img-wrap.selected .img-handle.se')
+  const hb = (await handle.boundingBox())!
+  await c.mouse.move(hb.x + 5, hb.y + 5)
+  await c.mouse.down()
+  await c.mouse.move(hb.x - 95, hb.y + 5, { steps: 8 })
+  await c.mouse.up()
+  await expect.poll(async () => Number(await photo.getAttribute('width'))).toBeGreaterThan(360)
+  expect(Number(await photo.getAttribute('width'))).toBeLessThan(400)
   await c.getByLabel('Komu').fill(`${USER2}@doar.test`)
   await c.getByLabel('Predmet').fill('S logom')
   await Promise.all([c.waitForEvent('close'), c.getByRole('button', { name: /^Odoslať ➤/ }).click()])
@@ -263,6 +300,9 @@ test('podpisy s logom a skupiny v adresári', async () => {
   expect(html).toMatch(/font-size:16pt/)
   expect(html).toMatch(/text-align:center;padding-left:40px/)
   expect(html).toMatch(/<table style=(3D)?"border-collapse:collapse/)
+  // Fotka ide ako vložený obrázok s Content-ID (nie data:), vedľa loga.
+  expect(sent).toMatch(/Content-Type: image\/jpeg[\s\S]*?Content-ID: <obrazok\d\./)
+  expect(html).toMatch(/<img[^>]*src=(3D)?"cid:obrazok\d[^"]*"[^>]*width=(3D)?"3[6-9]\d"/)
   expect(html).toMatch(/Bunka1<\/p><\/td><td[^>]*><p[^>]*>Bunka2/)
   expect(html).toMatch(/<body style=(3D)?"margin:0;background-color:#fff2cc">/)
 
@@ -331,10 +371,20 @@ test('poradie kont: ponuka a ťahanie myšou', async () => {
 
   // Ťahanie hlavičky konta na iné konto (pokus sa zopakuje, ak sa ťahanie pri prekresľovaní nezačne).
   await expect(win.getByRole('menu')).toHaveCount(0)
+  // Pokus sa opakuje len kým sa poradie nezmenilo – inak by ďalšie ťahanie (index 1 → 0) poradie vrátilo späť.
   await expect(async () => {
-    await pane.locator('section.account h2').nth(1).dragTo(pane.locator('section.account h2').nth(0))
-    await expect(names).toHaveText([`${USER}@doar.test`, `${USER2}@doar.test`], { timeout: 1000 })
-  }).toPass({ timeout: 15_000 })
+    if ((await names.allTextContents())[0] !== `${USER}@doar.test`) {
+      // Ťahanie po krokoch (systémové ťahanie sa pri jednom skoku občas nezačne).
+      const from = (await pane.locator('section.account h2 button.toggle').nth(1).boundingBox())!
+      const to = (await pane.locator('section.account h2').nth(0).boundingBox())!
+      await win.mouse.move(from.x + from.width / 2, from.y + from.height / 2)
+      await win.mouse.down()
+      await win.mouse.move(from.x + from.width / 2, from.y + from.height / 2 - 8, { steps: 4 })
+      await win.mouse.move(to.x + to.width / 2, to.y + to.height / 2, { steps: 12 })
+      await win.mouse.up()
+    }
+    await expect(names).toHaveText([`${USER}@doar.test`, `${USER2}@doar.test`], { timeout: 3000 })
+  }).toPass({ timeout: 20_000 })
   expect(await order()).toEqual([first, second])
   await app.close()
 })

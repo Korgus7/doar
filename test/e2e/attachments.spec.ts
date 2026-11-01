@@ -6,6 +6,24 @@ import { ImapFlow } from 'imapflow'
 import { simpleParser } from 'mailparser'
 import { addAccountViaWizard, launchApp, testServer } from './helpers'
 
+/** Jednofarebný 24-bitový BMP (testovacia „fotka“ ľubovoľnej veľkosti bez ďalších knižníc). */
+function bmp(w: number, h: number): Buffer {
+  const row = Math.ceil((w * 3) / 4) * 4
+  const size = 54 + row * h
+  const b = Buffer.alloc(size, 0)
+  b.fill(0x80, 54)
+  b.write('BM', 0)
+  b.writeUInt32LE(size, 2)
+  b.writeUInt32LE(54, 10)
+  b.writeUInt32LE(40, 14)
+  b.writeInt32LE(w, 18)
+  b.writeInt32LE(h, 22)
+  b.writeUInt16LE(1, 26)
+  b.writeUInt16LE(24, 28)
+  b.writeUInt32LE(row * h, 34)
+  return b
+}
+
 const srv = testServer()
 test.skip(!srv, 'testovací poštový server (Dovecot) nie je k dispozícii')
 
@@ -160,6 +178,21 @@ test('prílohy: uložiť, otvoriť (program nie), preposlať s prílohami a pril
   await atts.getByRole('button', { name: 'Odstrániť prílohu setup.exe' }).click()
   await c.getByRole('button', { name: /Priložiť súbor/ }).click()
   await expect(atts.getByText('Zmluva o dielo.docx')).toBeVisible()
+  // Fotka v prílohe: voľba „Veľkosť obrázkov“ ju zmenší (JPEG, najdlhšia strana 800 px), Pôvodná vráti originál.
+  const photo = join(dir, 'foto.bmp')
+  const photoBytes = bmp(2400, 1200)
+  writeFileSync(photo, photoBytes)
+  await app.evaluate(({ dialog }, p) => {
+    dialog.showOpenDialog = (async () => ({ canceled: false, filePaths: [p] })) as typeof dialog.showOpenDialog
+  }, photo)
+  await c.getByRole('button', { name: /Priložiť súbor/ }).click()
+  await expect(atts.getByText('foto.bmp')).toBeVisible()
+  await atts.getByLabel('Veľkosť obrázkov:').selectOption('small')
+  await expect(atts.getByText('foto.jpg')).toBeVisible()
+  await atts.getByLabel('Veľkosť obrázkov:').selectOption('original')
+  await expect(atts.getByText('foto.bmp')).toBeVisible()
+  await atts.getByLabel('Veľkosť obrázkov:').selectOption('small')
+  await expect(atts.getByText('foto.jpg')).toBeVisible()
   await c.getByLabel('Komu').fill(`${USER}@doar.test`)
   await c.screenshot({ path: 'test-results/prilohy-preposlat.png' })
   await Promise.all([c.waitForEvent('close'), c.getByRole('button', { name: /Odoslať/ }).click()])
@@ -167,7 +200,13 @@ test('prílohy: uložiť, otvoriť (program nie), preposlať s prílohami a pril
   let raw: Buffer | null = null
   await expect.poll(async () => (raw = await find('Fwd: Faktúra za október')) !== null, { timeout: 30_000 }).toBe(true)
   const p = await simpleParser(raw!)
-  expect(p.attachments.map((a) => a.filename)).toEqual(['faktura.pdf', 'Zmluva o dielo.docx'])
+  expect(p.attachments.map((a) => a.filename)).toEqual(['faktura.pdf', 'Zmluva o dielo.docx', 'foto.jpg'])
+  const jpg = p.attachments[2]!
+  expect(jpg.contentType).toBe('image/jpeg')
+  expect(jpg.content.length).toBeLessThan(photoBytes.length / 20)
+  // Rozmery z hlavičky JPEG (SOF0): 800 × 400.
+  const sof = jpg.content.indexOf(Buffer.from([0xff, 0xc0]))
+  expect([jpg.content.readUInt16BE(sof + 7), jpg.content.readUInt16BE(sof + 5)]).toEqual([800, 400])
   expect(p.attachments[0]!.content.equals(PDF)).toBe(true)
   expect(p.attachments[1]!.content.toString()).toBe('obsah zmluvy')
   expect(p.text).toContain('Preposlaná správa')

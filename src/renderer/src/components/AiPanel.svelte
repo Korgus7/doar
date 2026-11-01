@@ -23,7 +23,8 @@
     onclose: () => void
   } = $props()
 
-  type Action = 'reply' | AiRewriteStyle
+  /** write = nový text podľa pokynu (napr. vianočný pozdrav), vloží sa za rozpísaný text. */
+  type Action = 'reply' | 'write' | AiRewriteStyle
   const LANGS = ['en', 'sk', 'cs', 'de', 'hu', 'pl', 'uk', 'fr', 'es', 'it', 'ru', 'he']
 
   let instruction = $state('')
@@ -57,12 +58,13 @@
     const src = getSource()
     preview = src
     if (!src) return
-    if (a !== 'reply' && !src.text.trim()) {
+    if (a !== 'reply' && a !== 'write' && !src.text.trim()) {
       phase = 'error'
       error = t('ai.compose.noText')
       return
     }
-    source = src
+    // Nový text sa vloží za rozpísaný text (nič sa nenahradí).
+    source = a === 'write' ? { text: '', from: src.to, to: src.to, selection: false } : src
     action = a
     output = ''
     error = null
@@ -72,7 +74,9 @@
     const job = runAi(
       a === 'reply'
         ? { task: 'reply', messageId: replyTo ?? undefined, text: src.text, instruction }
-        : { task: 'rewrite', text: src.text, style: a, targetLang, instruction },
+        : a === 'write'
+          ? { task: 'write', text: src.text, instruction }
+          : { task: 'rewrite', text: src.text, style: a, targetLang, instruction },
       (soFar) => (output = soFar)
     )
     cancel = job.cancel
@@ -145,10 +149,13 @@
       onkeydown={(e) => {
         if (e.key === 'Enter' && instruction.trim()) {
           e.preventDefault()
-          void start(replyTo !== null && !preview?.selection ? 'reply' : 'custom')
+          refresh()
+          // Odpoveď → návrh odpovede; označený alebo rozpísaný text → úprava; prázdna správa → napísať nový text.
+          void start(replyTo !== null && !preview?.selection ? 'reply' : preview?.text.trim() ? 'custom' : 'write')
         }
       }}
     />
+    <button class="btn small" disabled={disabled || phase === 'running' || !instruction.trim()} onclick={() => void start('write')} onmouseenter={refresh} onfocus={refresh}>{t('ai.compose.write')}</button>
     <button class="btn small" disabled={disabled || phase === 'running' || !instruction.trim()} onclick={() => void start('custom')} onmouseenter={refresh} onfocus={refresh}>{t('ai.compose.custom')}</button>
   </div>
   <p class="note">
@@ -165,7 +172,7 @@
         {#if notApplied}<p class="warn" role="alert">{t('ai.compose.changed')}</p>{/if}
         <div class="acts">
           <button class="btn small btn-primary" disabled={disabled} onclick={insert}>
-            {action === 'reply' || !source?.text.trim() ? t('ai.compose.insert') : source?.selection ? t('ai.compose.replaceSelection') : t('ai.compose.replace')}
+            {action === 'reply' || action === 'write' || !source?.text.trim() ? t('ai.compose.insert') : source?.selection ? t('ai.compose.replaceSelection') : t('ai.compose.replace')}
           </button>
           <button class="btn small" onclick={() => action && void start(action)}>{t('ai.again')}</button>
           <button class="btn small" onclick={discard}>{t('ai.compose.discard')}</button>

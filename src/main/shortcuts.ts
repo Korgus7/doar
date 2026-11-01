@@ -1,5 +1,5 @@
 import { app, shell } from 'electron'
-import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
 import { basename, dirname, join } from 'node:path'
 
 /**
@@ -40,6 +40,7 @@ export function ensureShortcuts(name: string, appUserModelId: string): void {
     }
   }
   removeLegacy()
+  updatePinned(target, opts)
   if (!existsSync(startMenu)) write(startMenu, 'create')
   else if (!pointsHere(startMenu)) write(startMenu, 'replace')
   const movedHere = !state.created || (state.target ?? '').toLowerCase() !== target.toLowerCase()
@@ -84,6 +85,33 @@ function removeLegacy(): void {
       if (existsSync(path) && basename(shell.readShortcutLink(path).target).toLowerCase() === 'doar mail.exe') unlinkSync(path)
     } catch {
       // nevadí – starý odkaz len zostane
+    }
+  }
+}
+
+/**
+ * Ikona pripnutá na paneli úloh je odkaz v „User Pinned\TaskBar“ – po aktualizácii by ďalej spúšťala
+ * starú verziu. Pripnuté odkazy na Doar (Doar.exe / Doar Mail.exe v priečinku s inštaláciou) sa presmerujú sem.
+ */
+function updatePinned(target: string, opts: Electron.ShortcutDetails): void {
+  const dir = join(app.getPath('appData'), 'Microsoft', 'Internet Explorer', 'Quick Launch', 'User Pinned', 'TaskBar')
+  let names: string[] = []
+  try {
+    names = readdirSync(dir).filter((n) => n.toLowerCase().endsWith('.lnk'))
+  } catch {
+    return
+  }
+  for (const n of names) {
+    const path = join(dir, n)
+    try {
+      const old = shell.readShortcutLink(path).target
+      const exe = basename(old).toLowerCase()
+      if ((exe !== 'doar.exe' && exe !== 'doar mail.exe') || old.toLowerCase() === target.toLowerCase()) continue
+      // Len odkaz na inštaláciu Doaru (vedľa programu je resources\app.asar alebo už neexistuje).
+      if (existsSync(old) && !existsSync(join(dirname(old), 'resources', 'app.asar'))) continue
+      shell.writeShortcutLink(path, 'update', opts)
+    } catch {
+      // nevadí – ikona len ostane na starej verzii (tá prepne na novšiu sama)
     }
   }
 }

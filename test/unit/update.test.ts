@@ -7,7 +7,7 @@ import { join } from 'node:path'
 import { deflateRawSync } from 'node:zlib'
 import { execFileSync } from 'node:child_process'
 import {
-  cleanupOld, compareVersions, download, extractZip, fromFolder, fromGithub, installBeside, looksLikeInstall, MANIFEST_NAME, newInstallDir, parseManifest,
+  canCreateIn, cleanupOld, compareVersions, download, extractZip, fromFolder, fromGithub, installBeside, looksLikeInstall, MANIFEST_NAME, newInstallDir, parseManifest,
   safeEntryPath, type FetchLike, type UpdateInfo
 } from '../../src/main/update-core'
 
@@ -224,6 +224,25 @@ describe('aktualizácie – rozbalenie a inštalácia vedľa bežiacej verzie', 
     writeFileSync(noExe, makeZip([{ name: 'readme.txt', data: Buffer.from('x') }]))
     await expect(installBeside(noExe, join(cur, 'Doar.exe'), '0.4.2')).rejects.toMatchObject({ code: 'UPDATE_BAD_FILE' })
     expect(existsSync(join(programs, 'Doar 0.4.2'))).toBe(false)
+  })
+
+  it('vedľa sa nedá zapisovať (koreň disku) → nová verzia do náhradného priečinka (%LOCALAPPDATA%\\Programs)', async () => {
+    const drive = join(dir, 'D')
+    const cur = join(drive, 'Doar')
+    mkdirSync(join(cur, 'resources'), { recursive: true })
+    writeFileSync(join(cur, 'Doar.exe'), 'stara')
+    writeFileSync(join(cur, 'resources', 'app.asar'), 'stara')
+    const local = join(dir, 'LocalPrograms')
+    const z = join(dir, 'upd2.zip')
+    writeFileSync(z, appZip)
+    const readOnly = async (d: string): Promise<boolean> => d !== drive
+    const exe = await installBeside(z, join(cur, 'Doar.exe'), '0.5.0', undefined, { fallbackParent: local, canWrite: readOnly })
+    expect(exe).toBe(join(local, 'Doar 0.5.0', 'Doar.exe'))
+    expect(existsSync(join(drive, 'Doar 0.5.0'))).toBe(false)
+    // Zapisovateľné miesto vedľa → ako doteraz; ani náhradné sa nedá → zrozumiteľná chyba.
+    expect(await installBeside(z, join(cur, 'Doar.exe'), '0.5.1', undefined, { fallbackParent: local })).toBe(join(drive, 'Doar 0.5.1', 'Doar.exe'))
+    await expect(installBeside(z, join(cur, 'Doar.exe'), '0.5.2', undefined, { fallbackParent: local, canWrite: async () => false })).rejects.toMatchObject({ code: 'UPDATE_NOT_WRITABLE' })
+    expect(await canCreateIn(join(dir, 'novy'))).toBe(true)
   })
 
   it('upratanie: zostane bežiaca a jedna predošlá verzia; cudzie priečinky sa nemažú', async () => {

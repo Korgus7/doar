@@ -686,7 +686,7 @@ export function isEmlId(id: number | null | undefined): boolean {
 /** Požiadavky (invoke): kanál → [vstup, výstup]. */
 /** AI (voliteľné): poskytovateľ, model, kľúč v bezpečnom úložisku. */
 export type AiProvider = 'anthropic' | 'openrouter' | 'local'
-export type AiTask = 'summary' | 'reply' | 'rewrite' | 'translate'
+export type AiTask = 'summary' | 'reply' | 'rewrite' | 'translate' | 'write'
 export type AiRewriteStyle = 'fix' | 'formal' | 'friendly' | 'shorter' | 'translate' | 'custom'
 
 export interface AiConfig {
@@ -1133,6 +1133,10 @@ export interface DoarApi {
   chooseAttachFiles(): Promise<PickedFile[]>
   /** Súbory pretiahnuté do okna (objekty File z udalosti drop) – smie ich čítať jadro. */
   filesFromDrop(files: File[]): Promise<PickedFile[]>
+  /** Obsah priloženého obrázka (len súbor vybraný na priloženie) – na zmenšenie pred odoslaním. */
+  readImageFile(path: string): Promise<Uint8Array | null>
+  /** Uloží zmenšený obrázok ako dočasný súbor (JPEG) a vráti ho ako novú prílohu. */
+  saveResizedImage(name: string, bytes: Uint8Array): Promise<PickedFile | null>
   /** Dialóg „Uložiť ako“ pre prílohu. Vráti cestu (povolenú na zápis), alebo null. */
   chooseSavePath(defaultName: string): Promise<string | null>
   /** Dialóg výberu priečinka (Uložiť všetky prílohy). */

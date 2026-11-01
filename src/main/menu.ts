@@ -1,4 +1,4 @@
-import { app, dialog, Menu, type BrowserWindow, type MenuItemConstructorOptions } from 'electron'
+import { app, dialog, Menu, shell, type BrowserWindow, type MenuItemConstructorOptions } from 'electron'
 import sk from '../renderer/src/i18n/sk.json'
 import en from '../renderer/src/i18n/en.json'
 import cs from '../renderer/src/i18n/cs.json'
@@ -26,16 +26,25 @@ export function translate(locale: UiLocale, k: Key, params?: Record<string, stri
 let currentLocale: UiLocale = 'sk'
 
 /** Okno „O programe“ (z menu Pomocník aj z ponuky ☰ v rozhraní). */
+/** Webová stránka Doaru (stiahnutie, návod, ochrana súkromia) a zdrojový kód. */
+export const WEBSITE = 'https://cami.sk/doar'
+export const GITHUB = 'https://github.com/Korgus7/doar'
+
 export function showAbout(win: BrowserWindow | null): void {
   const t = (k: Key): string => translate(currentLocale, k)
   const opts = {
     type: 'info' as const,
     title: t('menu.about'),
     message: `${t('app.name')} ${app.getVersion()}`,
-    detail: t('about.detail'),
-    buttons: ['OK']
+    detail: `${t('about.detail')}\n\n${WEBSITE}\n${GITHUB}`,
+    buttons: ['OK', t('about.website'), 'GitHub'],
+    defaultId: 0,
+    cancelId: 0
   }
-  void (win ? dialog.showMessageBox(win, opts) : dialog.showMessageBox(opts))
+  void (win ? dialog.showMessageBox(win, opts) : dialog.showMessageBox(opts)).then((r) => {
+    if (r.response === 1) void shell.openExternal(WEBSITE)
+    else if (r.response === 2) void shell.openExternal(GITHUB)
+  })
 }
 
 /** Postaví aplikačné menu v jazyku rozhrania. */

@@ -107,6 +107,32 @@ test('nastavenia: názov, farba, podpis v novej správe, server, upozornenia, od
   await win.getByRole('button', { name: 'Zrušiť' }).click()
   await expect(folders).toBeVisible()
 
+  // O aplikácii: odkaz na stránku a na GitHub (tlačidlo „GitHub“ otvorí repozitár v prehliadači).
+  await app.evaluate(({ dialog, shell }) => {
+    const g = globalThis as { about?: string; opened?: string; origBox?: unknown; origOpen?: unknown }
+    g.origBox = dialog.showMessageBox
+    g.origOpen = shell.openExternal
+    dialog.showMessageBox = (async (...a: unknown[]) => {
+      const o = a[a.length - 1] as { detail?: string; buttons?: string[] }
+      g.about = `${o.detail}|${(o.buttons ?? []).join(',')}`
+      return { response: 2, checkboxChecked: false }
+    }) as typeof dialog.showMessageBox
+    shell.openExternal = async (url: string) => {
+      g.opened = url
+    }
+  })
+  await win.getByRole('button', { name: 'Ponuka' }).click()
+  await win.getByRole('menu', { name: 'Ponuka' }).getByRole('menuitem', { name: /^O aplikácii Doar/ }).click()
+  await expect.poll(() => app.evaluate(() => (globalThis as { opened?: string }).opened)).toBe('https://github.com/Korgus7/doar')
+  const about = await app.evaluate(() => (globalThis as { about?: string }).about)
+  expect(about).toContain('https://cami.sk/doar')
+  expect(about).toContain('OK,Webová stránka,GitHub')
+  await app.evaluate(({ dialog, shell }) => {
+    const g = globalThis as { origBox?: typeof dialog.showMessageBox; origOpen?: typeof shell.openExternal }
+    dialog.showMessageBox = g.origBox!
+    shell.openExternal = g.origOpen!
+  })
+
   // Odstránenie konta → uvítanie; pošta na serveri zostane.
   await win.getByRole('button', { name: 'Nastavenia', exact: true }).click()
   win.once('dialog', (d) => void d.accept())

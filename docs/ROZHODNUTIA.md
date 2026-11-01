@@ -390,6 +390,18 @@ Používateľ si vybral sadu funkcií naraz („nebudeme robiť verziu zakaždý
 - Obrázky vložené do textu (Gmail cez `cid:`) sa zobrazia v správe do 16 MB (predtým 2 MB – fotky z mobilu sa nezobrazili vôbec, lebo neboli ani v prílohách). Len formáty, ktoré vie zobraziť prehliadač (PNG, JPEG, GIF, WebP, BMP); iné (napr. HEIC) a väčšie ostanú ako príloha.
 - Fotky vložené bez odkazu z HTML (iPhone a iné mobily: text + obrázok ako „inline“ časť) sa pridajú na koniec správy ako v Outlooku a Apple Mail; zostanú aj v prílohách (na uloženie).
 
+## 2026-11-01 – obrázky pri písaní, aktualizácie
+
+- Obrázok do textu správy: Ctrl+V zo schránky, pustenie myšou do textu alebo tlačidlo „Vložiť obrázok“ (len v okne správy, nie v podpise). Fotka sa v okne zmenší na najviac 1600 px (otočí podľa EXIF) a uloží ako JPEG; malý obrázok (≤ 400 kB, bez zmenšenia) ostane, ako je. V správe sa zobrazí na šírku 800 px; veľkosť sa dá zmeniť ako v Outlooku – označený obrázok má úchyty v rohoch (pomer strán zostane) a lištu Malý / Stredný / Veľký / Pôvodná veľkosť (240 / 480 / 720 px / bez šírky). Platí aj pre logo v podpise. Pri odoslaní ide ako vložený obrázok s Content-ID. Jadro povolí vložený obrázok do 3 000 000 znakov (predtým 700 000) a HTML správy do 30 MB (predtým 5 MB). Iný súbor (aj HEIC) pustený do okna ide ako príloha.
+- Obrázky v prílohách (ako „Zmeniť veľkosť obrázkov“ v Outlooku): ak sú v prílohách obrázky zo súborov (JPEG, PNG, WebP, BMP), pod prílohami je voľba Pôvodná / Veľké 1920 px / Stredné 1280 px / Malé 800 px. Okno dostane od main procesu obsah len priloženého súboru, zmenší ho (EXIF otočenie rieši prehliadač) a uloží ako JPEG do dočasného priečinka (`%TEMP%\doar-resized`, maže sa pri štarte); voľba platí aj pre neskôr pridané obrázky a „Pôvodná“ vráti originál. Ak by obrázok nebol menší, ostane pôvodný. Prílohy z preposlanej správy a z konceptu sa nemenia.
+- AI v okne správy: **Napísať podľa pokynu** (nová úloha `write`) – nový text podľa pokynu, napr. „napíš vianočný pozdrav kolegom“; rozpísaný text je len kontext a návrh sa vloží zaň (nič sa nenahradí). Enter v poli pokynu: odpoveď → návrh odpovede, označený/rozpísaný text → úprava, prázdna správa → napísať.
+- Stránka (`site/`): Gmail aj Outlook.com, 3 nové dlaždice (editor ako v Outlooku, prechod z iného programu, 9 jazykov), AI s prekladom a písaním, inštalácia nie priamo na disk, Smart App Control v otázkach, import .pst/.ost/.dbx/.eml, prihlásenie cez Microsoft v ochrane súkromia.
+- O aplikácii: odkaz na stránku (https://cami.sk/doar) a GitHub (https://github.com/Korgus7/doar) – v texte aj tlačidlami „Webová stránka“ a „GitHub“ (otvoria sa v prehliadači).
+- Aktualizácia: ak sa vedľa bežiacej verzie nedá zapisovať (koreň disku, Program Files), nová verzia sa rozbalí do `%LOCALAPPDATA%\Programs` (najprv sa skúsi vytvoriť pomocný priečinok).
+- Ikona pripnutá na paneli úloh (`User Pinned\TaskBar`) sa pri štarte novej verzie presmeruje na ňu (len odkazy na `Doar.exe` / `Doar Mail.exe` v inštalácii Doaru).
+- Ak sa spustí staršia verzia, hoci je nainštalovaná novšia (zapísaná v `update.json` po aktualizácii), Doar ešte pred odkazmi a oknami spustí novšiu a sám skončí.
+- Test „poradie kont – ťahanie“: ťahanie sa opakuje len kým sa poradie nezmenilo (predtým ho opakovaný pokus vracal späť – nespoľahlivý test).
+
 ## Licencie závislostí (overené 2026-10-21 cez `npm view`)
 
 Všetky sú kompatibilné s MIT.

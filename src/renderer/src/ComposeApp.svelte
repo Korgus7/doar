@@ -18,6 +18,69 @@
     name: string
     size: number
     source: ComposeAttachment
+    /** Pôvodný súbor, keď je obrázok zmenšený (návrat na „Pôvodná veľkosť“). */
+    original?: { name: string; size: number; source: ComposeAttachment }
+  }
+
+  /** Veľkosť obrázkov v prílohách (ako „Zmeniť veľkosť obrázkov“ v Outlooku): najdlhšia strana v px. */
+  const IMAGE_SIZES = { original: 0, large: 1920, medium: 1280, small: 800 } as const
+  type ImageSize = keyof typeof IMAGE_SIZES
+  let imageSize = $state<ImageSize>('original')
+  let resizing = $state(false)
+  const IMAGE_FILE = /\.(jpe?g|png|webp|bmp)$/i
+  const isImage = (a: Attached): boolean => {
+    const src = a.original?.source ?? a.source
+    return src.kind === 'file' && IMAGE_FILE.test(src.path)
+  }
+
+  /** Zmenší obrázok na najdlhšiu stranu `max` (JPEG). Ak by nebol menší, vráti null (ostane pôvodný). */
+  async function shrink(path: string, name: string, size: number, max: number): Promise<{ path: string; name: string; size: number } | null> {
+    const bytes = await window.doar.readImageFile(path)
+    if (!bytes) return null
+    let bmp: ImageBitmap
+    try {
+      bmp = await createImageBitmap(new Blob([bytes as BlobPart]))
+    } catch {
+      return null
+    }
+    try {
+      const scale = Math.min(1, max / Math.max(bmp.width, bmp.height))
+      if (scale === 1) return null
+      const canvas = document.createElement('canvas')
+      canvas.width = Math.max(1, Math.round(bmp.width * scale))
+      canvas.height = Math.max(1, Math.round(bmp.height * scale))
+      const ctx = canvas.getContext('2d')
+      if (!ctx) return null
+      ctx.fillStyle = '#ffffff'
+      ctx.fillRect(0, 0, canvas.width, canvas.height)
+      ctx.drawImage(bmp, 0, 0, canvas.width, canvas.height)
+      const blob = await new Promise<Blob | null>((r) => canvas.toBlob(r, 'image/jpeg', 0.85))
+      if (!blob || blob.size >= size) return null
+      return await window.doar.saveResizedImage(name, new Uint8Array(await blob.arrayBuffer()))
+    } finally {
+      bmp.close()
+    }
+  }
+
+  /** Použije zvolenú veľkosť na všetky obrázky v prílohách (aj na neskôr pridané). */
+  async function applyImageSize(): Promise<void> {
+    if (resizing) return
+    resizing = true
+    try {
+      for (const a of attachments.filter(isImage)) {
+        const base = a.original ?? { name: a.name, size: a.size, source: a.source }
+        const want = IMAGE_SIZES[imageSize]
+        if (!want || base.source.kind !== 'file') {
+          if (a.original) Object.assign(a, { name: base.name, size: base.size, source: base.source, original: undefined })
+          continue
+        }
+        const r = await shrink(base.source.path, base.name, base.size, want)
+        if (r) Object.assign(a, { name: r.name, size: r.size, source: { kind: 'file', path: r.path }, original: base })
+        else if (a.original) Object.assign(a, { name: base.name, size: base.size, source: base.source, original: undefined })
+      }
+    } finally {
+      resizing = false
+    }
   }
 
   let { mode, messageId, to: presetTo }: { mode: ComposeMode; messageId?: number; to?: string } = $props()
@@ -36,6 +99,7 @@
   let showCc = $state(false)
   let replyToMessage = $state<number | null>(null)
   let attachments = $state<Attached[]>([])
+  const hasImages = $derived(attachments.some(isImage))
   let dropping = $state(false)
   let dragDepth = 0
   let sending = $state(false)
@@ -259,6 +323,7 @@
       have.add(key)
       attachments.push({ key, name: f.name, size: f.size, source: { kind: 'file', path: f.path } })
     }
+    if (imageSize !== 'original') void applyImageSize()
   }
 
   async function pickFiles(): Promise<void> {
@@ -275,9 +340,12 @@
 
   async function onDrop(e: DragEvent): Promise<void> {
     if (!hasFiles(e)) return
+    // Obrázok pustený do textu správy už vložil editor (do textu, nie ako prílohu).
+    const done = e.defaultPrevented
     e.preventDefault()
     dragDepth = 0
     dropping = false
+    if (done) return
     if (sending) return
     const files = [...(e.dataTransfer?.files ?? [])]
     const got = await window.doar.filesFromDrop(files)
@@ -456,7 +524,7 @@
   }
 
   async function send(sendAt: string | null = null): Promise<void> {
-    if (sending || accountId === null) return
+    if (sending || resizing || accountId === null) return
     error = null
     if (!to.trim() && !cc.trim() && !bcc.trim()) {
       error = t('errors.NO_RECIPIENTS')
@@ -532,7 +600,7 @@
 <div class="compose">
   <header class="bar">
     <span class="split">
-      <button class="btn btn-primary" onclick={() => void send()} disabled={sending || !ready} title={t('compose.shortcut')}>
+      <button class="btn btn-primary" onclick={() => void send()} disabled={sending || !ready || resizing} title={t('compose.shortcut')}>
         {sending ? t('compose.sending') : `${t('compose.send')} ➤`}
       </button>
       <button class="btn btn-primary more" class:on={scheduleOpen} aria-pressed={scheduleOpen} onclick={openSchedule} disabled={sending || !ready} title={t('compose.sendLater')} aria-label={t('compose.sendLater')}>🕓</button>
@@ -606,6 +674,15 @@
           </li>
         {/each}
       </ul>
+      {#if hasImages}
+        <label class="img-size">
+          {t('compose.imageSize')}
+          <select bind:value={imageSize} disabled={sending || resizing} onchange={() => void applyImageSize()}>
+            {#each Object.keys(IMAGE_SIZES) as k (k)}<option value={k}>{t(`compose.imageSize.${k}` as MessageKey)}</option>{/each}
+          </select>
+          {#if resizing}<span class="muted">{t('compose.resizing')}</span>{/if}
+        </label>
+      {/if}
       <p class="total" class:warn={totalSize > WARN_ATTACHMENTS_BYTES}>
         {t('compose.attachmentsTotal', { size: fileSize(totalSize) })}
         {#if totalSize > MAX_ATTACHMENTS_BYTES}· {t('errors.ATTACHMENTS_TOO_LARGE')}{:else if totalSize > WARN_ATTACHMENTS_BYTES}· {t('compose.attachmentsBig')}{/if}
@@ -639,7 +716,7 @@
   {/if}
 
   {#if format === 'html' && ready}
-    <RichEditor bind:this={editorRef} {html} label={t('compose.body')} disabled={sending} pageBackground onchange={(h) => (html = h)} />
+    <RichEditor bind:this={editorRef} {html} label={t('compose.body')} disabled={sending} pageBackground images onchange={(h) => (html = h)} />
   {:else if format === 'plain'}
     <textarea bind:this={bodyEl} bind:value={body} aria-label={t('compose.body')} spellcheck="true" dir="auto" disabled={sending}></textarea>
   {/if}
@@ -777,6 +854,24 @@
     border-bottom: 1px solid var(--border);
     max-height: 30vh;
     overflow: auto;
+  }
+  .img-size {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    margin: 0.3rem 0 0;
+    font-size: 0.82rem;
+  }
+  .img-size select {
+    padding: 0.1rem 0.3rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--bg);
+    color: var(--text);
+    font-size: 0.82rem;
+  }
+  .img-size .muted {
+    color: var(--text-muted);
   }
   .attachments ul {
     list-style: none;

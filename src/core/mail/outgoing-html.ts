@@ -19,10 +19,10 @@ const SPAN_STYLES = {
   h3: BLOCK_STYLE
 }
 
-/** Obrázok v správe (logo v podpise): len vložený obrázok data: (PNG, JPEG, GIF, WebP), nie odkaz na internet. */
+/** Obrázok v správe (logo v podpise, vložená fotka): len vložený obrázok data: (PNG, JPEG, GIF, WebP), nie odkaz na internet. */
 const IMG_SRC = /^data:image\/(png|jpe?g|gif|webp);base64,[a-z0-9+/=\s]+$/i
-/** Najväčší vložený obrázok (bajty base64). */
-const MAX_IMG = 700_000
+/** Najväčší vložený obrázok (znaky base64, ~2,2 MB). Editor fotky pred vložením zmenší. */
+const MAX_IMG = 3_000_000
 const imgFilter = (frame: { tag: string; attribs: Record<string, string> }): boolean =>
   frame.tag === 'img' && !(IMG_SRC.test(frame.attribs['src'] ?? '') && (frame.attribs['src'] ?? '').length <= MAX_IMG)
 /** Šírka a výška obrázka: len čísla (pixely), najviac 2000. */
@@ -155,7 +155,8 @@ export function sanitizeComposeHtml(html: string): string {
 }
 
 function cleanCompose(html: string): string {
-  return sanitizeHtml(String(html ?? '').slice(0, 5_000_000), {
+  // Až 30 MB (vložené fotky sú v HTML ako data:) – rovnaký limit ako pri prenose z okna správy.
+  return sanitizeHtml(String(html ?? '').slice(0, 30_000_000), {
     allowedTags: TAGS,
     allowedAttributes: withDir(),
     allowedStyles: SPAN_STYLES,

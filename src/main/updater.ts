@@ -1,9 +1,9 @@
 import { app, session, shell, type BrowserWindow, type Session } from 'electron'
-import { readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import type { UpdateState } from '../shared/ipc'
 import { initLog, logger } from '../core/log'
-import { cleanupOld, compareVersions, download, fromFolder, fromGithub, installBeside, removeFile, type FetchLike, type UpdateInfo } from './update-core'
+import { cleanupOld, compareVersions, download, fromFolder, fromGithub, installBeside, looksLikeInstall, removeFile, type FetchLike, type UpdateInfo } from './update-core'
 
 const REPO = 'Korgus7/doar'
 const log = logger('update')
@@ -14,6 +14,8 @@ interface Prefs {
   auto: boolean
   /** Priečinky, z ktorých Doar bežal (posledný = aktuálny) – na upratanie starých verzií. */
   history: string[]
+  /** Naposledy nainštalovaná verzia (staršia verzia spustená cez starý odkaz prepne na ňu). */
+  installed?: { version: string; exe: string }
 }
 
 function codeOf(e: unknown): string {
@@ -61,7 +63,8 @@ export class Updater {
   private loadPrefs(): Prefs {
     try {
       const p = JSON.parse(readFileSync(this.prefsFile, 'utf8')) as Partial<Prefs>
-      return { auto: p.auto !== false, history: Array.isArray(p.history) ? p.history.filter((x) => typeof x === 'string').slice(-10) : [] }
+      const inst = p.installed && typeof p.installed.version === 'string' && typeof p.installed.exe === 'string' ? { version: p.installed.version, exe: p.installed.exe } : undefined
+      return { auto: p.auto !== false, history: Array.isArray(p.history) ? p.history.filter((x) => typeof x === 'string').slice(-10) : [], installed: inst }
     } catch {
       return { auto: true, history: [] }
     }
@@ -82,6 +85,19 @@ export class Updater {
 
   getState(): UpdateState {
     return this.state
+  }
+
+  /**
+   * Spustila sa staršia verzia, hoci je nainštalovaná novšia (napr. ikona pripnutá na paneli úloh ešte vedie
+   * na starý priečinok)? Vráti cestu k novšej verzii – tá sa spustí namiesto tejto.
+   */
+  newerInstalled(): string | null {
+    const inst = this.prefs.installed
+    if (!this.state.canInstall || !inst) return null
+    if (compareVersions(inst.version, app.getVersion()) <= 0) return null
+    if (inst.exe.toLowerCase() === process.execPath.toLowerCase() || !existsSync(inst.exe) || !looksLikeInstall(dirname(inst.exe))) return null
+    log.info('spustená staršia verzia – prepínam na novšiu', { current: app.getVersion(), newer: inst.version })
+    return inst.exe
   }
 
   /** Po štarte: zapísať, odkiaľ beží, upratať staré verzie a naplánovať kontrolu. */
@@ -168,7 +184,11 @@ export class Updater {
       this.set({ phase: 'downloading', progress: 0, error: null })
       await download(this.fetcher(), info, zip, { signal: this.controller.signal, onProgress: (d, t) => this.progress(d / t) })
       this.set({ phase: 'installing', progress: 0 })
-      this.readyExe = await installBeside(zip, process.execPath, info.version, (d, t) => this.progress(d / t))
+      // Ak sa vedľa bežiacej verzie nedá zapisovať (koreň disku, Program Files), použije sa %LOCALAPPDATA%\Programs.
+      const local = process.env['LOCALAPPDATA']
+      this.readyExe = await installBeside(zip, process.execPath, info.version, (d, t) => this.progress(d / t), local ? { fallbackParent: join(local, 'Programs') } : {})
+      this.prefs.installed = { version: info.version, exe: this.readyExe }
+      this.savePrefs()
       this.set({ phase: 'ready', progress: 1 })
     } catch (e) {
       log.warn('aktualizácia zlyhala', { version: info.version, error: e })

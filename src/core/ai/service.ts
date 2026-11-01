@@ -166,7 +166,8 @@ export class AiService {
     if (!st.enabled) throw aiError('AI_DISABLED', 'AI je vypnutá')
     const requestId = typeof input?.requestId === 'string' ? input.requestId.slice(0, 100) : ''
     if (!requestId || this.running.has(requestId) || this.running.size >= MAX_RUNNING) throw aiError('AI_BUSY', 'AI práve pracuje')
-    if (!['summary', 'reply', 'rewrite', 'translate'].includes(input.task)) throw aiError('AI_BAD_TASK', 'Neznáma úloha')
+    if (!['summary', 'reply', 'rewrite', 'translate', 'write'].includes(input.task)) throw aiError('AI_BAD_TASK', 'Neznáma úloha')
+    if (input.task === 'write' && !String(input.instruction ?? '').trim()) throw aiError('AI_NO_INSTRUCTION', 'Chýba pokyn')
     if (input.task === 'translate' && !TRANSLATE_LANGS.includes(String(input.targetLang))) throw aiError('AI_BAD_TASK', 'Neznámy jazyk')
     if (input.task === 'rewrite') {
       if (!STYLES.includes(input.style as (typeof STYLES)[number])) throw aiError('AI_BAD_TASK', 'Neznáma úprava')
@@ -193,7 +194,7 @@ export class AiService {
         seg = segmentHtml(v.html ?? '')
         prompt = buildTranslatePrompt(input.targetLang, v.subject, seg.segments.map((x) => x.text))
       } else {
-        const email = input.task === 'rewrite' ? null : await this.email(input.messageId)
+        const email = input.task === 'rewrite' || input.task === 'write' ? null : await this.email(input.messageId)
         prompt = buildPrompt(input, email)
       }
       truncated = prompt.truncated

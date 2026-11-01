@@ -125,6 +125,22 @@ export function buildPrompt(input: AiRunInput, email: EmailForAi | null): BuiltP
       truncated: e.truncated || draft.truncated
     }
   }
+  if (input.task === 'write') {
+    // Nový text podľa pokynu („napíš vianočný pozdrav kolegom“). Rozpísaný text je len kontext.
+    const ctx = clip(input.text ?? '', 10_000)
+    const ctxPart = ctx.text.trim() ? `\n\nThe user has already written this (context only – do not repeat it):\n<draft>\n${neutralize(ctx.text)}\n</draft>` : ''
+    return {
+      system: `${BASE_RULES}\nYou write e-mails on behalf of the user.`,
+      user:
+        'Write the body of an e-mail according to the user\'s instruction below. Use the language of the instruction unless it asks for another language. ' +
+        'Include a fitting greeting and closing phrase, but no signature, no name and no subject line. ' +
+        'Do not invent facts, dates, prices or commitments; where the user must fill something in, write it in square brackets.' +
+        instructionBlock(input.instruction) +
+        ctxPart,
+      maxTokens: 2048,
+      truncated: ctx.truncated
+    }
+  }
   // Úprava textu (koncept používateľa alebo jeho časť).
   const src = clip(input.text ?? '')
   const style = input.style ?? 'fix'

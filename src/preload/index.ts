@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
-import type { DoarApi, EventChannel, PortMessage, RequestChannel, UpdateState } from '../shared/ipc'
+import type { DoarApi, EventChannel, PickedFile, PortMessage, RequestChannel, UpdateState } from '../shared/ipc'
 
 /**
  * Jediný most medzi rozhraním a zvyškom aplikácie.
@@ -124,6 +124,12 @@ const api: DoarApi = {
       })
       .filter(Boolean)
     return paths.length ? ipcRenderer.invoke('dropped-files', paths) : Promise.resolve([])
+  },
+  readImageFile(path) {
+    return ipcRenderer.invoke('read-image-file', path) as Promise<Uint8Array | null>
+  },
+  saveResizedImage(name, bytes) {
+    return ipcRenderer.invoke('save-resized-image', name, bytes) as Promise<PickedFile | null>
   },
   chooseSavePath(defaultName) {
     return ipcRenderer.invoke('choose-save-path', defaultName) as Promise<string | null>

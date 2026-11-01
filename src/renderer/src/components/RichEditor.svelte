@@ -7,7 +7,7 @@
   import { EDITOR_FONTS } from '../../../shared/ipc'
   import type { Node as PmNode } from '@tiptap/pm/model'
   import { addColumnAfter, addRowAfter, deleteColumn, deleteRow, deleteTable, goToNextCell, isInTable, tableEditing } from '@tiptap/pm/tables'
-  import type { Command } from '@tiptap/pm/state'
+  import { NodeSelection, type Command } from '@tiptap/pm/state'
 
   /**
    * Editor formátovaného textu (TipTap), lišta ako v Outlooku: písmo, veľkosť, tučné, kurzíva, podčiarknutie,
@@ -19,8 +19,9 @@
     disabled = false,
     onchange,
     label,
-    pageBackground = false
-  }: { html: string; disabled?: boolean; onchange: (html: string) => void; label: string; pageBackground?: boolean } = $props()
+    pageBackground = false,
+    images = false
+  }: { html: string; disabled?: boolean; onchange: (html: string) => void; label: string; pageBackground?: boolean; images?: boolean } = $props()
 
   /**
    * Smer textu podľa obsahu každého odseku a nadpisu (hebrejčina sprava doľava, slovenčina zľava).
@@ -78,6 +79,96 @@
     },
     renderHTML({ HTMLAttributes }) {
       return ['img', HTMLAttributes]
+    },
+    /**
+     * Zmena veľkosti ako v Outlooku: označený obrázok má v rohoch úchyty (ťahaním sa mení šírka, pomer strán
+     * zostane) a lištu s rýchlymi veľkosťami. Do správy ide len atribút width (výška sa dopočíta).
+     */
+    addNodeView() {
+      return ({ node, getPos, editor: ed }) => {
+        let current = node
+        const wrap = document.createElement('span')
+        wrap.className = 'img-wrap'
+        const img = document.createElement('img')
+        const apply = (n: typeof node): void => {
+          img.src = String(n.attrs['src'] ?? '')
+          if (n.attrs['alt']) img.alt = String(n.attrs['alt'])
+          if (n.attrs['width']) img.setAttribute('width', String(n.attrs['width']))
+          else img.removeAttribute('width')
+          if (n.attrs['height'] && !n.attrs['width']) img.setAttribute('height', String(n.attrs['height']))
+          else img.removeAttribute('height')
+          img.style.width = ''
+        }
+        apply(node)
+        wrap.append(img)
+        const setWidth = (w: number | null): void => {
+          const pos = typeof getPos === 'function' ? getPos() : null
+          if (pos == null) return
+          // Obrázok ostane označený (úchyty a lišta zostanú, dá sa pokračovať).
+          const tr = ed.view.state.tr.setNodeMarkup(pos, undefined, { ...current.attrs, width: w ? Math.round(w) : null, height: null })
+          ed.view.dispatch(tr.setSelection(NodeSelection.create(tr.doc, pos)))
+        }
+        const natural = (): number => img.naturalWidth || img.width || 800
+        for (const corner of ['nw', 'ne', 'sw', 'se']) {
+          const h = document.createElement('span')
+          h.className = `img-handle ${corner}`
+          h.addEventListener('pointerdown', (e) => {
+            e.preventDefault()
+            e.stopPropagation()
+            const startX = e.clientX
+            const startW = img.getBoundingClientRect().width
+            const dir = corner.endsWith('e') ? 1 : -1
+            let w = startW
+            h.setPointerCapture(e.pointerId)
+            const move = (ev: PointerEvent): void => {
+              w = Math.max(32, Math.min(natural(), startW + dir * (ev.clientX - startX)))
+              img.style.width = `${w}px`
+            }
+            const up = (): void => {
+              h.removeEventListener('pointermove', move)
+              h.removeEventListener('pointerup', up)
+              h.removeEventListener('pointercancel', up)
+              if (Math.abs(w - startW) >= 1) setWidth(w)
+              else img.style.width = ''
+            }
+            h.addEventListener('pointermove', move)
+            h.addEventListener('pointerup', up)
+            h.addEventListener('pointercancel', up)
+          })
+          wrap.append(h)
+        }
+        const bar = document.createElement('span')
+        bar.className = 'img-sizes'
+        const sizes: [string, () => number | null][] = [
+          [t('editor.imageSmall'), () => Math.min(240, natural())],
+          [t('editor.imageMedium'), () => Math.min(480, natural())],
+          [t('editor.imageLarge'), () => Math.min(720, natural())],
+          [t('editor.imageOriginal'), () => null]
+        ]
+        for (const [label, width] of sizes) {
+          const b = document.createElement('button')
+          b.type = 'button'
+          b.textContent = label
+          b.addEventListener('mousedown', (e) => e.preventDefault())
+          b.addEventListener('click', () => setWidth(width()))
+          bar.append(b)
+        }
+        wrap.append(bar)
+        return {
+          dom: wrap,
+          update: (n) => {
+            if (n.type !== current.type) return false
+            current = n
+            apply(n)
+            return true
+          },
+          selectNode: () => wrap.classList.add('selected'),
+          deselectNode: () => wrap.classList.remove('selected'),
+          // Úchyty a lišta sú ovládanie, nie obsah – udalosti z nich editor nespracúva.
+          stopEvent: (e) => !!(e.target as HTMLElement | null)?.closest?.('.img-handle, .img-sizes'),
+          ignoreMutation: () => true
+        }
+      }
     }
   })
 
@@ -258,7 +349,26 @@
       content: unwrap(html),
       editable: !disabled,
 
-      editorProps: { attributes: { 'aria-label': label, 'aria-multiline': 'true', role: 'textbox', spellcheck: 'true', class: 'doar-editor' } },
+      editorProps: {
+        attributes: { 'aria-label': label, 'aria-multiline': 'true', role: 'textbox', spellcheck: 'true', class: 'doar-editor' },
+        // Obrázok zo schránky (Ctrl+V) alebo pustený myšou do textu → vložiť do správy (ako v Outlooku).
+        handlePaste: (_view, event) => {
+          const files = imageFiles(event.clipboardData)
+          if (!images || !files.length) return false
+          event.preventDefault()
+          void insertImageFiles(files)
+          return true
+        },
+        handleDrop: (view, event) => {
+          const files = imageFiles(event.dataTransfer)
+          if (!images || !files.length) return false
+          event.preventDefault()
+          const at = view.posAtCoords({ left: event.clientX, top: event.clientY })
+          if (at) editor?.commands.setTextSelection(at.pos)
+          void insertImageFiles(files)
+          return true
+        }
+      },
       onUpdate: ({ editor: e }) => onchange(wrap(e.getHTML())),
       onTransaction: () => tickCount++
     })
@@ -325,6 +435,66 @@
     const content = src.selection && !result.includes('\n') ? { type: 'text', text: result } : textToHtml(result)
     return editor.chain().focus().insertContentAt({ from: src.from, to: src.to }, content).run()
   }
+
+  /** Obrázky, ktoré prehliadač vie zobraziť a príjemca otvoriť. */
+  const IMAGE_TYPES = /^image\/(png|jpeg|gif|webp|bmp)$/
+  function imageFiles(dt: DataTransfer | null): File[] {
+    return [...(dt?.files ?? [])].filter((f) => IMAGE_TYPES.test(f.type))
+  }
+  /** Najdlhšia strana vloženej fotky (px) a najväčší obrázok v HTML (znaky data: URI – jadro povolí 3 000 000). */
+  const MAX_SIDE = 1600
+  const MAX_DATA = 2_900_000
+  /** Zobrazená šírka v správe (príjemca má fotku v plnom rozlíšení, ale nezaberie celú obrazovku). */
+  const SHOW_WIDTH = 800
+  function readDataUrl(file: Blob): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const r = new FileReader()
+      r.onload = () => resolve(String(r.result))
+      r.onerror = () => reject(r.error)
+      r.readAsDataURL(file)
+    })
+  }
+  /**
+   * Fotka → data: URI vhodné do e-mailu: zmenšená na najviac 1600 px (fotky z mobilu majú aj 4000 px a 5 MB),
+   * otočená podľa EXIF, JPEG. Malý obrázok (snímka obrazovky, logo) ostane bez zmeny.
+   */
+  async function imageForMail(file: File): Promise<{ src: string; width: number } | null> {
+    let bmp: ImageBitmap
+    try {
+      bmp = await createImageBitmap(file)
+    } catch {
+      return null
+    }
+    try {
+      const scale = Math.min(1, MAX_SIDE / Math.max(bmp.width, bmp.height))
+      const w = Math.max(1, Math.round(bmp.width * scale))
+      const h = Math.max(1, Math.round(bmp.height * scale))
+      const width = Math.min(w, SHOW_WIDTH)
+      if (scale === 1 && file.size <= 400_000 && file.type !== 'image/bmp') return { src: await readDataUrl(file), width }
+      const canvas = document.createElement('canvas')
+      canvas.width = w
+      canvas.height = h
+      const ctx = canvas.getContext('2d')
+      if (!ctx) return null
+      ctx.fillStyle = '#ffffff' // JPEG nemá priehľadnosť
+      ctx.fillRect(0, 0, w, h)
+      ctx.drawImage(bmp, 0, 0, w, h)
+      for (const q of [0.85, 0.72, 0.6, 0.45]) {
+        const src = canvas.toDataURL('image/jpeg', q)
+        if (src.length <= MAX_DATA) return { src, width }
+      }
+      return null
+    } finally {
+      bmp.close()
+    }
+  }
+  async function insertImageFiles(files: File[]): Promise<void> {
+    for (const f of files) {
+      const img = await imageForMail(f)
+      if (img) insertImage(img.src, img.width)
+    }
+  }
+  let imageInput: HTMLInputElement | undefined = $state()
 
   /** Vloží obrázok (data: URI) na miesto kurzora – logo v podpise. Široký obrázok sa zmenší na `width`. */
   export function insertImage(src: string, width?: number): void {
@@ -644,6 +814,26 @@
     <button type="button" class:on={active('heading', { level: 2 })} aria-pressed={active('heading', { level: 2 })} title={t('editor.heading')} aria-label={t('editor.heading')} {disabled} onclick={run((c) => c.toggleHeading({ level: 2 }))}>H</button>
     <button type="button" class:on={active('blockquote')} aria-pressed={active('blockquote')} title={t('editor.quote')} aria-label={t('editor.quote')} {disabled} onclick={run((c) => c.toggleBlockquote())}>❝</button>
     <button type="button" class:on={active('link')} aria-pressed={active('link')} title={`${t('editor.link')} (Ctrl+K)`} aria-label={t('editor.link')} {disabled} onclick={openLink}>🔗</button>
+    {#if images}
+      <button type="button" title={t('editor.image')} aria-label={t('editor.image')} {disabled} onclick={() => imageInput?.click()}>
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1.5 2.5h13v11h-13zM1.5 11l4-4 3.5 3.5 2-2 3.5 3.5" /><circle cx="11" cy="5.5" r="1.2" /></svg>
+      </button>
+      <input
+        class="visually-hidden"
+        type="file"
+        accept="image/png,image/jpeg,image/gif,image/webp,image/bmp"
+        multiple
+        tabindex="-1"
+        aria-label={t('editor.image')}
+        bind:this={imageInput}
+        onchange={(e) => {
+          const files = [...(e.currentTarget.files ?? [])].filter((f) => IMAGE_TYPES.test(f.type))
+          e.currentTarget.value = ''
+          editor?.commands.focus()
+          void insertImageFiles(files)
+        }}
+      />
+    {/if}
     <span class="dd">
       <button type="button" class:on={inTable()} title={t('editor.table')} aria-label={t('editor.table')} aria-haspopup="true" aria-expanded={tableOpen} {disabled} onclick={() => ((tableOpen = !tableOpen), (colorOpen = null), (gridHover = [0, 0]))}>
         <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1.5 2.5h13v11h-13zM1.5 6.2h13M1.5 9.8h13M5.8 2.5v11M10.2 2.5v11" /></svg>
@@ -1015,6 +1205,80 @@
   }
   .area :global(.doar-editor li p) {
     margin: 0;
+  }
+  .area :global(.doar-editor img) {
+    max-width: 100%;
+    height: auto;
+  }
+  .area :global(.img-wrap) {
+    position: relative;
+    display: inline-block;
+    max-width: 100%;
+    line-height: 0;
+  }
+  .area :global(.img-wrap.selected img) {
+    outline: 2px solid var(--accent);
+  }
+  .area :global(.img-handle) {
+    display: none;
+    position: absolute;
+    width: 10px;
+    height: 10px;
+    border: 1px solid #fff;
+    background: var(--accent);
+    z-index: 2;
+  }
+  .area :global(.img-wrap.selected .img-handle) {
+    display: block;
+  }
+  .area :global(.img-handle.nw) {
+    top: -5px;
+    left: -5px;
+    cursor: nwse-resize;
+  }
+  .area :global(.img-handle.ne) {
+    top: -5px;
+    right: -5px;
+    cursor: nesw-resize;
+  }
+  .area :global(.img-handle.sw) {
+    bottom: -5px;
+    left: -5px;
+    cursor: nesw-resize;
+  }
+  .area :global(.img-handle.se) {
+    bottom: -5px;
+    right: -5px;
+    cursor: nwse-resize;
+  }
+  .area :global(.img-sizes) {
+    display: none;
+    position: absolute;
+    top: 6px;
+    left: 6px;
+    gap: 2px;
+    padding: 2px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--surface);
+    line-height: 1.2;
+    z-index: 2;
+    box-shadow: 0 2px 8px rgb(0 0 0 / 20%);
+  }
+  .area :global(.img-wrap.selected .img-sizes) {
+    display: inline-flex;
+  }
+  .area :global(.img-sizes button) {
+    padding: 2px 6px;
+    border: 0;
+    border-radius: 2px;
+    background: none;
+    color: var(--text);
+    font: 12px var(--font-ui);
+    cursor: pointer;
+  }
+  .area :global(.img-sizes button:hover) {
+    background: var(--accent-soft);
   }
   .area :global(.doar-editor h2) {
     font-size: 1.25rem;
