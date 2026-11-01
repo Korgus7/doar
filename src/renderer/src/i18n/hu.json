@@ -682,6 +682,7 @@
   "update.available": "Elérhető a Doar {version}.",
   "update.whatsNew": "Újdonságok",
   "update.install": "Letöltés ({size})",
+  "update.openPage": "Letöltés a weboldalról",
   "update.later": "Később",
   "update.downloading": "A Doar {version} letöltése… {pct} %",
   "update.installing": "A Doar {version} előkészítése… {pct} %",

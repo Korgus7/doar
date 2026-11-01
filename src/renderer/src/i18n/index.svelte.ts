@@ -59,8 +59,14 @@ export function setLocale(locale: Locale | 'auto'): void {
   window.doar?.setUiLocale(i18n.locale)
 }
 
+/** Mac: klávesové skratky sa zobrazujú ako ⌘ (Cmd), ⇧ (Shift), ⌥ (Alt) – obsluha skratiek už berie Cmd aj Ctrl. */
+export const IS_MAC = typeof navigator !== 'undefined' && /Mac/i.test(navigator.platform || navigator.userAgent)
+export function kbd(s: string): string {
+  return IS_MAC ? s.replace(/Ctrl\+Shift\+/g, '⇧⌘').replace(/Ctrl\+/g, '⌘').replace(/Shift\+/g, '⇧').replace(/Alt\+/g, '⌥') : s
+}
+
 export function t(key: MessageKey, params?: Record<string, string | number>): string {
-  const msg = LOCALES[i18n.locale][key] ?? LOCALES.sk[key] ?? key
+  const msg = kbd(LOCALES[i18n.locale][key] ?? LOCALES.sk[key] ?? key)
   if (!params) return msg
   return msg.replace(/\{(\w+)\}/g, (_, k: string) => String(params[k] ?? `{${k}}`))
 }

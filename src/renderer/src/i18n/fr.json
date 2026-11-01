@@ -682,6 +682,7 @@
   "update.available": "Doar {version} est disponible.",
   "update.whatsNew": "Nouveautés",
   "update.install": "Télécharger ({size})",
+  "update.openPage": "Télécharger depuis le site",
   "update.later": "Plus tard",
   "update.downloading": "Téléchargement de Doar {version}… {pct} %",
   "update.installing": "Préparation de Doar {version}… {pct} %",

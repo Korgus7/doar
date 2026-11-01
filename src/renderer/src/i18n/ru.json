@@ -682,6 +682,7 @@
   "update.available": "Доступна версия Doar {version}.",
   "update.whatsNew": "Что нового",
   "update.install": "Скачать ({size})",
+  "update.openPage": "Скачать с сайта",
   "update.later": "Позже",
   "update.downloading": "Загрузка Doar {version}… {pct} %",
   "update.installing": "Подготовка Doar {version}… {pct} %",

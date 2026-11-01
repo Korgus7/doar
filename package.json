@@ -27,7 +27,8 @@
     "testserver": "node scripts/testserver.mjs",
     "rebuild:electron": "echo nič na zostavenie",
     "dist": "electron-vite build && electron-builder --win --publish never && node scripts/release-manifest.mjs",
-    "dist:store": "electron-vite build && electron-builder --win appx --publish never"
+    "dist:store": "electron-vite build && electron-builder --win appx --publish never",
+    "dist:mac": "electron-vite build && electron-builder --mac --publish never"
   },
   "dependencies": {
     "imapflow": "^2.5.9",

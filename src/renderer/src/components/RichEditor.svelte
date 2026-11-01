@@ -2,7 +2,7 @@
   import { onMount, onDestroy, tick } from 'svelte'
   import { Editor, Extension, Mark, Node, getHTMLFromFragment } from '@tiptap/core'
   import StarterKit from '@tiptap/starter-kit'
-  import { t, type MessageKey } from '../i18n/index.svelte'
+  import { t, type MessageKey, kbd } from '../i18n/index.svelte'
   import { textToHtml } from '../lib/compose-html'
   import { EDITOR_FONTS } from '../../../shared/ipc'
   import type { Node as PmNode } from '@tiptap/pm/model'
@@ -774,12 +774,12 @@
       {#if currentSize() && !SIZES.some((z) => `${z}pt` === currentSize())}<option value={currentSize()}>{currentSize()}</option>{/if}
       {#each SIZES as z (z)}<option value={`${z}pt`}>{String(z).replace('.', ',')}</option>{/each}
     </select>
-    <button type="button" title={`${t('editor.grow')} (Ctrl+])`} aria-label={t('editor.grow')} {disabled} onclick={() => stepSize(1)}><span class="grow">A<sup>▲</sup></span></button>
-    <button type="button" title={`${t('editor.shrink')} (Ctrl+[)`} aria-label={t('editor.shrink')} {disabled} onclick={() => stepSize(-1)}><span class="grow small">A<sup>▼</sup></span></button>
+    <button type="button" title={kbd(`${t('editor.grow')} (Ctrl+])`)} aria-label={t('editor.grow')} {disabled} onclick={() => stepSize(1)}><span class="grow">A<sup>▲</sup></span></button>
+    <button type="button" title={kbd(`${t('editor.shrink')} (Ctrl+[)`)} aria-label={t('editor.shrink')} {disabled} onclick={() => stepSize(-1)}><span class="grow small">A<sup>▼</sup></span></button>
     <span class="sep" aria-hidden="true"></span>
-    <button type="button" class:on={active('bold')} aria-pressed={active('bold')} title={`${t('editor.bold')} (Ctrl+B)`} aria-label={t('editor.bold')} {disabled} onclick={run((c) => c.toggleBold())}><b>B</b></button>
-    <button type="button" class:on={active('italic')} aria-pressed={active('italic')} title={`${t('editor.italic')} (Ctrl+I)`} aria-label={t('editor.italic')} {disabled} onclick={run((c) => c.toggleItalic())}><i>I</i></button>
-    <button type="button" class:on={active('underline')} aria-pressed={active('underline')} title={`${t('editor.underline')} (Ctrl+U)`} aria-label={t('editor.underline')} {disabled} onclick={run((c) => c.toggleUnderline())}><u>U</u></button>
+    <button type="button" class:on={active('bold')} aria-pressed={active('bold')} title={kbd(`${t('editor.bold')} (Ctrl+B)`)} aria-label={t('editor.bold')} {disabled} onclick={run((c) => c.toggleBold())}><b>B</b></button>
+    <button type="button" class:on={active('italic')} aria-pressed={active('italic')} title={kbd(`${t('editor.italic')} (Ctrl+I)`)} aria-label={t('editor.italic')} {disabled} onclick={run((c) => c.toggleItalic())}><i>I</i></button>
+    <button type="button" class:on={active('underline')} aria-pressed={active('underline')} title={kbd(`${t('editor.underline')} (Ctrl+U)`)} aria-label={t('editor.underline')} {disabled} onclick={run((c) => c.toggleUnderline())}><u>U</u></button>
     <button type="button" class:on={active('strike')} aria-pressed={active('strike')} title={t('editor.strike')} aria-label={t('editor.strike')} {disabled} onclick={run((c) => c.toggleStrike())}><s>S</s></button>
     {#each [{ kind: 'textBackground', label: t('editor.background') }, { kind: 'textColor', label: t('editor.color') }] as p (p.kind)}
       {@const kind = p.kind as ColorKind}
@@ -813,7 +813,7 @@
     <span class="sep" aria-hidden="true"></span>
     <button type="button" class:on={active('heading', { level: 2 })} aria-pressed={active('heading', { level: 2 })} title={t('editor.heading')} aria-label={t('editor.heading')} {disabled} onclick={run((c) => c.toggleHeading({ level: 2 }))}>H</button>
     <button type="button" class:on={active('blockquote')} aria-pressed={active('blockquote')} title={t('editor.quote')} aria-label={t('editor.quote')} {disabled} onclick={run((c) => c.toggleBlockquote())}>❝</button>
-    <button type="button" class:on={active('link')} aria-pressed={active('link')} title={`${t('editor.link')} (Ctrl+K)`} aria-label={t('editor.link')} {disabled} onclick={openLink}>🔗</button>
+    <button type="button" class:on={active('link')} aria-pressed={active('link')} title={kbd(`${t('editor.link')} (Ctrl+K)`)} aria-label={t('editor.link')} {disabled} onclick={openLink}>🔗</button>
     {#if images}
       <button type="button" title={t('editor.image')} aria-label={t('editor.image')} {disabled} onclick={() => imageInput?.click()}>
         <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1.5 2.5h13v11h-13zM1.5 11l4-4 3.5 3.5 2-2 3.5 3.5" /><circle cx="11" cy="5.5" r="1.2" /></svg>

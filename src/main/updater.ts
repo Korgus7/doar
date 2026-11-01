@@ -56,6 +56,7 @@ export class Updater {
       auto: this.prefs.auto,
       // Verziu z Microsoft Store aktualizuje Store – Doar ju nesmie prepísať.
       canInstall: app.isPackaged && process.platform === 'win32' && !process.windowsStore,
+      pageOnly: app.isPackaged && process.platform === 'darwin',
       lastCheck: null
     }
   }

@@ -393,7 +393,9 @@ const DANGEROUS_EXT = new Set(
   (
     'exe com scr pif bat cmd ps1 ps1xml ps2 psm1 psd1 vbs vbe js jse wsf wsh wsc hta msi msp mst cpl msc jar lnk url reg inf scf ' +
     'application appref-ms gadget vb sct shb shs chm hlp ade adp mde mda accde iso img vhd vhdx appx appxbundle msix msixbundle ' +
-    'xll xlam ppam docm dotm xlsm xltm pptm potm app command sh run bin desktop'
+    'xll xlam ppam docm dotm xlsm xltm pptm potm app command sh run bin desktop ' +
+    // macOS: inštalačné balíky, skripty a doplnky systému
+    'pkg mpkg dmg scpt scptd applescript workflow action terminal tool prefpane kext osax'
   ).split(' ')
 )
 /** Podpriečinok dátového priečinka pre dočasné kópie otvorených príloh. */
@@ -1083,6 +1085,8 @@ export interface UpdateState {
   auto: boolean
   /** Inštalovať sa dá len v zabalenej verzii na Windowse (nie pri vývoji). */
   canInstall: boolean
+  /** Mac: novú verziu si používateľ stiahne zo stránky vydania (bez podpisu Apple sa sama nainštalovať nedá). */
+  pageOnly: boolean
   lastCheck: string | null
 }
 

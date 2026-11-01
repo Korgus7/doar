@@ -1,7 +1,7 @@
 <script lang="ts">
   import Icon from './Icon.svelte'
   import type { MessageView, ThreadMessage } from '../../../shared/ipc'
-  import { t, type MessageKey } from '../i18n/index.svelte'
+  import { t, type MessageKey, kbd } from '../i18n/index.svelte'
   import { addressLine, fileSize, fullDate, listDate } from '../lib/format'
   import { mail, patchMessage, setFlags, itemsById } from '../lib/mail.svelte'
   import { saveAllAttachments, attachmentMenu, openMenu, previewAttachment } from '../lib/actions.svelte'
@@ -258,9 +258,9 @@ img{max-width:100%;height:auto}.doar-inline-img{margin:12px 0}table{max-width:10
             {#if isDraft(view.id)}
               <button class="btn small btn-primary" title="Enter" onclick={() => window.doar.openCompose('draft', view!.id)}>✎ {t('reader.editDraft')}</button>
             {:else}
-              <button class="btn small" title="Ctrl+R" onclick={() => window.doar.openCompose('reply', view!.id)}><Icon name="reply" size={15} />{t('toolbar.reply')}</button>
-              <button class="btn small" title="Ctrl+Shift+R" onclick={() => window.doar.openCompose('replyAll', view!.id)}><Icon name="replyAll" size={15} />{t('toolbar.replyAll')}</button>
-              <button class="btn small" title="Ctrl+F" onclick={() => window.doar.openCompose('forward', view!.id)}><Icon name="forward" size={15} />{t('toolbar.forward')}</button>
+              <button class="btn small" title={kbd('Ctrl+R')} onclick={() => window.doar.openCompose('reply', view!.id)}><Icon name="reply" size={15} />{t('toolbar.reply')}</button>
+              <button class="btn small" title={kbd('Ctrl+Shift+R')} onclick={() => window.doar.openCompose('replyAll', view!.id)}><Icon name="replyAll" size={15} />{t('toolbar.replyAll')}</button>
+              <button class="btn small" title={kbd('Ctrl+F')} onclick={() => window.doar.openCompose('forward', view!.id)}><Icon name="forward" size={15} />{t('toolbar.forward')}</button>
               {#if aiReady(ai.config)}
                 <button class="btn small" class:on={aiUi.summaryFor === view.id} title={t('ai.summary.buttonTitle')} onclick={() => (aiUi.summaryFor = aiUi.summaryFor === view!.id ? null : view!.id)}><Icon name="ai" size={15} />{t('ai.summary.button')}</button>
               {/if}
@@ -268,7 +268,7 @@ img{max-width:100%;height:auto}.doar-inline-img{margin:12px 0}table{max-width:10
             {/if}
             {#if isArchiveId(view.id)}
               <span class="readonly" title={isEmlId(view.id) ? t('reader.emlHint') : t('archive.readOnlyHint')}><Icon name="archive" size={14} /> {isEmlId(view.id) ? t('reader.emlFile') : t('archive.readOnly')}</span>
-              <button class="icon" title={`${t('reader.print')} (Ctrl+P)`} aria-label={t('reader.print')} onclick={() => window.doar.printHtml(printDocument(view!), view!.subject)}><Icon name="print" size={17} /></button>
+              <button class="icon" title={kbd(`${t('reader.print')} (Ctrl+P)`)} aria-label={t('reader.print')} onclick={() => window.doar.printHtml(printDocument(view!), view!.subject)}><Icon name="print" size={17} /></button>
               <button class="icon" title={t('reader.more')} aria-label={t('reader.more')} aria-haspopup="menu" onclick={(e) => moreMenu(e, view!)}><Icon name="more" size={17} /></button>
             {:else if listItem}
               <button class="icon" title={listItem.flagged ? t('reader.unflag') : t('reader.flag')} aria-label={listItem.flagged ? t('reader.unflag') : t('reader.flag')} class:on={listItem.flagged} onclick={toggleFlag}><Icon name="star" size={17} filled={listItem.flagged} /></button>
@@ -276,7 +276,7 @@ img{max-width:100%;height:auto}.doar-inline-img{margin:12px 0}table{max-width:10
               {#if !allInArchive([listItem.id])}
                 <button class="icon" title={`${t('actions.archive')} (E)`} aria-label={t('actions.archive')} onclick={() => archive([listItem!.id])}><Icon name="archive" size={17} /></button>
               {/if}
-              <button class="icon" title={`${t('reader.print')} (Ctrl+P)`} aria-label={t('reader.print')} onclick={() => window.doar.printHtml(printDocument(view!), view!.subject)}><Icon name="print" size={17} /></button>
+              <button class="icon" title={kbd(`${t('reader.print')} (Ctrl+P)`)} aria-label={t('reader.print')} onclick={() => window.doar.printHtml(printDocument(view!), view!.subject)}><Icon name="print" size={17} /></button>
               <button
                 class="icon"
                 title={`${allInTrash([listItem.id]) ? t('actions.deleteForever') : t('actions.delete')} (Del)`}

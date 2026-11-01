@@ -45,9 +45,14 @@
         {#if s.notes || s.pageUrl}
           <button class="btn small" onclick={() => (s.notes ? (upd.showNotes = !upd.showNotes) : window.doar.updateOpenPage())}>{t('update.whatsNew')}</button>
         {/if}
-        <button class="btn small btn-primary" disabled={!s.canInstall} title={s.canInstall ? '' : t('errors.UPDATE_DEV')} onclick={() => window.doar.updateDownload()}>
-          {t('update.install', { size: fileSize(s.sizeBytes) })}
-        </button>
+        {#if s.pageOnly}
+          <!-- Mac: stiahnuť zo stránky vydania (.dmg) -->
+          <button class="btn small btn-primary" onclick={() => window.doar.updateOpenPage()}>{t('update.openPage')}</button>
+        {:else}
+          <button class="btn small btn-primary" disabled={!s.canInstall} title={s.canInstall ? '' : t('errors.UPDATE_DEV')} onclick={() => window.doar.updateDownload()}>
+            {t('update.install', { size: fileSize(s.sizeBytes) })}
+          </button>
+        {/if}
         <button class="btn small" onclick={() => ((upd.dismissed = s.version), (upd.showNotes = false))}>{t('update.later')}</button>
       {:else if s.phase === 'downloading'}
         <button class="btn small" onclick={() => window.doar.updateCancel()}>{t('update.cancel')}</button>

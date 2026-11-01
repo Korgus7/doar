@@ -682,6 +682,7 @@
   "update.available": "Je k dispozícii Doar {version}.",
   "update.whatsNew": "Čo je nové",
   "update.install": "Stiahnuť ({size})",
+  "update.openPage": "Stiahnuť zo stránky",
   "update.later": "Neskôr",
   "update.downloading": "Sťahujem Doar {version}… {pct} %",
   "update.installing": "Pripravujem Doar {version}… {pct} %",

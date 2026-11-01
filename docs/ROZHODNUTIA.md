@@ -402,6 +402,14 @@ Používateľ si vybral sadu funkcií naraz („nebudeme robiť verziu zakaždý
 - Ak sa spustí staršia verzia, hoci je nainštalovaná novšia (zapísaná v `update.json` po aktualizácii), Doar ešte pred odkazmi a oknami spustí novšiu a sám skončí.
 - Test „poradie kont – ťahanie“: ťahanie sa opakuje len kým sa poradie nezmenilo (predtým ho opakovaný pokus vracal späť – nespoľahlivý test).
 
+## 2026-11-01 – Mac (skúšobne)
+
+- Zostavenie na GitHube (`.github/workflows/mac.yml`, Mac od GitHubu – pre verejný repozitár zadarmo): ručne (Actions → Mac → Run workflow, .dmg v Artifacts) a pri každom vydaní sa .dmg samo priloží k vydaniu. Dve verzie: arm64 (M1 a novšie) a x64 (Intel). Lokálne `npm run dist:mac` (len na Macu).
+- Bez certifikátu Apple (99 USD/rok, notarizácia): podpis ad-hoc (`scripts/adhoc-sign.cjs`), inak Mac s čipom Apple program nespustí. Pri prvom spustení treba Nastavenia → Súkromie a bezpečnosť → „Aj tak otvoriť“.
+- Aktualizácia na Macu: Doar novú verziu len ohlási a tlačidlo „Stiahnuť zo stránky“ otvorí stránku vydania (`pageOnly`); sama sa nainštalovať nedá. Odkazy na ploche a v ponuke Štart sa na Macu nerobia.
+- Skratky sa na Macu zobrazujú ako ⌘ ⇧ ⌥ (`kbd()` v i18n; obsluha skratiek už brala Cmd aj Ctrl). Nebezpečné prílohy doplnené o macOS (.pkg, .dmg, .command, .scpt, .workflow…).
+- Mac verzia zatiaľ nie je overená na skutočnom Macu – testuje ju kamarát.
+
 ## Licencie závislostí (overené 2026-10-21 cez `npm view`)
 
 Všetky sú kompatibilné s MIT.

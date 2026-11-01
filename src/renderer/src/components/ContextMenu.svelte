@@ -1,6 +1,7 @@
 <script lang="ts">
   import { tick } from 'svelte'
   import { ui, type MenuItem } from '../lib/actions.svelte'
+  import { kbd } from '../i18n/index.svelte'
 
   let el: HTMLDivElement | undefined = $state()
   let pos = $state({ x: 0, y: 0 })
@@ -73,7 +74,7 @@
       {:else}
         <button role="menuitem" class:danger={item.danger} disabled={item.disabled} onclick={() => run(item)}>
           <span class="label">{item.label}</span>
-          {#if item.shortcut}<span class="kbd">{item.shortcut}</span>{/if}
+          {#if item.shortcut}<span class="kbd">{kbd(item.shortcut)}</span>{/if}
         </button>
       {/if}
     {/each}

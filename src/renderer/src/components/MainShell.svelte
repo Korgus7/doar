@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte'
-  import { t } from '../i18n/index.svelte'
+  import { t, kbd } from '../i18n/index.svelte'
   import { mail, findFolder, setThreads } from '../lib/mail.svelte'
   import { isArchiveId } from '../../../shared/ipc'
   import FolderPane from './FolderPane.svelte'
@@ -130,7 +130,7 @@
       'sep',
       { label: `${mail.threads ? '✓ ' : ''}${t('menu.threads')}`, run: () => void setThreads(!mail.threads) },
       'sep',
-      { label: t('menu.settings'), shortcut: 'Ctrl+,', run: () => openSettings() },
+      { label: t('menu.settings'), shortcut: kbd('Ctrl+,'), run: () => openSettings() },
       { label: t('menu.checkUpdates'), run: checkUpdates },
       { label: t('menu.about'), run: () => window.doar.showAbout() }
     ], t('toolbar.menu'))
@@ -188,7 +188,7 @@
 
 <div class="shell">
   <div class="toolbar">
-    <button class="btn btn-primary" onclick={() => window.doar.openCompose('new')} title="Ctrl+N"><Icon name="compose" />{t('toolbar.newMessage')}</button>
+    <button class="btn btn-primary" onclick={() => window.doar.openCompose('new')} title={kbd('Ctrl+N')}><Icon name="compose" />{t('toolbar.newMessage')}</button>
     <button class="btn" onclick={() => (ui.contacts = true)}><Icon name="contacts" />{t('toolbar.contacts')}</button>
     <button class="btn" onclick={syncNow} disabled={syncing} title="F5">
       <span class="sync-ico" class:spin={syncing}><Icon name="sync" /></span>
@@ -221,7 +221,7 @@
         </select>
       {/if}
     </div>
-    <button class="btn icon-btn" onclick={() => openSettings()} title={`${t('toolbar.settings')} (Ctrl+,)`} aria-label={t('toolbar.settings')}><Icon name="settings" size={17} /></button>
+    <button class="btn icon-btn" onclick={() => openSettings()} title={kbd(`${t('toolbar.settings')} (Ctrl+,)`)} aria-label={t('toolbar.settings')}><Icon name="settings" size={17} /></button>
     <button class="btn icon-btn" onclick={appMenu} title={t('toolbar.menu')} aria-label={t('toolbar.menu')} aria-haspopup="menu"><Icon name="menu" size={17} /></button>
   </div>
   <UpdateBanner />

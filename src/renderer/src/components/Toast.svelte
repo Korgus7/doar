@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { t } from '../i18n/index.svelte'
+  import { t, kbd } from '../i18n/index.svelte'
   import { ui, undoLast, hideToast } from '../lib/actions.svelte'
 </script>
 
@@ -8,7 +8,7 @@
     <div class="toast" class:error={ui.toast.tone === 'error'}>
       <span class="text">{ui.toast.text}</span>
       {#if ui.toast.undo}
-        <button class="undo" title="Ctrl+Z" onclick={() => void undoLast()}>{t('actions.undo')}</button>
+        <button class="undo" title={kbd('Ctrl+Z')} onclick={() => void undoLast()}>{t('actions.undo')}</button>
       {/if}
       <button class="close" aria-label={t('backup.close')} title={t('backup.close')} onclick={hideToast}>×</button>
     </div>

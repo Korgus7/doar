@@ -42,3 +42,19 @@ appx:
   backgroundColor: transparent
   languages: [sk-SK, cs-CZ, en-US, de-DE, es-ES, fr-FR, he-IL, hu-HU, ru-RU]
   artifactName: Doar-${version}-store.${ext}
+# Mac (npm run dist:mac – len na Macu; na GitHube to robí .github/workflows/mac.yml).
+# Bez certifikátu Apple: identity null a podpis ad-hoc (scripts/adhoc-sign.cjs). Aktualizácia na Macu
+# = odkaz na stránku vydania (sama sa nainštalovať nedá). Nový Mac (arm64) aj starší s Intelom (x64).
+mac:
+  target:
+    - target: dmg
+      arch: [arm64, x64]
+  category: public.app-category.productivity
+  icon: build/icon.png
+  identity: null
+  hardenedRuntime: false
+  gatekeeperAssess: false
+  artifactName: Doar-${version}-mac-${arch}.${ext}
+afterSign: scripts/adhoc-sign.cjs
+dmg:
+  artifactName: Doar-${version}-mac-${arch}.${ext}

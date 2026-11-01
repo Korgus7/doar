@@ -682,6 +682,7 @@
   "update.available": "Doar {version} זמין.",
   "update.whatsNew": "מה חדש",
   "update.install": "הורדה ({size})",
+  "update.openPage": "הורדה מהאתר",
   "update.later": "מאוחר יותר",
   "update.downloading": "מוריד את Doar {version}… {pct} %",
   "update.installing": "מכין את Doar {version}… {pct} %",

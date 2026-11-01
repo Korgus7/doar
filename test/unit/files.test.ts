@@ -29,7 +29,7 @@ describe('názvy súborov príloh', () => {
   })
 
   it('spustiteľné súbory', () => {
-    for (const n of ['setup.exe', 'Faktura.pdf.EXE', 'skript.ps1', 'x.js', 'odkaz.lnk', 'a.bat', 'b.vbs', 'c.msi', 'makro.docm', 'obraz.iso', 'bez-pripony', 'zle.exe. . ']) {
+    for (const n of ['setup.exe', 'Faktura.pdf.EXE', 'skript.ps1', 'x.js', 'odkaz.lnk', 'a.bat', 'b.vbs', 'c.msi', 'makro.docm', 'obraz.iso', 'bez-pripony', 'zle.exe. . ', 'instalator.pkg', 'program.dmg', 'skript.command', 'skript.scpt']) {
       expect(isDangerousFile(n), n).toBe(true)
     }
     for (const n of ['faktura.pdf', 'foto.JPG', 'tabulka.xlsx', 'text.txt', 'archiv.zip', 'dokument.docx']) expect(isDangerousFile(n), n).toBe(false)
