@@ -126,7 +126,20 @@ test('nastavenia: názov, farba, podpis v novej správe, server, upozornenia, od
   await expect.poll(() => app.evaluate(() => (globalThis as { opened?: string }).opened)).toBe('https://github.com/Korgus7/doar')
   const about = await app.evaluate(() => (globalThis as { about?: string }).about)
   expect(about).toContain('https://cami.sk/doar')
-  expect(about).toContain('OK,Webová stránka,GitHub')
+  expect(about).toContain('OK,Webová stránka,GitHub,Podporiť Doar')
+  // Podporiť Doar: okno s QR kódom a PayPal (odkaz do prehliadača).
+  await app.evaluate(({ dialog }) => {
+    dialog.showMessageBox = (async () => ({ response: 3, checkboxChecked: false })) as typeof dialog.showMessageBox
+  })
+  const [sup] = await Promise.all([app.waitForEvent('window'), (async () => {
+    await win.getByRole('button', { name: 'Ponuka' }).click()
+    await win.getByRole('menu', { name: 'Ponuka' }).getByRole('menuitem', { name: /^O aplikácii Doar/ }).click()
+  })()])
+  await expect(sup.getByRole('heading', { name: 'Podporiť Doar' })).toBeVisible()
+  await expect(sup.getByRole('img', { name: /QR kódom/ })).toBeVisible()
+  await sup.getByRole('link', { name: 'Prispieť cez PayPal' }).click({ noWaitAfter: true })
+  await expect.poll(() => app.evaluate(() => (globalThis as { opened?: string }).opened)).toBe('https://paypal.me/korgus')
+  await sup.close()
   await app.evaluate(({ dialog, shell }) => {
     const g = globalThis as { origBox?: typeof dialog.showMessageBox; origOpen?: typeof shell.openExternal }
     dialog.showMessageBox = g.origBox!
