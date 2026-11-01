@@ -8,7 +8,9 @@ import type { Secrets } from '../secrets'
 import type { Address, AiConfig, AiConfigPatch, AiProvider, AiRunInput, AiRunResult, CoreEvents, EventChannel, MessageView } from '../../shared/ipc'
 import { logger } from '../log'
 import { aiError, baseUrlOf, checkBaseUrl, isAiProvider, listModels, LOCAL_DEFAULT_URL, streamChat, type AiEndpoint, type FetchFn } from './providers'
-import { buildPrompt, cleanOutput, TRANSLATE_LANGS, type EmailForAi } from './prompts'
+import { buildPrompt, buildTranslatePrompt, cleanOutput, TRANSLATE_LANGS, type EmailForAi } from './prompts'
+import { parseNumbered, rebuildHtml, segmentHtml } from './translate-html'
+import { sanitizeEmailHtml } from '../mail/sanitize'
 
 const log = logger('ai')
 
@@ -39,7 +41,7 @@ export interface AiDeps {
   sessionSecrets: Secrets
   emit<E extends EventChannel>(ch: E, data: CoreEvents[E]): void
   /** Načítanie správy (rovnaká cesta ako pri zobrazení; aj archív). */
-  getMessage(id: number): Promise<MessageView>
+  getMessage(id: number, opts?: { showRemote?: boolean }): Promise<MessageView>
   fetch?: FetchFn
 }
 
@@ -164,7 +166,8 @@ export class AiService {
     if (!st.enabled) throw aiError('AI_DISABLED', 'AI je vypnutá')
     const requestId = typeof input?.requestId === 'string' ? input.requestId.slice(0, 100) : ''
     if (!requestId || this.running.has(requestId) || this.running.size >= MAX_RUNNING) throw aiError('AI_BUSY', 'AI práve pracuje')
-    if (!['summary', 'reply', 'rewrite'].includes(input.task)) throw aiError('AI_BAD_TASK', 'Neznáma úloha')
+    if (!['summary', 'reply', 'rewrite', 'translate'].includes(input.task)) throw aiError('AI_BAD_TASK', 'Neznáma úloha')
+    if (input.task === 'translate' && !TRANSLATE_LANGS.includes(String(input.targetLang))) throw aiError('AI_BAD_TASK', 'Neznámy jazyk')
     if (input.task === 'rewrite') {
       if (!STYLES.includes(input.style as (typeof STYLES)[number])) throw aiError('AI_BAD_TASK', 'Neznáma úprava')
       if (!String(input.text ?? '').trim()) throw aiError('AI_NO_TEXT', 'Chýba text')
@@ -181,8 +184,18 @@ export class AiService {
       const model = st.models[st.provider]
       if (!model) throw aiError('AI_NO_MODEL', 'Nie je zvolený model')
       ep = await this.endpoint(st.provider, st.baseUrl, model)
-      const email = input.task === 'rewrite' ? null : await this.email(input.messageId)
-      const prompt = buildPrompt(input, email)
+      // Preklad: len text úsekov HTML správy (obrázky, odkazy ani rozloženie AI nevidí).
+      let seg: ReturnType<typeof segmentHtml> | null = null
+      let prompt
+      if (input.task === 'translate') {
+        if (!Number.isInteger(input.messageId) || input.messageId === 0) throw aiError('AI_NO_MESSAGE', 'Chýba správa')
+        const v = await this.deps.getMessage(input.messageId!, { showRemote: input.showRemote === true })
+        seg = segmentHtml(v.html ?? '')
+        prompt = buildTranslatePrompt(input.targetLang, v.subject, seg.segments.map((x) => x.text))
+      } else {
+        const email = input.task === 'rewrite' ? null : await this.email(input.messageId)
+        prompt = buildPrompt(input, email)
+      }
       truncated = prompt.truncated
       const r = await streamChat(ep, prompt, {
         fetch: this.fetch,
@@ -190,7 +203,17 @@ export class AiService {
         onText: (text) => this.deps.emit('ai.chunk', { requestId, text })
       })
       const text = cleanOutput(r.text)
+      // Prázdna odpoveď pre limit: model minul miesto (napr. premýšľaním) skôr, než začal písať.
+      if (!text && (r.stop === 'length' || r.stop === 'max_tokens')) throw aiError('AI_NO_ROOM', 'AI minula limit skôr, než vrátila text')
       if (!text) throw aiError('AI_EMPTY', 'AI nevrátila žiadny text')
+      if (seg) {
+        const map = parseNumbered(text)
+        if (![...map.keys()].some((k) => k > 0) && seg.segments.length) throw aiError('AI_EMPTY', 'AI nevrátila preklad v očakávanom tvare')
+        // Výsledok ešte raz cez rovnaké čistenie ako pri zobrazení správy.
+        const html = sanitizeEmailHtml(rebuildHtml(seg, map), { cid: new Map(), remote: null }).html
+        log.info('AI hotovo', { task: input.task, provider: ep.provider, model, ms: Date.now() - started, segments: seg.segments.length, translated: map.size, truncated })
+        return { text: [...map.values()].join('\n'), html, subject: map.get(0) ?? '', truncated: truncated || r.stop === 'max_tokens' || r.stop === 'length', provider: ep.provider, model }
+      }
       // Do logu nikdy obsah – len čo, kam a ako dlho.
       log.info('AI hotovo', { task: input.task, provider: ep.provider, model, ms: Date.now() - started, outChars: text.length, stop: r.stop, truncated })
       return { text, truncated: truncated || r.stop === 'max_tokens' || r.stop === 'length', provider: ep.provider, model }

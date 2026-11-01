@@ -377,6 +377,19 @@ Používateľ si vybral sadu funkcií naraz („nebudeme robiť verziu zakaždý
 - Nová pošta: IMAP už sledoval doručenú poštu cez IDLE (okamžite). Doplnené: po výpadku spojenia nový pokus o 5 s (predtým 30 s) a hneď kontrola doručenej pošty. Graph nemá IDLE – doručená pošta sa kontroluje každých 20 s (predtým 60 s).
 - Tabuľka v editore (mriežka do 10 × 8, pridať/odstrániť riadok a stĺpec, Tab = ďalšia bunka). Bez novej závislosti – prosemirror-tables je súčasť `@tiptap/pm`. Jadro povolí `table/tbody/tr/td` (colspan/rowspan 2–20), pri odoslaní doplní čiary inline štýlom; v textovej podobe sú bunky oddelené „ | “.
 
+## 2026-11-01 – Preložiť, Odoslať/prijať
+
+- Tlačidlo **Preložiť** v čítačke je vždy (aj bez AI). Preklad robí AI a ukáže sa **priamo v správe** (ako v Outlooku): rozloženie, obrázky a odkazy zostanú, preloží sa text a predmet; pruh nad správou má jazyk, „Zobraziť originál“ a zavrieť. Jazyk predvolene podľa rozhrania (12 jazykov). Pred odoslaním sa opýta ako pri zhrnutí. Kým AI nie je zapnutá, pruh povie, kde ju zapnúť – nič sa neodošle. Preklady sa pamätajú do zatvorenia aplikácie.
+- Ako: prečistené HTML správy sa rozdelí na úseky textu medzi blokovými značkami (`core/ai/translate-html.ts`). AI dostane len text úsekov „⟦N⟧ …“; vnútorné značky a zalomenia sú v ňom skratky `<tN>`, takže adresy odkazov a obrázky AI nevidí a nemôže pridať vlastné. Odpoveď sa vloží späť – všetko okrem skratiek ako text – a výsledok ešte raz prejde čistením HTML pošty. Najviac 40 000 znakov textu, zvyšok zostane v origináli.
+- OpenRouter: modely s „premýšľaním“ (DeepSeek, Qwen…) ním minuli limit a nevrátili text („AI nevrátila žiadny text“). Doar posiela `reasoning: { effort: "none" }`; model, ktorý to nedovolí (chyba so slovom „reason“), dostane `effort: "low"` a o 4096 viac miesta. Prázdna odpoveď pre limit má vlastnú chybu `AI_NO_ROOM`.
+- **Synchronizovať → Odoslať/prijať** (ako v Outlooku): tlačidlo aj F5 okrem synchronizácie hneď skúsi odoslať správy čakajúce v Pošte na odoslanie.
+- Pruh „Obrázky sú zablokované“: nižší, menšie tlačidlá, jantárový tón (`--warning`) namiesto sivého pozadia.
+
+## 2026-11-01 – fotky vložené do správy
+
+- Obrázky vložené do textu (Gmail cez `cid:`) sa zobrazia v správe do 16 MB (predtým 2 MB – fotky z mobilu sa nezobrazili vôbec, lebo neboli ani v prílohách). Len formáty, ktoré vie zobraziť prehliadač (PNG, JPEG, GIF, WebP, BMP); iné (napr. HEIC) a väčšie ostanú ako príloha.
+- Fotky vložené bez odkazu z HTML (iPhone a iné mobily: text + obrázok ako „inline“ časť) sa pridajú na koniec správy ako v Outlooku a Apple Mail; zostanú aj v prílohách (na uloženie).
+
 ## Licencie závislostí (overené 2026-10-21 cez `npm view`)
 
 Všetky sú kompatibilné s MIT.

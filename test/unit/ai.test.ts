@@ -3,7 +3,8 @@ import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { checkBaseUrl, listModels, sseEvents, streamChat, type AiEndpoint, type FetchFn } from '../../src/core/ai/providers'
-import { buildPrompt, cleanOutput, MAX_INPUT_CHARS } from '../../src/core/ai/prompts'
+import { buildPrompt, buildTranslatePrompt, cleanOutput, MAX_INPUT_CHARS } from '../../src/core/ai/prompts'
+import { parseNumbered, rebuildHtml, restoreSegment, segmentHtml } from '../../src/core/ai/translate-html'
 import { AiService, aiKeyName } from '../../src/core/ai/service'
 import { MemorySecrets } from '../../src/core/secrets'
 import { openDb } from '../../src/core/store/db'
@@ -159,7 +160,23 @@ describe('AI – OpenAI-kompatibilné (OpenRouter, lokálny server)', () => {
     expect(r).toEqual({ text: 'Ahoj svet', stop: 'stop' })
     expect(calls[0]!.url).toBe('https://openrouter.ai/api/v1/chat/completions')
     expect(calls[0]!.headers).toMatchObject({ authorization: 'Bearer sk-or-1', 'x-title': 'Doar' })
-    expect(calls[0]!.body).toMatchObject({ model: 'x/y', max_tokens: 99, stream: true, messages: [{ role: 'system', content: 'SYS' }, { role: 'user', content: 'U' }] })
+    expect(calls[0]!.body).toMatchObject({ model: 'x/y', max_tokens: 99, stream: true, reasoning: { effort: 'none' }, messages: [{ role: 'system', content: 'SYS' }, { role: 'user', content: 'U' }] })
+  })
+
+  it('OpenRouter: premýšľanie vypnuté; model, ktorý ho vypnúť nedovolí, dostane nízku úroveň a viac miesta', async () => {
+    let n = 0
+    const { fetch, calls } = fakeFetch(() =>
+      n++ === 0 ? new Response(JSON.stringify({ error: { message: 'Reasoning is mandatory for this endpoint and cannot be disabled.' } }), { status: 400 }) : sseResponse(openaiStream(['Preklad']))
+    )
+    const ep: AiEndpoint = { provider: 'openrouter', baseUrl: 'https://openrouter.ai/api/v1', key: 'k', model: 'x/think' }
+    const r = await streamChat(ep, { system: 'S', user: 'U', maxTokens: 1000 }, { fetch })
+    expect(r.text).toBe('Preklad')
+    expect(calls).toHaveLength(2)
+    expect(calls[1]!.body).toMatchObject({ max_tokens: 5096, reasoning: { effort: 'low', exclude: true } })
+    // Iná chyba 400 sa neopakuje.
+    const other = fakeFetch(() => new Response(JSON.stringify({ error: { message: 'bad model' } }), { status: 400 }))
+    await expect(streamChat(ep, { system: 'S', user: 'U', maxTokens: 10 }, { fetch: other.fetch })).rejects.toMatchObject({ code: 'AI_BAD_REQUEST' })
+    expect(other.calls).toHaveLength(1)
   })
 
   it('lokálny server bez kľúča; server, ktorý ignoruje stream, vráti celú odpoveď naraz', async () => {
@@ -210,6 +227,26 @@ describe('AI – zadania', () => {
     expect(tr.user).toMatch(/Translate the text into German/)
     expect(tr.user).toContain('<text>\nAhoj\n</text>')
     expect(buildPrompt({ requestId: 'x', task: 'rewrite', text: 'Ahoj', style: 'custom', instruction: 'pridaj vtip', lang: 'sk' }, null).user).toContain('pridaj vtip')
+  })
+
+  it('preklad správy priamo v HTML: len text úsekov, značky a odkazy AI nevidí, rozloženie zostane', () => {
+    const html = '<style>p{color:red}</style><table><tr><td><p>Ahoj <b>Peter</b>, pozri <a href="https://x.sk/?t=1">ponuku</a>.</p></td><td><img src="data:image/png;base64,AAA"></td></tr></table><div class="doar-plain">Riadok 1\nRiadok 2\n\nOdsek 2</div>'
+    const s = segmentHtml(html)
+    expect(s.segments.map((x) => x.text)).toEqual(['Ahoj <t1>Peter</t2>, pozri <t3>ponuku</t4>.', 'Riadok 1<t1/>Riadok 2', 'Odsek 2'])
+    expect(s.template).toContain('<style>p{color:red}</style>')
+    expect(s.template).toContain('data:image/png;base64,AAA')
+    expect(s.segments.some((x) => x.text.includes('https://') || x.text.includes('base64'))).toBe(false)
+    const p = buildTranslatePrompt('en', 'Ponuka', s.segments.map((x) => x.text))
+    expect(p.user).toMatch(/into English/)
+    expect(p.user).toContain('⟦0⟧ Ponuka\n⟦1⟧ Ahoj <t1>Peter</t2>')
+    // Odpoveď AI: značky sa vrátia na miesto; HTML od AI je len text (žiadne nové odkazy ani obrázky).
+    const map = parseNumbered('⟦0⟧ Offer\n⟦1⟧ Hi <t1>Peter</t2>, see the <t3>offer</t4>. <img src=x onerror=alert(1)>\n⟦2⟧ Line 1<t1/>Line 2')
+    expect(map.get(0)).toBe('Offer')
+    const out = rebuildHtml(s, map)
+    expect(out).toContain('<p>Hi <b>Peter</b>, see the <a href="https://x.sk/?t=1">offer</a>. &lt;img src=x onerror=alert(1)&gt;</p>')
+    expect(out).toContain('Line 1\nLine 2')
+    expect(out).toContain('Odsek 2') // chýbajúci preklad = originál
+    expect(restoreSegment(s.segments[0]!, 'A <t9>B</t9> & C')).toBe('A B &amp; C')
   })
 
   it('výstup bez obalu ``` a medzier', () => {
@@ -308,6 +345,8 @@ describe('AI – služba v jadre', () => {
     await expect(ai.run({ requestId: 'a', task: 'rewrite', text: 'x', style: 'custom', lang: 'sk' })).rejects.toMatchObject({ code: 'AI_NO_INSTRUCTION' })
     await expect(ai.run({ requestId: 'a', task: 'rewrite', text: 'x', style: 'translate', targetLang: 'xx', lang: 'sk' })).rejects.toMatchObject({ code: 'AI_BAD_TASK' })
     await expect(ai.run({ requestId: 'a', task: 'reply', lang: 'sk' })).rejects.toMatchObject({ code: 'AI_NO_MESSAGE' })
+    await expect(ai.run({ requestId: 'a', task: 'translate', messageId: 7, targetLang: 'xx', lang: 'sk' })).rejects.toMatchObject({ code: 'AI_BAD_TASK' })
+    await expect(ai.run({ requestId: 'a', task: 'translate', targetLang: 'de', lang: 'sk' })).rejects.toMatchObject({ code: 'AI_NO_MESSAGE' })
     expect(calls).toHaveLength(0)
   })
 

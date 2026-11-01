@@ -87,12 +87,14 @@
 
   const CSP = "default-src 'none'; img-src data:; style-src 'unsafe-inline'; font-src data:"
   const BASE_CSS = `html{color-scheme:light}body{margin:0;padding:16px 20px 32px;font:14px/1.55 'Segoe UI Variable Text','Segoe UI',system-ui,-apple-system,sans-serif;color:#1d2229;background:#fbfaf7;overflow-wrap:anywhere}
-img{max-width:100%;height:auto}table{max-width:100%}.doar-plain{white-space:pre-wrap}blockquote{margin:0;margin-inline-start:.4em;padding-inline-start:.8em;border-inline-start:3px solid #d6d2ca;color:#4f555d}a{color:#2d4362}
+img{max-width:100%;height:auto}.doar-inline-img{margin:12px 0}table{max-width:100%}.doar-plain{white-space:pre-wrap}blockquote{margin:0;margin-inline-start:.4em;padding-inline-start:.8em;border-inline-start:3px solid #d6d2ca;color:#4f555d}a{color:#2d4362}
 :where(p,div,li,td,th,dd,dt,blockquote,pre,h1,h2,h3,h4,h5,h6,.doar-plain):not([dir]):not([dir] *){unicode-bidi:plaintext}`
 
+  /** Preklad (tlačidlo Preložiť) sa ukáže priamo v správe namiesto originálu, kým nie je „Zobraziť originál“. */
+  const bodyHtml = $derived(view && aiUi.translateFor === view.id && aiUi.translated?.id === view.id && !aiUi.showOriginal ? aiUi.translated.html : (view?.html ?? ''))
   const srcdoc = $derived(
     view
-      ? `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${CSP}"><style>${BASE_CSS}</style></head><body>${view.html ?? ''}</body></html>`
+      ? `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${CSP}"><style>${BASE_CSS}</style></head><body>${bodyHtml}</body></html>`
       : ''
   )
 
@@ -250,7 +252,7 @@ img{max-width:100%;height:auto}table{max-width:100%}.doar-plain{white-space:pre-
   {:else}
     <header>
       <div class="titlebar">
-        <h1 dir="auto">{view.subject || t('list.noSubject')}</h1>
+        <h1 dir="auto">{(aiUi.translateFor === view.id && aiUi.translated?.id === view.id && !aiUi.showOriginal && aiUi.translated.subject) || view.subject || t('list.noSubject')}</h1>
         {#if listItem || (standalone && isArchiveId(view.id))}
           <div class="actions">
             {#if isDraft(view.id)}
@@ -262,6 +264,7 @@ img{max-width:100%;height:auto}table{max-width:100%}.doar-plain{white-space:pre-
               {#if aiReady(ai.config)}
                 <button class="btn small" class:on={aiUi.summaryFor === view.id} title={t('ai.summary.buttonTitle')} onclick={() => (aiUi.summaryFor = aiUi.summaryFor === view!.id ? null : view!.id)}><Icon name="ai" size={15} />{t('ai.summary.button')}</button>
               {/if}
+              <button class="btn small" class:on={aiUi.translateFor === view.id} title={t('ai.translate.buttonTitle')} onclick={() => (aiUi.translateFor = aiUi.translateFor === view!.id ? null : view!.id)}><Icon name="ai" size={15} />{t('ai.translate.button')}</button>
             {/if}
             {#if isArchiveId(view.id)}
               <span class="readonly" title={isEmlId(view.id) ? t('reader.emlHint') : t('archive.readOnlyHint')}><Icon name="archive" size={14} /> {isEmlId(view.id) ? t('reader.emlFile') : t('archive.readOnly')}</span>
@@ -336,6 +339,9 @@ img{max-width:100%;height:auto}table{max-width:100%}.doar-plain{white-space:pre-
       {/if}
       {#if aiUi.summaryFor === view.id && aiReady(ai.config)}
         {#key view.id}<AiSummary messageId={view.id} />{/key}
+      {/if}
+      {#if aiUi.translateFor === view.id}
+        {#key `${view.id}:${view.remoteShown}`}<AiSummary messageId={view.id} mode="translate" showRemote={view.remoteShown} />{/key}
       {/if}
     </header>
     {#if view.attachments.length}
@@ -572,22 +578,30 @@ img{max-width:100%;height:auto}table{max-width:100%}.doar-plain{white-space:pre-
     font-weight: 400;
     font-size: 0.82rem;
   }
+  /* Zablokované obrázky: nízky pruh v jantárovom tóne (výraznejší než bežné pozadie, nie krikľavý). */
   .banner {
     display: flex;
     flex-wrap: wrap;
-    gap: 0.5rem;
+    gap: 0.3rem 0.5rem;
     align-items: center;
     justify-content: space-between;
-    margin-top: 0.7rem;
-    padding: 0.5rem 0.75rem;
+    margin-top: 0.5rem;
+    padding: 0.2rem 0.3rem 0.2rem 0.6rem;
+    border: 1px solid color-mix(in srgb, var(--warning) 45%, transparent);
+    border-inline-start: 3px solid var(--warning);
     border-radius: var(--radius-sm);
-    background: var(--accent-soft);
-    font-size: 0.85rem;
+    background: color-mix(in srgb, var(--warning) 14%, var(--bg));
+    font-size: 0.78rem;
   }
   .banner-actions {
     display: flex;
-    gap: 0.4rem;
+    gap: 0.3rem;
     flex-wrap: wrap;
+  }
+  .banner .btn.small {
+    padding: 0.05em 0.5em;
+    font-size: 0.74rem;
+    border-color: color-mix(in srgb, var(--warning) 55%, transparent);
   }
   .btn.small {
     padding: 0.2em 0.6em;

@@ -64,6 +64,37 @@ export function runAi(
   return { result, cancel: () => void window.doar.invoke('ai.cancel', { requestId }).catch(() => {}) }
 }
 
-/** Zhrnutie v čítačke: pre ktorú správu je otvorené; hotové zhrnutia (do zatvorenia aplikácie). */
-export const aiUi = $state({ summaryFor: null as number | null })
+/** Zhrnutie a preklad v čítačke: pre ktorú správu sú otvorené; hotové výsledky (do zatvorenia aplikácie). */
+export interface Translated {
+  id: number
+  lang: string
+  html: string
+  subject: string
+  target: string
+  truncated: boolean
+}
+export const aiUi = $state({
+  summaryFor: null as number | null,
+  translateFor: null as number | null,
+  /** Hotový preklad zobrazený priamo v správe (namiesto originálu, kým nie je „Zobraziť originál“). */
+  translated: null as Translated | null,
+  showOriginal: false
+})
 export const summaries = new Map<number, { text: string; target: string; truncated: boolean }>()
+/** Preklady správ: kľúč „id:jazyk:obrázky“. */
+export const translations = new Map<string, Translated>()
+
+/** Jazyky prekladu (jadro povolí len tieto). */
+export const TRANSLATE_LANGS = ['sk', 'cs', 'en', 'de', 'hu', 'pl', 'uk', 'fr', 'es', 'it', 'ru', 'he']
+/** Názov jazyka v jazyku rozhrania („nemčina“, „German“…). */
+export function langLabel(code: string): string {
+  try {
+    return new Intl.DisplayNames([i18n.locale], { type: 'language' }).of(code) ?? code
+  } catch {
+    return code
+  }
+}
+/** Predvolený jazyk prekladu: jazyk rozhrania (ak ho AI vie), inak angličtina. */
+export function defaultTranslateLang(): string {
+  return TRANSLATE_LANGS.includes(i18n.locale) ? i18n.locale : 'en'
+}

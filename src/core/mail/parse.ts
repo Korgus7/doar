@@ -12,7 +12,10 @@ export interface IndexInfo {
   references?: string[]
 }
 
-const MAX_INLINE_IMAGE = 2 * 1024 * 1024
+/** Najväčší obrázok zobrazený priamo v správe (fotky z mobilu majú bežne 3–8 MB). Väčší ostane ako príloha. */
+const MAX_INLINE_IMAGE = 16 * 1024 * 1024
+/** Obrázky, ktoré prehliadač vie zobraziť (HEIC nie – ten ostane ako príloha). */
+const SHOWABLE_IMAGE = /^image\/(png|jpe?g|gif|webp|bmp)$/i
 
 function parse(raw: Buffer): Promise<ParsedMail> {
   // skipHtmlToText: text si z HTML odvodíme sami (bez adries obrázkov a odkazov, bez veľkých písmen v nadpisoch).
@@ -58,9 +61,30 @@ function addresses(a: AddressObject | AddressObject[] | undefined): Address[] {
   return out
 }
 
+const cidOf = (a: ParsedMail['attachments'][number]): string => (a.contentId ?? '').replace(/^<|>$/g, '').toLowerCase()
+const showable = (a: ParsedMail['attachments'][number]): boolean => SHOWABLE_IMAGE.test(a.contentType ?? '') && a.content.length <= MAX_INLINE_IMAGE
+
+/** Content-ID obrázkov, na ktoré sa HTML správy odvoláva (cid:…). */
+function referencedCids(p: ParsedMail): Set<string> {
+  const out = new Set<string>()
+  if (typeof p.html === 'string') for (const m of p.html.matchAll(/cid:([^"'\s>)]+)/gi)) out.add(m[1]!.replace(/^<|>$/g, '').toLowerCase())
+  return out
+}
+
+/**
+ * Obrázky vložené do textu bez odkazu z HTML (iPhone, niektoré mobilné programy: text + fotka ako „inline“
+ * časť správy). Outlook a Apple Mail ich zobrazia v správe – Doar ich pridá na koniec textu.
+ */
+function looseInlineImages(p: ParsedMail): ParsedMail['attachments'] {
+  const refs = referencedCids(p)
+  return p.attachments.filter((a) => a.contentDisposition === 'inline' && showable(a) && !(a.contentId && refs.has(cidOf(a))))
+}
+
 function realAttachments(p: ParsedMail): ParsedMail['attachments'] {
-  // Vložené obrázky (cid) zobrazené v texte nie sú „prílohy“ pre používateľa.
-  return p.attachments.filter((a) => !(a.related && a.contentId && (a.contentType ?? '').startsWith('image/')))
+  // Vložené obrázky zobrazené v texte (HTML sa na ne odvoláva cez cid:) nie sú „prílohy“ pre používateľa.
+  // Obrázok, ktorý sa zobraziť nedá (priveľký, HEIC), ostane ako príloha, aby sa nestratil.
+  const refs = referencedCids(p)
+  return p.attachments.filter((a) => !(a.contentId && refs.has(cidOf(a)) && showable(a)))
 }
 
 export interface AttachmentContent {
@@ -168,10 +192,9 @@ export interface Rendered {
 export async function renderMessage(raw: Buffer, remote: Map<string, string> | null): Promise<Rendered> {
   const p = await parse(raw)
   const cid = new Map<string, string>()
+  const dataUri = (a: ParsedMail['attachments'][number]): string => `data:${a.contentType.toLowerCase()};base64,${a.content.toString('base64')}`
   for (const a of p.attachments) {
-    if (a.contentId && (a.contentType ?? '').startsWith('image/') && a.content.length <= MAX_INLINE_IMAGE) {
-      cid.set(a.contentId.replace(/^<|>$/g, '').toLowerCase(), `data:${a.contentType};base64,${a.content.toString('base64')}`)
-    }
+    if (a.contentId && showable(a)) cid.set(cidOf(a), dataUri(a))
   }
   let html: string | null = null
   let blocked = 0
@@ -184,6 +207,9 @@ export async function renderMessage(raw: Buffer, remote: Map<string, string> | n
   } else {
     html = textToHtml(p.text ?? '')
   }
+  // Fotky vložené do správy bez odkazu z textu (napr. z iPhonu) – na koniec správy, ako v Outlooku.
+  const loose = looseInlineImages(p)
+  if (loose.length) html += loose.map((a) => `<div class="doar-inline-img"><img src="${dataUri(a)}" alt=""></div>`).join('')
   return {
     subject: p.subject ?? '',
     from: addresses(p.from),

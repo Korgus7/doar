@@ -159,7 +159,8 @@ export class SyncManager {
 
   async syncNow(accountId?: number): Promise<void> {
     const list = accountId === undefined ? [...this.syncs.values()] : [this.syncs.get(accountId)].filter((s): s is MailSync => !!s)
-    await Promise.allSettled(list.map((s) => s.requestSync()))
+    // „Odoslať/prijať“: aj čakajúce správy v Pošte na odoslanie hneď (nečakať na ďalší pokus).
+    await Promise.allSettled(list.flatMap((s) => [s.requestSync(), s.processOutboxNow()]))
   }
 
   /**

@@ -686,7 +686,7 @@ export function isEmlId(id: number | null | undefined): boolean {
 /** Požiadavky (invoke): kanál → [vstup, výstup]. */
 /** AI (voliteľné): poskytovateľ, model, kľúč v bezpečnom úložisku. */
 export type AiProvider = 'anthropic' | 'openrouter' | 'local'
-export type AiTask = 'summary' | 'reply' | 'rewrite'
+export type AiTask = 'summary' | 'reply' | 'rewrite' | 'translate'
 export type AiRewriteStyle = 'fix' | 'formal' | 'friendly' | 'shorter' | 'translate' | 'custom'
 
 export interface AiConfig {
@@ -718,13 +718,15 @@ export interface AiRunInput {
   /** Identifikátor od rozhrania – priebežný text prichádza v udalosti ai.chunk. */
   requestId: string
   task: AiTask
-  /** Zhrnutie a návrh odpovede: správa (aj z archívu). Prílohy sa neodosielajú. */
+  /** Zhrnutie, preklad a návrh odpovede: správa (aj z archívu). Prílohy sa neodosielajú. */
   messageId?: number
   /** Úprava: text na úpravu; odpoveď: už napísaný začiatok odpovede. */
   text?: string
   style?: AiRewriteStyle
   /** Preklad: kód jazyka (sk, en, de…). */
   targetLang?: string
+  /** Preklad správy: používateľ si v nej zobrazil obrázky (preklad ich má tiež ukázať). */
+  showRemote?: boolean
   /** Vlastný pokyn používateľa. */
   instruction?: string
   /** Jazyk rozhrania (jazyk zhrnutia). */
@@ -733,6 +735,9 @@ export interface AiRunInput {
 
 export interface AiRunResult {
   text: string
+  /** Preklad správy: preložené HTML správy (rozloženie a obrázky zostanú) a preložený predmet. */
+  html?: string
+  subject?: string
   /** Vstup bol pridlhý a odstrihol sa. */
   truncated: boolean
   provider: AiProvider

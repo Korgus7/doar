@@ -208,18 +208,29 @@ export async function streamChat(
     arm(opts.firstMs ?? FIRST_RESPONSE_MS)
     const anthropic = ep.provider === 'anthropic'
     const url = anthropic ? `${ep.baseUrl}/messages` : `${ep.baseUrl}/chat/completions`
-    const body = anthropic
-      ? { model: ep.model, max_tokens: req.maxTokens, system: req.system, messages: [{ role: 'user', content: req.user }], stream: true }
-      : {
-          model: ep.model,
-          max_tokens: req.maxTokens,
-          stream: true,
-          messages: [
-            { role: 'system', content: req.system },
-            { role: 'user', content: req.user }
-          ]
-        }
-    const res = await opts.fetch(url, { method: 'POST', headers: headers(ep), body: JSON.stringify(body), signal: ctl.signal })
+    // OpenRouter: modely, ktoré „premýšľajú“ (DeepSeek, Qwen…), by premýšľaním minuli limit max_tokens a nevrátili
+    // žiadny text. Premýšľanie sa preto vypne; model, ktorý ho vypnúť nedovolí, dostane nízku úroveň a viac miesta.
+    const openrouter = ep.provider === 'openrouter'
+    const bodyFor = (reasoning: 'none' | 'low' | null): Record<string, unknown> =>
+      anthropic
+        ? { model: ep.model, max_tokens: req.maxTokens, system: req.system, messages: [{ role: 'user', content: req.user }], stream: true }
+        : {
+            model: ep.model,
+            max_tokens: reasoning === 'low' ? req.maxTokens + 4096 : req.maxTokens,
+            stream: true,
+            ...(reasoning === 'none' ? { reasoning: { effort: 'none' } } : reasoning === 'low' ? { reasoning: { effort: 'low', exclude: true } } : {}),
+            messages: [
+              { role: 'system', content: req.system },
+              { role: 'user', content: req.user }
+            ]
+          }
+    const post = (b: Record<string, unknown>): Promise<Response> => opts.fetch(url, { method: 'POST', headers: headers(ep), body: JSON.stringify(b), signal: ctl.signal })
+    let res = await post(bodyFor(openrouter ? 'none' : null))
+    if (openrouter && [400, 404, 422].includes(res.status)) {
+      const t = await res.text().catch(() => '')
+      if (!/reason/i.test(t)) throw httpError(res.status, t)
+      res = await post(bodyFor('low'))
+    }
     if (!res.ok) throw httpError(res.status, await res.text().catch(() => ''))
     arm(opts.idleMs ?? IDLE_MS)
     const type = res.headers.get('content-type') ?? ''

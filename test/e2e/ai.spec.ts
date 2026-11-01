@@ -38,7 +38,9 @@ function fakeAi() {
           ? 'Dobrý deň Peter, ďakujem – piatok o 10:00 mi vyhovuje. S pozdravom'
           : user.includes('Translate the text into German')
             ? 'Guten Tag Peter,'
-            : 'neznáma úloha'
+            : user.includes('Translate every numbered segment')
+              ? [...user.matchAll(/^⟦(\d+)⟧ (.*)$/gm)].map((m) => `⟦${m[1]}⟧ ${m[1] === '0' ? 'Meeting on Friday' : `EN ${m[2]}`}`).join('\n')
+              : 'neznáma úloha'
   const server = createServer((req: IncomingMessage, res) => {
     let raw = ''
     req.on('data', (d: Buffer) => (raw += d.toString('utf8')))
@@ -81,6 +83,10 @@ test('AI: nastavenie lokálneho modelu, zhrnutie s potvrdením, návrh odpovede 
     await expect(reader.getByRole('heading', { name: 'Stretnutie v piatok' })).toBeVisible()
     // AI je predvolene vypnutá – žiadne tlačidlo.
     await expect(reader.getByRole('button', { name: /Zhrnúť/ })).toHaveCount(0)
+    // Preložiť je vždy; bez AI povie, kde ju zapnúť (nič sa neodošle).
+    await reader.getByRole('button', { name: 'Preložiť' }).click()
+    await expect(reader.getByRole('region', { name: 'Preklad' }).getByText('ktorá je teraz vypnutá', { exact: false })).toBeVisible()
+    await reader.getByRole('button', { name: 'Zavrieť preklad' }).click()
 
     // Nastavenia → AI: zapnúť, lokálny model, adresa, načítať modely (zvolí sa prvý).
     await win.getByRole('button', { name: 'Nastavenia' }).first().click()
@@ -118,6 +124,25 @@ test('AI: nastavenie lokálneho modelu, zhrnutie s potvrdením, návrh odpovede 
     expect(user).toContain('stretneme sa v piatok o 10:00')
     expect(user).toContain('Peter Novak <peter@firma.sk>')
 
+    // Preklad: opýta sa (jazyk a kam), potom preloží priamo v správe; Zobraziť originál ho prepne späť.
+    await reader.getByRole('button', { name: 'Preložiť' }).click()
+    const tr = reader.getByRole('region', { name: 'Preklad' })
+    await expect(tr.getByText('Odošle sa text tejto správy (bez príloh) do: Lokálny model · test-model.', { exact: false })).toBeVisible()
+    await tr.getByLabel('Jazyk prekladu').selectOption('en')
+    await tr.getByRole('button', { name: 'Preložiť' }).click()
+    await expect(reader.getByRole('heading', { name: 'Meeting on Friday' })).toBeVisible()
+    const body = reader.frameLocator('iframe')
+    await expect(body.locator('body')).toContainText('EN ')
+    await expect(tr.getByText('Preložené:', { exact: false })).toBeVisible()
+    await tr.getByRole('button', { name: 'Zobraziť originál' }).click()
+    await expect(reader.getByRole('heading', { name: 'Stretnutie v piatok' })).toBeVisible()
+    await expect(body.locator('body')).not.toContainText('EN ')
+    const msgTrReq = requests[1]!.body.messages!.find((m) => m.role === 'user')!.content
+    expect(msgTrReq).toMatch(/into English/)
+    expect(msgTrReq).toContain('⟦0⟧ Stretnutie v piatok')
+    expect(msgTrReq).toContain('stretneme sa v piatok o 10:00')
+    await tr.getByRole('button', { name: 'Zavrieť preklad' }).click()
+
     // Odpoveď: panel AI v okne správy → návrh odpovede s pokynom → vložiť pred citáciu.
     const [c] = await Promise.all([app.waitForEvent('window'), reader.getByRole('button', { name: /Odpovedať/ }).first().click()])
     await c.waitForLoadState('domcontentloaded')
@@ -128,7 +153,7 @@ test('AI: nastavenie lokálneho modelu, zhrnutie s potvrdením, návrh odpovede 
     await panel.getByLabel('Pokyn pre AI').fill('súhlas s termínom')
     await panel.getByRole('button', { name: /Navrhnúť odpoveď/ }).click()
     await expect(panel.getByText('piatok o 10:00 mi vyhovuje', { exact: false })).toBeVisible()
-    const replyReq = requests[1]!.body.messages!.find((m) => m.role === 'user')!.content
+    const replyReq = requests[2]!.body.messages!.find((m) => m.role === 'user')!.content
     expect(replyReq).toContain('<instruction>\nsúhlas s termínom\n</instruction>')
     expect(replyReq).toContain('stretneme sa v piatok')
     await panel.getByRole('button', { name: 'Vložiť do správy' }).click()
@@ -143,7 +168,7 @@ test('AI: nastavenie lokálneho modelu, zhrnutie s potvrdením, návrh odpovede 
     // Oprava chýb bez označenia: odošle sa len vlastný text (bez citácie), výsledok ho nahradí.
     await panel.getByRole('button', { name: 'Opraviť chyby' }).click()
     await expect(panel.getByText('ďakujem – piatok', { exact: false })).toBeVisible()
-    const fixReq = requests[2]!.body.messages!.find((m) => m.role === 'user')!.content
+    const fixReq = requests[3]!.body.messages!.find((m) => m.role === 'user')!.content
     expect(fixReq).toContain('piatok o 10:00 mi vyhovuje')
     expect(fixReq).not.toContain('stretneme sa')
     await panel.getByRole('button', { name: 'Nahradiť môj text' }).click()
@@ -153,7 +178,7 @@ test('AI: nastavenie lokálneho modelu, zhrnutie s potvrdením, návrh odpovede 
     await c.screenshot({ path: 'test-results/ai-odpoved.png' })
     // AI nič neodoslala – okno správy je stále otvorené a správa neodišla.
     expect(c.isClosed()).toBe(false)
-    expect(requests).toHaveLength(3)
+    expect(requests).toHaveLength(4)
     expect(logOf(dataDir)).not.toContain('stretneme sa')
 
     await c.close()

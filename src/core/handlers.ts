@@ -117,7 +117,7 @@ export function createHandlers(ctx: CoreContext): Handlers {
     sessionSecrets: ctx.sessionSecrets,
     emit: (ch, data) => ctx.emit(ch, data),
     fetch: ctx.aiFetch,
-    getMessage: (id) => Promise.resolve(handlers['messages.get']({ id }))
+    getMessage: (id, opts) => Promise.resolve(handlers['messages.get']({ id, showRemote: opts?.showRemote === true }))
   })
   const handlers: Handlers = {
     'app.info': async () => ({

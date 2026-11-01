@@ -152,3 +152,34 @@ export function cleanOutput(s: string): string {
   if (fence) t = fence[1]!.trim()
   return t
 }
+
+/**
+ * Preklad správy po úsekoch (tlačidlo „Preložiť“): každý úsek na jednom riadku „⟦N⟧ text“, rovnako má odpovedať.
+ * Úsek 0 je predmet. Značky <tN> v úsekoch sú vnútorné značky HTML a zalomenia – musia zostať.
+ */
+export function buildTranslatePrompt(targetLang: string | undefined, subject: string, segments: string[]): BuiltPrompt {
+  const target = langName(targetLang, 'English')
+  const lines: string[] = [`⟦0⟧ ${subject.replace(/\s+/g, ' ')}`]
+  let used = subject.length
+  let truncated = false
+  for (let i = 0; i < segments.length; i++) {
+    const seg = segments[i]!.replace(/\s+/g, ' ')
+    if (used + seg.length > MAX_INPUT_CHARS) {
+      truncated = true
+      break
+    }
+    used += seg.length
+    lines.push(`⟦${i + 1}⟧ ${seg}`)
+  }
+  return {
+    system: `${BASE_RULES}\nYou are a translator.`,
+    user:
+      `Translate every numbered segment of the e-mail below into ${target}. Segment 0 is the subject. ` +
+      'Answer with exactly one line per segment in the same format "⟦N⟧ translation", with the same numbers, in the same order, and nothing else. ' +
+      'Keep the markers <t1>, </t1>, <t2/> … exactly as they are and around the corresponding words (they are formatting and line breaks). ' +
+      `Keep names, numbers, prices, dates, e-mail addresses and links unchanged. If a segment is already in ${target}, copy it unchanged.\n\n` +
+      `<email>\n${neutralize(lines.join('\n'))}\n</email>`,
+    maxTokens: Math.min(16_000, Math.max(1024, Math.ceil(used / 2) + lines.length * 8 + 256)),
+    truncated
+  }
+}

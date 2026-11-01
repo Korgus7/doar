@@ -1,4 +1,7 @@
 import { describe, it, expect } from 'vitest'
+import { randomBytes } from 'node:crypto'
+import MailComposer from 'nodemailer/lib/mail-composer'
+import { renderMessage } from '../../src/core/mail/parse'
 import { sanitizeEmailHtml, textToHtml } from '../../src/core/mail/sanitize'
 
 const clean = (html: string, remote: Map<string, string> | null = null) => sanitizeEmailHtml(html, { cid: new Map([['logo@x', 'data:image/png;base64,AA']]), remote })
@@ -63,5 +66,34 @@ describe('text z HTML pre náhľad a vyhľadávanie', () => {
     const raw = Buffer.from('From: a@b.sk\r\nSubject: x\r\nContent-Type: text/html; charset=utf-8\r\n\r\n<h1>Jesenná akcia</h1><img src="https://tracker.sk/p.gif"><p>Zľavy</p>\r\n')
     const info = await indexInfo(raw)
     expect(info.snippet).toBe('Jesenná akcia Zľavy')
+  })
+})
+
+describe('obrázky vložené do správy (Gmail, iPhone)', () => {
+  const build = async (mail: ConstructorParameters<typeof MailComposer>[0]): Promise<Buffer> => new MailComposer(mail).compile().build()
+  it('Gmail: veľká fotka cez cid sa zobrazí v texte a nie je príloha; HEIC ostane prílohou', async () => {
+    const photo = randomBytes(5 * 1024 * 1024)
+    const raw = await build({
+      from: 'a@gmail.com', to: 'b@x.sk', subject: 'Foto',
+      html: '<div>Pozri <img src="cid:ii_abc"> a <img src="cid:heic1"></div>',
+      attachments: [
+        { filename: 'IMG_1.jpg', content: photo, cid: 'ii_abc', contentType: 'image/jpeg' },
+        { filename: 'IMG_2.heic', content: Buffer.from('heic'), cid: 'heic1', contentType: 'image/heic' }
+      ]
+    })
+    const r = await renderMessage(raw, null)
+    expect(r.html).toContain(`src="data:image/jpeg;base64,${photo.subarray(0, 30).toString('base64').slice(0, 20)}`)
+    expect(r.attachments.map((a) => a.filename)).toEqual(['IMG_2.heic'])
+  })
+  it('iPhone: text a fotka ako vložená časť bez odkazu z HTML → fotka na konci správy, dá sa aj uložiť', async () => {
+    const photo = randomBytes(1000)
+    const raw = await build({
+      from: 'a@icloud.com', to: 'b@x.sk', subject: 'Z iPhonu', text: 'Posielam fotku',
+      attachments: [{ filename: 'IMG_3.jpeg', content: photo, contentType: 'image/jpeg', contentDisposition: 'inline' }]
+    })
+    const r = await renderMessage(raw, null)
+    expect(r.html).toContain('Posielam fotku')
+    expect(r.html).toContain(`<div class="doar-inline-img"><img src="data:image/jpeg;base64,${photo.toString('base64')}" alt=""></div>`)
+    expect(r.attachments.map((a) => a.filename)).toEqual(['IMG_3.jpeg'])
   })
 })
