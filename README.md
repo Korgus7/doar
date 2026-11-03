@@ -58,7 +58,7 @@ Máte už Doar 1.0 alebo novší? Aktualizácia sa ponúkne v programe sama. Z v
 
 Program zatiaľ nie je digitálne podpísaný, preto môže Windows pri prvom spustení zobraziť upozornenie. Kliknite na *Ďalšie informácie* a potom na *Spustiť aj tak*.
 
-Stránka: https://cami.sk/doar
+Stránka: https://doar.sk · kontakt: info@doar.sk
 
 ---
 
@@ -122,4 +122,4 @@ Already have Doar 1.0 or newer? The update is offered inside the program. From v
 
 The program is not digitally signed yet, so Windows may show a warning on the first start. Click *More info* and then *Run anyway*.
 
-Website: https://cami.sk/doar
+Website: https://doar.sk · contact: info@doar.sk

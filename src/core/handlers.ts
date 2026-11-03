@@ -357,6 +357,8 @@ export function createHandlers(ctx: CoreContext): Handlers {
     'accounts.update': async (data) => {
       const r = updateAccount(ctx.db, Number(data?.id), data?.patch ?? {})
       ctx.emit('accounts.changed', null)
+      // Zapnuté zlučovanie priečinkov iných programov: hneď, nie až pri ďalšej synchronizácii.
+      if (data?.patch?.mergeFolders === true) void ctx.sync.mergeOtherFolders(Number(data.id)).catch(() => {})
       return r
     },
 
@@ -404,6 +406,8 @@ export function createHandlers(ctx: CoreContext): Handlers {
     },
 
     'folders.delete': (data) => ctx.sync.deleteFolder(Number(data?.folderId)),
+    'folders.mergeOffers': async () => ctx.sync.mergeOffers(),
+    'folders.mergeAnswer': (data) => ctx.sync.answerMerge(Number(data?.accountId), data?.merge === true),
     'folders.rename': (data) => ctx.sync.renameFolder(Number(data?.folderId), str(data?.name, 300), Number.isInteger(data?.parentId) ? (data!.parentId as number) : null),
 
     'contacts.list': (data) => listContactsWithGroups(ctx.db, str(data?.query, 200), Number.isInteger(data?.groupId) ? data!.groupId : undefined),

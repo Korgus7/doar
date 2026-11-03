@@ -114,3 +114,32 @@ describe('úložisko originálov', () => {
     expect(existsSync(join(dir, 'blobs'))).toBe(true)
   })
 })
+
+describe('zoznam priečinkov', () => {
+  it('server s priečinkami pod INBOX: Doručená pošta sa nerozbaľuje, podpriečinky sú na najvyššej úrovni', async () => {
+    const { MailStore } = await import('../../src/core/store/mailstore')
+    const db = openDb(join(dir, 'doar.db'))
+    const store = new MailStore(db)
+    const add = (email: string): number =>
+      Number(
+        db
+          .prepare(`INSERT INTO accounts(email,imap_host,imap_port,imap_security,smtp_host,smtp_port,smtp_security,username) VALUES (?,'imap.x.sk',993,'tls','smtp.x.sk',465,'tls',?) RETURNING id`)
+          .get(email, email)!.id
+      )
+    const f = (path: string, parentPath: string | null, specialUse: 'inbox' | 'sent' | null = null) => ({
+      path, delimiter: '.', name: path.split('.').pop()!, parentPath, specialUse, specialUseSource: specialUse ? ('server' as const) : null, selectable: true, subscribed: true
+    })
+    const a = add('a@x.sk')
+    store.syncFolders(a, [f('INBOX', null, 'inbox'), f('INBOX.Sent', 'INBOX', 'sent'), f('INBOX.Faktúry', 'INBOX'), f('INBOX.Faktúry.2026', 'INBOX.Faktúry')])
+    const list = store.listFolders(a)
+    expect(list.find((x) => x.path === 'INBOX')).toMatchObject({ parentPath: null, depth: 0 })
+    expect(list.find((x) => x.path === 'INBOX.Sent')).toMatchObject({ parentPath: null, depth: 0 })
+    expect(list.find((x) => x.path === 'INBOX.Faktúry')).toMatchObject({ parentPath: null, depth: 0 })
+    expect(list.find((x) => x.path === 'INBOX.Faktúry.2026')).toMatchObject({ parentPath: 'INBOX.Faktúry', depth: 1 })
+    // Iný server: vlastné priečinky na najvyššej úrovni – podpriečinok Doručenej pošty ostane pod ňou.
+    const b = add('b@x.sk')
+    store.syncFolders(b, [f('INBOX', null, 'inbox'), f('INBOX.Projekt', 'INBOX'), f('Sent', null, 'sent')])
+    expect(store.listFolders(b).find((x) => x.path === 'INBOX.Projekt')).toMatchObject({ parentPath: 'INBOX', depth: 1 })
+    db.close()
+  })
+})

@@ -411,6 +411,21 @@ Používateľ si vybral sadu funkcií naraz („nebudeme robiť verziu zakaždý
 - Skratky sa na Macu zobrazujú ako ⌘ ⇧ ⌥ (`kbd()` v i18n; obsluha skratiek už brala Cmd aj Ctrl). Nebezpečné prílohy doplnené o macOS (.pkg, .dmg, .command, .scpt, .workflow…).
 - Mac verzia zatiaľ nie je overená na skutočnom Macu – testuje ju kamarát.
 
+## 2026-11-03 – hlavné priečinky bez duplicít (Trash, Sent Items…), tá istá schránka dvakrát
+
+- **Príčina hlásenia:** na serveri (cami.sk) si každý program založil vlastné priečinky – Outlook Sent Items a Deleted Items, webmail Sent a Trash. Doar ukazoval špeciálne po slovensky (Odoslané, Kôš) a ostatné pod anglickým názvom, takže vyzerali ako duplicity. Okrem toho dve kontá v Doare mali zhodnú poštu (zálohy po 6148 správ) – zrejme tá istá schránka.
+- **Cieľ:** v každom konte len hlavné priečinky Doručená pošta, Koncepty, Odoslané, Spam, Kôš (po slovensky) + vlastné priečinky používateľa.
+- **Zlučovanie priečinkov iných programov:** bežný priečinok bez podpriečinkov s názvom Koša, Odoslaných, Spamu alebo Konceptov (Trash, Deleted Items, Deleted Messages, Sent Items, Sent Messages, Junk E-mail, Spam, Drafts, Odoslané, Kôš… na najvyššej úrovni alebo priamo pod INBOX), keď konto už má vlastný špeciálny priečinok tej funkcie. Po synchronizácii Doar raz za konto ponúkne pruh „Zlúčiť / Nie“; po „Zlúčiť“ to robí po každej synchronizácii sám (Outlook a webmail tie priečinky znova zakladajú). Voľba je aj v nastaveniach konta („Zlučovať priečinky iných programov“), uložená v `settings` pod kľúčom `mergeFolders.<id>` (pri odstránení konta sa zmaže). Gmail nie (štítky).
+- **Zlúčenie jedného priečinka:** správy, ktoré v cieli ešte nie sú, sa presunú tam; tie, ktoré tam už sú (rovnaké Message-ID, odosielateľ a dátum; bez Message-ID aj predmet a veľkosť), idú do Koša – nič sa nemaže natrvalo. Pri zlučovaní do Koša sa duplicity nehľadajú. Presuny idú na server hneď (bez čakania na „Vrátiť späť“), potom sa prázdny priečinok odstráni; ak v ňom niečo zostane, neodstráni sa.
+- **Obnova zo zálohy:** priečinky s týmito názvami idú do špeciálneho priečinka cieľa – nevznikne druhý Kôš ani druhé Odoslané (platí pre nové obnovy).
+- **Servery s priečinkami pod INBOX** (menný priestor `INBOX.`, napr. cami.sk): Doručená pošta sa v zozname nerozbaľuje – jej podpriečinky (Odoslané, Kôš, vlastné) sú na najvyššej úrovni ako vo webmaile. Len ak okrem Doručenej pošty nie je na najvyššej úrovni žiadny priečinok. Nový priečinok a presun „na najvyššiu úroveň“ dostanú na takom serveri predponu menného priestoru (`INBOX.názov`).
+- **Tá istá schránka dvakrát:** konto sa nepridá, ak už je v Doare konto s rovnakým serverom IMAP a rovnakým prihlasovacím menom (aj s inou adresou); zmena nastavení servera na meno iného konta skončí chybou `ACCOUNT_SAME_MAILBOX`.
+- Overené: unit testy (názvy pri obnove, tá istá schránka), integračný test proti Dovecotu (ponuka, zlúčenie Sent Items do Odoslaných – 1 presunutá, 1 duplicita v Koši, priečinok zmizol aj na serveri; potom automatické zlúčenie Deleted Items do Koša pri synchronizácii), e2e bez zmeny. Neoverené: pruh a voľba v nastaveniach v rozhraní (e2e), Microsoft Graph naostro.
+
+## 2026-11-03 – vlastná doména
+
+- Stránka sa presúva na **https://doar.sk**, kontakt **info@doar.sk** (O aplikácii, README, ochrana súkromia na stránke – e-mail vedľa GitHub Issues). Overenie u Googlu (OAuth) a Microsoftu sa bude viazať na doménu doar.sk.
+
 ## Licencie závislostí (overené 2026-10-21 cez `npm view`)
 
 Všetky sú kompatibilné s MIT.

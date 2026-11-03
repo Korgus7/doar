@@ -125,7 +125,8 @@ test('nastavenia: názov, farba, podpis v novej správe, server, upozornenia, od
   await win.getByRole('menu', { name: 'Ponuka' }).getByRole('menuitem', { name: /^O aplikácii Doar/ }).click()
   await expect.poll(() => app.evaluate(() => (globalThis as { opened?: string }).opened)).toBe('https://github.com/Korgus7/doar')
   const about = await app.evaluate(() => (globalThis as { about?: string }).about)
-  expect(about).toContain('https://cami.sk/doar')
+  expect(about).toContain('https://doar.sk')
+  expect(about).toContain('info@doar.sk')
   expect(about).toContain('OK,Webová stránka,GitHub,Podporiť Doar')
   // Podporiť Doar: okno s QR kódom a PayPal (odkaz do prehliadača).
   await app.evaluate(({ dialog }) => {

@@ -29,7 +29,8 @@ let currentLocale: UiLocale = 'sk'
 
 /** Okno „O programe“ (z menu Pomocník aj z ponuky ☰ v rozhraní). */
 /** Webová stránka Doaru (stiahnutie, návod, ochrana súkromia) a zdrojový kód. */
-export const WEBSITE = 'https://cami.sk/doar'
+export const WEBSITE = 'https://doar.sk'
+export const CONTACT = 'info@doar.sk'
 export const GITHUB = 'https://github.com/Korgus7/doar'
 /** Dobrovoľná podpora: PayPal a QR platba (payme.sk – otvorí bankovú aplikáciu). */
 export const PAYPAL = 'https://paypal.me/korgus'
@@ -110,7 +111,7 @@ export function showAbout(win: BrowserWindow | null): void {
     type: 'info' as const,
     title: t('menu.about'),
     message: `${t('app.name')} ${app.getVersion()}`,
-    detail: `${t('about.detail')}\n\n${WEBSITE}\n${GITHUB}`,
+    detail: `${t('about.detail')}\n\n${WEBSITE}\n${CONTACT}\n${GITHUB}`,
     buttons: ['OK', t('about.website'), 'GitHub', t('about.support')],
     defaultId: 0,
     cancelId: 0

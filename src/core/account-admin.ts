@@ -1,5 +1,5 @@
 import type { CoreContext } from './handlers'
-import { getAccount, saveServerSettings, storedPassword, validateSettings } from './accounts'
+import { getAccount, saveServerSettings, setMergePref, storedPassword, validateSettings } from './accounts'
 import { passwordKey } from './secrets'
 import { testConnection } from './mail/connection-test'
 import type { Credential } from './mail/imap'
@@ -62,6 +62,7 @@ export async function removeAccount(ctx: CoreContext, id: number): Promise<void>
   await ctx.oauth?.forget(id)
   ctx.db.prepare('DELETE FROM accounts WHERE id = ?').run(id) // priečinky, správy, fronta, koncepty: ON DELETE CASCADE
   ctx.db.prepare('DELETE FROM jobs WHERE account_id = ?').run(id)
+  setMergePref(ctx.db, id, null)
   ctx.emit('accounts.changed', null)
   ctx.emit('folders.changed', { accountId: id })
   ctx.emit('outbox.changed', null)

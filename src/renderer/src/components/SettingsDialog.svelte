@@ -18,6 +18,8 @@
   let shortcutsDone = $state<'ok' | 'failed' | null>(null)
   let details = $state<AccountDetails | null>(null)
   let form = $state({ displayName: '', name: '', color: '', saveSentCopy: true })
+  /** Zlučovanie priečinkov iných programov – posiela sa len pri zmene (inak by sa „ešte nepýtal“ zmenilo na „nie“). */
+  let mergeFolders = $state(false)
   let server = $state({ username: '', imap: { host: '', port: 993, security: 'tls' } as ServerSettings, smtp: { host: '', port: 465, security: 'tls' } as ServerSettings, password: '' })
   let serverOpen = $state(false)
   let busy = $state(false)
@@ -51,6 +53,7 @@
       const d = await window.doar.invoke('accounts.get', { id })
       details = d
       form = { displayName: d.displayName, name: d.name, color: d.color, saveSentCopy: d.saveSentCopy }
+      mergeFolders = d.mergeFolders === true
       server = { username: d.username, imap: { ...d.imap }, smtp: { ...d.smtp }, password: '' }
     } catch (e) {
       details = null
@@ -68,7 +71,9 @@
     busy = true
     message = null
     try {
-      await window.doar.invoke('accounts.update', { id: details.id, patch: { ...form } })
+      const merge = mergeFolders !== (details.mergeFolders === true) ? { mergeFolders } : {}
+      await window.doar.invoke('accounts.update', { id: details.id, patch: { ...form, ...merge } })
+      details = { ...details, ...(merge.mergeFolders !== undefined ? { mergeFolders: merge.mergeFolders } : {}) }
       await loadAccounts()
       message = { text: t('account.saved'), tone: 'ok' }
     } catch (err) {
@@ -232,6 +237,12 @@
                   <label class="check">
                     <input type="checkbox" bind:checked={form.saveSentCopy} />
                     <span>{t('wizard.saveSentCopy')}<small>{t('wizard.saveSentCopy.hint')}</small></span>
+                  </label>
+                {/if}
+                {#if details.oauthProvider !== 'google'}
+                  <label class="check">
+                    <input type="checkbox" bind:checked={mergeFolders} />
+                    <span>{t('merge.setting')}<small>{t('merge.settingHint')}</small></span>
                   </label>
                 {/if}
                 <div class="row">

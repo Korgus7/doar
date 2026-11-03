@@ -7,6 +7,7 @@ import type { CoreEvents, EventChannel, ImportFolderSummary, ImportMode, ImportP
 import { canonicalize, decodeFolderPath, encodeFolderPath, sha256 } from '../export/mboxrd'
 import { DEFAULT_NAMES, toFolderInfo } from '../sync/account-sync'
 import { classifyError } from '../mail/connection-test'
+import { specialByName } from '../mail/special-names'
 import { fromAddress, normMessageId, parseEntry, readEntryAt, readMbox, weakKey, NotMboxError } from './mbox-reader'
 import { convertSource, type SourceFormat } from './sources'
 import { logger } from '../log'
@@ -120,6 +121,10 @@ export function targetDesc(mode: ImportMode, p: { doar: boolean; folderSegments:
     return 'special:archive'
   }
   if (!p.folderSegments.length) return 'fallback'
+  // Bežné názvy špeciálnych priečinkov iných programov („Sent Items“, „Trash“, „Deleted Items“…) idú do
+  // špeciálneho priečinka cieľa – nevznikne druhý Kôš ani druhé Odoslané.
+  const alias = specialByName(p.folderSegments)
+  if (alias) return `special:${alias}`
   return `path:${encodeFolderPath(p.folderSegments)}`
 }
 

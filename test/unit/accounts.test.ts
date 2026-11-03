@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import { openDb, type Db } from '../../src/core/store/db'
-import { addAccount, listAccounts, validateSettings } from '../../src/core/accounts'
+import { addAccount, listAccounts, saveServerSettings, validateSettings } from '../../src/core/accounts'
 import { MemorySecrets, passwordKey } from '../../src/core/secrets'
 import { classifyError } from '../../src/core/mail/connection-test'
 import type { AccountSettings } from '../../src/shared/ipc'
@@ -51,6 +51,12 @@ describe('kontá', () => {
     const s = new MemorySecrets()
     await addAccount(db, s, s, { settings, password: 'x', rememberPassword: true })
     await expect(addAccount(db, s, s, { settings: { ...settings, email: 'JAN@firma.sk' }, password: 'x', rememberPassword: true })).rejects.toMatchObject({ code: 'ACCOUNT_EXISTS' })
+    // Iná adresa, ale rovnaké prihlasovacie meno na tom istom serveri = tá istá schránka.
+    await expect(addAccount(db, s, s, { settings: { ...settings, email: 'info@firma.sk', username: 'Jan@firma.sk' }, password: 'x', rememberPassword: true })).rejects.toMatchObject({
+      code: 'ACCOUNT_EXISTS'
+    })
+    const other = await addAccount(db, s, s, { settings: { ...settings, email: 'info@firma.sk', username: 'info@firma.sk' }, password: 'x', rememberPassword: true })
+    await expect(saveServerSettings(db, s, s, other.id, { username: 'jan@firma.sk', imap: settings.imap, smtp: settings.smtp })).rejects.toMatchObject({ code: 'ACCOUNT_SAME_MAILBOX' })
   })
 
   it('ak sa heslo nepodarí uložiť, konto nevznikne', async () => {

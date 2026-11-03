@@ -7,6 +7,7 @@
   import MessageList from './MessageList.svelte'
   import Reader from './Reader.svelte'
   import OutboxBanner from './OutboxBanner.svelte'
+  import MergeBanner from './MergeBanner.svelte'
   import UpdateBanner from './UpdateBanner.svelte'
   import ContextMenu from './ContextMenu.svelte'
   import MoveDialog from './MoveDialog.svelte'
@@ -226,6 +227,7 @@
   </div>
   <UpdateBanner />
   <OutboxBanner />
+  <MergeBanner />
   <div class="panes" style:grid-template-columns={`${widths.folders}px 5px ${widths.list}px 5px minmax(0, 1fr)`}>
     <FolderPane />
     <!-- Posúvateľný oddeľovač je podľa ARIA interaktívny prvok (ovládanie šípkami). -->

@@ -35,6 +35,8 @@ export interface AccountDetails extends AccountSummary {
   imap: ServerSettings
   smtp: ServerSettings
   saveSentCopy: boolean
+  /** Zlučovanie priečinkov iných programov: zapnuté, vypnuté, alebo sa ešte nepýtal (null). */
+  mergeFolders: boolean | null
   passwordStorage: 'os' | 'session'
   /** Prihlásenie heslom, alebo cez účet poskytovateľa. */
   authType: 'password' | 'oauth2'
@@ -104,12 +106,21 @@ export interface MailAddressItem {
   count: number
 }
 
+/** Priečinky iného programu, ktoré sa dajú zlúčiť so špeciálnymi priečinkami konta. */
+export interface MergeOffer {
+  accountId: number
+  email: string
+  folders: { name: string; into: SpecialUse }[]
+}
+
 export interface AccountPatch {
   displayName?: string
   name?: string
   color?: string
   signature?: string
   saveSentCopy?: boolean
+  /** Zlučovať priečinky iných programov (Trash, Sent Items…) do Koša, Odoslaných a Spamu. */
+  mergeFolders?: boolean
 }
 
 /** Všeobecné nastavenia aplikácie (v databáze, tabuľka settings). */
@@ -797,6 +808,10 @@ export interface CoreRequests {
   'folders.create': [{ accountId: number; parentId: number | null; name: string }, { folderId: number }]
   /** Odstráni priečinok aj s podpriečinkami; správy presunie do Koša (Gmail: zruší len štítok). */
   'folders.delete': [{ folderId: number }, { moved: number; labelsOnly: boolean }]
+  /** Kontá s priečinkami iných programov (Trash, Sent Items…), pri ktorých sa Doar ešte nepýtal na zlučovanie. */
+  'folders.mergeOffers': [void, MergeOffer[]]
+  /** Odpoveď na ponuku: áno = zlúčiť hneď a odteraz automaticky; nie = už sa nepýtať. */
+  'folders.mergeAnswer': [{ accountId: number; merge: boolean }, { moved: number; duplicates: number }]
   /** Premenuje priečinok a/alebo ho presunie pod iný (parentId null = najvyššia úroveň); podpriečinky idú s ním. */
   'folders.rename': [{ folderId: number; name: string; parentId: number | null }, void]
   'contacts.list': [{ query?: string; groupId?: number }, Contact[]]
@@ -917,6 +932,8 @@ export interface CoreEvents {
   'sync.status': SyncStatus
   'accounts.changed': null
   'folders.changed': { accountId: number }
+  /** Pribudla ponuka na zlúčenie priečinkov iných programov, alebo sa zlúčili automaticky. */
+  'folders.mergeOffer': null
   'messages.changed': { folderIds: number[] }
   'outbox.changed': null
   'export.progress': ExportProgress
@@ -979,6 +996,8 @@ export const REQUEST_CHANNELS = [
   'messages.listIds',
   'folders.create',
   'folders.delete',
+  'folders.mergeOffers',
+  'folders.mergeAnswer',
   'folders.rename',
   'contacts.list',
   'contacts.groups',

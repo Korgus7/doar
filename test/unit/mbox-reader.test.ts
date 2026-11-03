@@ -146,5 +146,11 @@ describe('čítanie mbox prúdom', () => {
     expect(targetDesc('restore', { ...gm, gmailLabels: ['\\Important', 'Práca/2026'] })).toBe('path:Pr%C3%A1ca/2026')
     expect(targetDesc('restore', { ...gm, gmailLabels: [] })).toBe('special:archive')
     expect(targetDesc('restore', { ...base, specialUse: '\\Trash' })).toBe('special:trash')
+    // Priečinky iných programov s názvom špeciálneho priečinka nevytvoria druhý Kôš ani druhé Odoslané.
+    expect(targetDesc('restore', { ...base, folderSegments: ['Sent Items'] })).toBe('special:sent')
+    expect(targetDesc('restore', { ...base, folderSegments: ['INBOX', 'Trash'] })).toBe('special:trash')
+    expect(targetDesc('restore', { ...base, folderSegments: ['Deleted Messages'] })).toBe('special:trash')
+    expect(targetDesc('restore', { ...base, folderSegments: ['Junk E-mail'] })).toBe('special:junk')
+    expect(targetDesc('restore', { ...base, folderSegments: ['Projekty', 'Trash'] })).toBe('path:Projekty/Trash')
   })
 })

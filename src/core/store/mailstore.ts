@@ -175,20 +175,34 @@ export class MailStore {
       return out
     }
     const sortKey = (r: (typeof rows)[number]): string => (r.delimiter === null ? chain(r).map((x) => x.name).join('\u0001') : r.path)
-    const items = rows.map((r) => ({
-      sortKey: sortKey(r),
-      id: r.id,
-      accountId: r.accountId,
-      path: r.path,
-      name: r.name,
-      parentPath: r.parentPath,
-      specialUse: r.specialUse,
-      selectable: !!r.selectable,
-      unread: r.unread,
-      total: r.total,
-      localCount: r.localCount,
-      depth: !r.parentPath ? 0 : r.delimiter === null ? chain(r).length - 1 : r.path.split(r.delimiter).length - 1
-    }))
+    // Servery, kde sú všetky priečinky pod INBOX (menný priestor „INBOX.“): Doručená pošta sa nezobrazí ako
+    // rozbaľovací priečinok – jej podpriečinky (Odoslané, Kôš, vlastné…) sú na najvyššej úrovni ako vo webmaile.
+    const underInbox = new Set<number>()
+    for (const acc of new Set(rows.map((r) => r.accountId))) {
+      const own = rows.filter((r) => r.accountId === acc && r.delimiter !== null)
+      const inbox = own.find((r) => r.path.toUpperCase() === 'INBOX' && r.parentPath === null)
+      if (!inbox || !own.some((r) => r.parentPath === inbox.path)) continue
+      if (own.some((r) => r.parentPath === null && r.id !== inbox.id)) continue
+      underInbox.add(acc)
+    }
+    const items = rows.map((r) => {
+      const flat = underInbox.has(r.accountId) && r.parentPath !== null
+      const depth = !r.parentPath ? 0 : r.delimiter === null ? chain(r).length - 1 : r.path.split(r.delimiter).length - 1
+      return {
+        sortKey: sortKey(r),
+        id: r.id,
+        accountId: r.accountId,
+        path: r.path,
+        name: r.name,
+        parentPath: flat && r.parentPath!.toUpperCase() === 'INBOX' ? null : r.parentPath,
+        specialUse: r.specialUse,
+        selectable: !!r.selectable,
+        unread: r.unread,
+        total: r.total,
+        localCount: r.localCount,
+        depth: flat ? depth - 1 : depth
+      }
+    })
     return items
       .sort(
         (a, b) =>

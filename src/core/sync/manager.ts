@@ -3,13 +3,18 @@ import type { BlobStore } from '../store/blobs'
 import type { MailStore } from '../store/mailstore'
 import type { Secrets } from '../secrets'
 import { passwordKey } from '../secrets'
-import type { CoreEvents, EventChannel, SyncStatus } from '../../shared/ipc'
+import type { CoreEvents, EventChannel, MergeOffer, SpecialUse, SyncStatus } from '../../shared/ipc'
 import type { ImapFlow } from 'imapflow'
 import { AccountSync, type AccountRow, type MovePayload, type SyncDeps } from './account-sync'
 import { GraphSync } from './graph-sync'
 import { GraphClient, type GraphFetch } from '../graph/client'
 import { createImapClient } from '../mail/imap'
 import type { OAuthService } from '../oauth/oauth'
+import { logger } from '../log'
+import { getMergePref, setMergePref } from '../accounts'
+import { specialByName } from '../mail/special-names'
+
+const log = logger('sync')
 
 /** Synchronizácia jedného konta: IMAP + SMTP, alebo Microsoft Graph. */
 export type MailSync = AccountSync | GraphSync
@@ -50,7 +55,10 @@ export class SyncManager {
       db: opts.db,
       store: opts.store,
       blobs: opts.blobs,
-      emit: opts.emit,
+      emit: (ch, data) => {
+        opts.emit(ch, data)
+        if (ch === 'sync.status') this.afterStatus(data as SyncStatus)
+      },
       clientFactory: opts.clientFactory,
       smtpSend: opts.smtpSend,
       onNewMail: opts.onNewMail,
@@ -168,7 +176,7 @@ export class SyncManager {
    * Správy sa hneď skryjú; na serveri sa presun vykoná až po uplynutí času na „Vrátiť späť“.
    * Vráti ID operácií pre „Vrátiť späť“.
    */
-  moveMessages(ids: number[], target: { folderId?: number; special?: 'trash' | 'archive' | 'junk' | 'inbox' }): { undo: number[]; count: number } {
+  moveMessages(ids: number[], target: { folderId?: number; special?: 'trash' | 'archive' | 'junk' | 'inbox' }, delayMs = this.undoDelayMs): { undo: number[]; count: number } {
     const store = this.deps.store
     const released = this.releasePendingMoves(ids)
     const groups = new Map<number, { accountId: number; fromFolderId: number; uids: number[]; messageIds: number[] }>()
@@ -206,7 +214,7 @@ export class SyncManager {
     }
     const undo: number[] = []
     let count = 0
-    const notBefore = new Date(Date.now() + this.undoDelayMs)
+    const notBefore = new Date(Date.now() + delayMs)
     for (const { g, payload } of plans) {
       store.setHidden(g.messageIds, true)
       // V cieľovom priečinku sa správa ukáže hneď (so značkou „presúva sa“); na server ide po čase na „Vrátiť späť“.
@@ -320,6 +328,150 @@ export class SyncManager {
     const s = this.syncs.get(folder.account_id)
     if (!s) throw Object.assign(new Error('Konto neexistuje'), { code: 'NO_ACCOUNT' })
     return s.deleteFolder(folder.path)
+  }
+
+  /** Kontá, v ktorých práve prebieha zlučovanie (aby ho synchronizácia počas neho nespustila znova). */
+  private merging = new Set<number>()
+  private lastSyncSeen = new Map<number, string>()
+
+  /** Po dokončenej synchronizácii: priečinky iných programov zlúčiť (ak to používateľ chce), alebo ich ponúknuť. */
+  private afterStatus(st: SyncStatus): void {
+    if (st.state !== 'idle' || !st.lastSync || this.lastSyncSeen.get(st.accountId) === st.lastSync) return
+    this.lastSyncSeen.set(st.accountId, st.lastSync)
+    if (this.merging.has(st.accountId) || !this.mergeCandidates(st.accountId).length) return
+    const pref = getMergePref(this.deps.db, st.accountId)
+    if (pref === true) void this.mergeOtherFolders(st.accountId).catch(() => {})
+    else if (pref === null) this.deps.emit('folders.mergeOffer', null)
+  }
+
+  /**
+   * Priečinky iných programov s názvom Koša, Odoslaných, Spamu alebo Konceptov (Trash, Deleted Items, Sent Items, Junk E-mail, Drafts…),
+   * keď konto už má vlastný špeciálny priečinok tej funkcie. Len bez podpriečinkov; Gmail nie (štítky).
+   */
+  mergeCandidates(accountId: number): { sourceId: number; targetId: number; name: string; into: SpecialUse }[] {
+    const store = this.deps.store
+    const acc = this.deps.db.prepare('SELECT provider_key FROM accounts WHERE id = ?').get(accountId) as { provider_key: string | null } | undefined
+    if (!acc || acc.provider_key === 'gmail') return []
+    const folders = store.listFolders(accountId)
+    if (folders.some((f) => /^\[(Gmail|Google Mail)\]/.test(f.path))) return []
+    const out: { sourceId: number; targetId: number; name: string; into: SpecialUse }[] = []
+    for (const f of folders) {
+      if (f.specialUse || !f.selectable || f.path.toUpperCase() === 'INBOX') continue
+      if (folders.some((x) => x.parentPath === f.path)) continue
+      const segs = f.parentPath === null ? [f.name] : f.parentPath.toUpperCase() === 'INBOX' ? ['INBOX', f.name] : null
+      const use = segs ? specialByName(segs) : null
+      if (use !== 'trash' && use !== 'sent' && use !== 'junk' && use !== 'drafts') continue
+      const target = store.specialFolder(accountId, use)
+      if (!target || target.id === f.id || !target.selectable) continue
+      out.push({ sourceId: f.id, targetId: target.id, name: f.name, into: use })
+    }
+    return out
+  }
+
+  /** Ponuky na zlúčenie: kontá s priečinkami iných programov, pri ktorých sa Doar ešte nepýtal. */
+  mergeOffers(): MergeOffer[] {
+    const rows = this.deps.db.prepare('SELECT id, email FROM accounts ORDER BY sort_order, id').all() as { id: number; email: string }[]
+    return rows
+      .filter((r) => getMergePref(this.deps.db, r.id) === null)
+      .map((r) => ({ accountId: r.id, email: r.email, folders: this.mergeCandidates(r.id).map((c) => ({ name: c.name, into: c.into })) }))
+      .filter((o) => o.folders.length)
+  }
+
+  /** Odpoveď na ponuku. Áno: zlúčiť hneď a odteraz po každej synchronizácii. Nie: už sa nepýtať. */
+  async answerMerge(accountId: number, merge: boolean): Promise<{ moved: number; duplicates: number }> {
+    if (!this.deps.db.prepare('SELECT id FROM accounts WHERE id = ?').get(accountId)) throw Object.assign(new Error('Konto neexistuje'), { code: 'NO_ACCOUNT' })
+    setMergePref(this.deps.db, accountId, merge)
+    this.deps.emit('folders.mergeOffer', null)
+    return merge ? this.mergeOtherFolders(accountId) : { moved: 0, duplicates: 0 }
+  }
+
+  /** Zlúči všetky priečinky iných programov konta do Koša, Odoslaných, Spamu a Konceptov. */
+  async mergeOtherFolders(accountId: number): Promise<{ moved: number; duplicates: number }> {
+    const total = { moved: 0, duplicates: 0 }
+    if (this.merging.has(accountId)) return total
+    this.merging.add(accountId)
+    try {
+      for (const c of this.mergeCandidates(accountId)) {
+        try {
+          const r = await this.mergeFolder(c.sourceId, c.targetId)
+          total.moved += r.moved
+          total.duplicates += r.duplicates
+        } catch (e) {
+          log.warn('priečinky sa nepodarilo zlúčiť', { account: accountId, code: (e as { code?: string }).code })
+        }
+      }
+    } finally {
+      this.merging.delete(accountId)
+    }
+    if (total.moved || total.duplicates) this.deps.emit('folders.mergeOffer', null)
+    return total
+  }
+
+  /**
+   * Zlúčenie priečinka do iného v tom istom konte (napr. „Sent Items“ do Odoslaných, „Trash“ do Koša).
+   * Správy, ktoré v cieli ešte nie sú, sa presunú tam; tie, ktoré tam už sú (rovnaké Message-ID, odosielateľ a dátum),
+   * idú do Koša – nič sa nemaže natrvalo. Prázdny zdrojový priečinok sa potom odstráni.
+   * Gmail: priečinky sú štítky jednej správy, takže sa všetko len preštítkuje (do Koša nejde nič).
+   */
+  async mergeFolder(sourceId: number, targetId: number): Promise<{ moved: number; duplicates: number; deleted: boolean; remaining: number }> {
+    const store = this.deps.store
+    const e = (code: string, msg: string): Error => Object.assign(new Error(msg), { code })
+    const src = store.folder(sourceId)
+    const dst = store.folder(targetId)
+    if (!src || !dst || !dst.selectable) throw e('NO_TARGET', 'Priečinok neexistuje')
+    if (src.account_id !== dst.account_id) throw e('CROSS_ACCOUNT', 'Zlúčiť sa dajú len priečinky toho istého konta')
+    if (src.id === dst.id) throw e('NO_TARGET', 'Priečinok sa nedá zlúčiť sám so sebou')
+    if (src.special_use || src.path.toUpperCase() === 'INBOX') throw e('FOLDER_PROTECTED', 'Tento priečinok sa zlúčiť nedá')
+    const s = this.syncs.get(src.account_id)
+    if (!s) throw e('NO_ACCOUNT', 'Konto neexistuje')
+    const rows = store.folderRows(src.account_id)
+    if (store.listFolders(src.account_id).some((f) => f.parentPath === src.path)) throw e('FOLDER_HAS_CHILDREN', 'Priečinok má podpriečinky')
+    const acc = this.deps.db.prepare('SELECT provider_key FROM accounts WHERE id = ?').get(src.account_id) as { provider_key: string | null } | undefined
+    const gmail = acc?.provider_key === 'gmail' || rows.some((f) => /^\[(Gmail|Google Mail)\]/.test(f.path))
+
+    // Najprv aktuálny stav zo servera, aby sa porovnávali všetky správy.
+    await s.pushOperations().catch(() => {})
+    await s.requestSync()
+    const list = this.deps.db.prepare(
+      `SELECT id, message_id AS mid, from_addr AS fromAddr, date_header AS dateHeader, subject, size FROM messages
+       WHERE folder_id = ? AND hidden = 0 AND moving_to IS NULL`
+    )
+    type R = { id: number; mid: string | null; fromAddr: string; dateHeader: string | null; subject: string; size: number }
+    const key = (r: R): string => {
+      const mid = (r.mid ?? '').replace(/[<>\s]/g, '').toLowerCase()
+      const from = r.fromAddr.trim().toLowerCase()
+      return mid ? `m|${mid}|${from}|${r.dateHeader ?? ''}` : `h|${from}|${r.dateHeader ?? ''}|${r.subject}|${r.size}`
+    }
+    const inTarget = new Map<string, number>()
+    for (const r of list.all(dst.id) as R[]) inTarget.set(key(r), (inTarget.get(key(r)) ?? 0) + 1)
+    const toMove: number[] = []
+    const dups: number[] = []
+    const intoTrash = dst.special_use === 'trash'
+    for (const r of list.all(src.id) as R[]) {
+      const k = key(r)
+      const n = inTarget.get(k) ?? 0
+      if (n > 0 && !gmail && !intoTrash) {
+        inTarget.set(k, n - 1)
+        dups.push(r.id)
+      } else {
+        // Každá správa v cieli „pokryje“ najviac jednu zo zdroja – ďalšia kópia v zdroji je tiež duplicita.
+        if (!gmail && !intoTrash) inTarget.set(k, 0)
+        toMove.push(r.id)
+      }
+    }
+    // Presuny hneď (bez čakania na „Vrátiť späť“) – priečinok sa potom odstraňuje.
+    if (toMove.length) this.moveMessages(toMove, { folderId: dst.id }, 0)
+    if (dups.length) this.moveMessages(dups, { special: 'trash' }, 0)
+    await s.pushOperations()
+    await s.requestSync()
+    const remaining = (this.deps.db.prepare('SELECT COUNT(*) AS n FROM messages WHERE folder_id = ? AND hidden = 0').get(src.id) as { n: number }).n
+    let deleted = false
+    if (remaining === 0) {
+      await s.deleteFolder(src.path)
+      deleted = true
+    }
+    log.info('priečinky zlúčené', { account: src.account_id, moved: toMove.length, duplicates: dups.length, deleted, remaining })
+    return { moved: toMove.length, duplicates: dups.length, deleted, remaining }
   }
 
   private afterLocalChange(folderIds: number[]): void {

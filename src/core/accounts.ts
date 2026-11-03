@@ -103,6 +103,7 @@ export function getAccount(db: Db, id: number): AccountDetails {
     imap: { host: r.imap_host, port: r.imap_port, security: r.imap_security },
     smtp: { host: r.smtp_host, port: r.smtp_port, security: r.smtp_security },
     saveSentCopy: r.save_sent_copy === 1,
+    mergeFolders: getMergePref(db, r.id),
     passwordStorage: r.password_storage,
     authType: r.auth_type,
     oauthProvider: r.auth_type === 'oauth2' ? oauthProviderOf(r.provider_key) : null,
@@ -160,8 +161,22 @@ export function updateAccount(db: Db, id: number, patch: AccountPatch): AccountS
     sets.push('save_sent_copy = ?')
     args.push(patch.saveSentCopy ? 1 : 0)
   }
+  if (typeof patch?.mergeFolders === 'boolean') setMergePref(db, id, patch.mergeFolders)
   if (sets.length) db.prepare(`UPDATE accounts SET ${sets.join(', ')} WHERE id = ?`).run(...args, id)
   return accountSummary(db, id)!
+}
+
+const mergeKey = (id: number): string => `mergeFolders.${id}`
+
+/** Zlučovanie priečinkov iných programov (Trash, Sent Items…): true, false, alebo null = Doar sa ešte nepýtal. */
+export function getMergePref(db: Db, id: number): boolean | null {
+  const r = db.prepare('SELECT value_json FROM settings WHERE key = ?').get(mergeKey(id)) as { value_json: string } | undefined
+  return r ? r.value_json === 'true' : null
+}
+
+export function setMergePref(db: Db, id: number, value: boolean | null): void {
+  if (value === null) db.prepare('DELETE FROM settings WHERE key = ?').run(mergeKey(id))
+  else db.prepare('INSERT INTO settings (key, value_json) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json').run(mergeKey(id), JSON.stringify(value))
 }
 
 /** Uloží nové nastavenia servera (už overené) a prípadne nové heslo – do toho istého úložiska ako doteraz. */
@@ -174,6 +189,10 @@ export async function saveServerSettings(
   password?: string
 ): Promise<void> {
   const acc = getAccount(db, id)
+  const same = db
+    .prepare('SELECT id FROM accounts WHERE id <> ? AND lower(imap_host) = lower(?) AND lower(username) = lower(?)')
+    .get(id, s.imap.host, s.username)
+  if (same) throw Object.assign(new Error('Tú istú schránku už používa iné konto'), { code: 'ACCOUNT_SAME_MAILBOX' })
   if (password) await (acc.passwordStorage === 'os' ? secrets : sessionSecrets).set(passwordKey(id), password)
   db.prepare(
     `UPDATE accounts SET username = ?, imap_host = ?, imap_port = ?, imap_security = ?, smtp_host = ?, smtp_port = ?, smtp_security = ? WHERE id = ?`
@@ -216,9 +235,10 @@ export async function addAccount(db: Db, secrets: Secrets, sessionSecrets: Secre
     throw err('SECURE_STORAGE_UNAVAILABLE', 'Bezpečné úložisko hesiel systému nie je dostupné')
   }
 
+  // To isté konto = rovnaká adresa alebo rovnaké prihlasovacie meno na tom istom serveri (tá istá schránka).
   const exists = db
-    .prepare('SELECT id FROM accounts WHERE lower(email) = lower(?) AND lower(imap_host) = lower(?)')
-    .get(settings.email, settings.imap.host)
+    .prepare('SELECT id FROM accounts WHERE lower(imap_host) = lower(?) AND (lower(email) = lower(?) OR lower(username) = lower(?))')
+    .get(settings.imap.host, settings.email, settings.username)
   if (exists) throw err('ACCOUNT_EXISTS', 'Toto konto už je pridané')
 
   const count = (db.prepare('SELECT COUNT(*) AS c FROM accounts').get() as { c: number }).c

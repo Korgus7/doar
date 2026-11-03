@@ -20,6 +20,12 @@ function rejected(what: string): Error {
   return Object.assign(new Error(`Server odmietol zmenu (${what})`), { code: 'REJECTED' })
 }
 
+/** Cesta priečinka na najvyššej úrovni: na serveroch s menným priestorom „INBOX.“ je to INBOX.názov. */
+function topLevel(client: ImapFlow, name: string): string {
+  const prefix = client.namespace?.prefix || ''
+  return prefix && !name.toUpperCase().startsWith(prefix.toUpperCase()) ? prefix + name : name
+}
+
 export const DEFAULT_NAMES = { sent: 'Sent', trash: 'Trash', archive: 'Archive', junk: 'Junk', drafts: 'Drafts' } as const
 
 const HEADER_CHUNK = 250
@@ -619,7 +625,7 @@ export class AccountSync {
       const list = await client.list()
       const delimiter = list.find((f) => f.delimiter)?.delimiter || '/'
       if (name.includes(delimiter)) throw Object.assign(new Error('Názov obsahuje oddeľovač priečinkov'), { code: 'INVALID_FOLDER_NAME' })
-      const path = parentPath ? `${parentPath}${delimiter}${name}` : name
+      const path = parentPath ? `${parentPath}${delimiter}${name}` : topLevel(client, name)
       if (list.some((f) => f.path.toLowerCase() === path.toLowerCase())) throw Object.assign(new Error('Priečinok už existuje'), { code: 'FOLDER_EXISTS' })
       try {
         await client.mailboxCreate(path)
@@ -651,7 +657,7 @@ export class AccountSync {
       if (subtree.some((f) => f.path.toUpperCase() === 'INBOX' || !!f.specialUse || !!local.get(f.path)?.special_use)) {
         throw Object.assign(new Error('Tento priečinok sa nedá premenovať'), { code: 'FOLDER_PROTECTED' })
       }
-      const newPath = parentPath ? `${parentPath}${delimiter}${name}` : name
+      const newPath = parentPath ? `${parentPath}${delimiter}${name}` : topLevel(client, name)
       if (newPath === oldPath) return
       if (parentPath !== null && (parentPath === oldPath || parentPath.startsWith(`${oldPath}${delimiter}`))) {
         throw Object.assign(new Error('Priečinok sa nedá presunúť do seba'), { code: 'FOLDER_INTO_ITSELF' })

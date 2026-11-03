@@ -152,6 +152,37 @@ describe('presuny a mazanie', () => {
     await until(() => visible(folder('trash').id).some((m) => m.subject === 'Z ešte staršieho'))
   })
 
+  it('priečinky iných programov: ponuka, zlúčenie (chýbajúce do cieľa, duplicity do Koša), prázdny priečinok zmizne', async () => {
+    await other.mailboxCreate('Sent Items')
+    const sent = folder('sent')?.path ?? 'Sent'
+    if (!(await other.list()).some((f) => f.path === sent)) await other.mailboxCreate(sent)
+    await other.append(sent, msg('Už odoslaná'), ['\\Seen'])
+    await other.append('Sent Items', msg('Už odoslaná'), ['\\Seen'])
+    await other.append('Sent Items', msg('Len v Sent Items'), ['\\Seen'])
+    await sync.syncNow(accountId)
+    await until(() => !!byPath('Sent Items') && visible(byPath('Sent Items')!.id).length === 2)
+    const src = byPath('Sent Items')!
+    const dst = folder('sent')
+    await expect(sync.mergeFolder(folder('inbox').id, dst.id)).rejects.toMatchObject({ code: 'FOLDER_PROTECTED' })
+    // Ponuka: priečinok iného programu s názvom Odoslaných; po „Zlúčiť“ sa už neponúka.
+    expect(sync.mergeOffers()).toEqual([{ accountId, email: USER, folders: [{ name: 'Sent Items', into: 'sent' }] }])
+    expect(sync.mergeCandidates(accountId)).toEqual([{ sourceId: src.id, targetId: dst.id, name: 'Sent Items', into: 'sent' }])
+    expect(await sync.answerMerge(accountId, true)).toEqual({ moved: 1, duplicates: 1 })
+    expect(sync.mergeOffers()).toEqual([])
+    expect((await other.list()).some((f) => f.path === 'Sent Items')).toBe(false)
+    expect(byPath('Sent Items')).toBeUndefined()
+    expect((await serverSubjects(dst.path)).filter((x) => x === 'Už odoslaná')).toHaveLength(1)
+    expect(await serverSubjects(dst.path)).toContain('Len v Sent Items')
+    expect(await serverSubjects('Trash')).toContain('Už odoslaná')
+
+    // Odteraz automaticky: priečinok iného programu sa zlúči pri synchronizácii.
+    await other.mailboxCreate('Deleted Items')
+    await other.append('Deleted Items', msg('Zo starého Outlooku'), [])
+    await sync.syncNow(accountId)
+    await until(async () => !(await other.list()).some((f) => f.path === 'Deleted Items'))
+    expect(await serverSubjects('Trash')).toContain('Zo starého Outlooku')
+  })
+
   it('premenovanie a presun priečinka: správy aj ID ostanú, podpriečinky idú s ním', async () => {
     const parentId = await sync.createFolder(accountId, null, 'Klienti')
     const childId = await sync.createFolder(accountId, parentId, 'Firma A')
