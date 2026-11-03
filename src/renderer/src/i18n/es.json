@@ -193,6 +193,7 @@
   "reader.date": "Fecha",
   "reader.remoteBlocked": "Las imágenes remotas están bloqueadas para que el remitente no pueda saber cuándo abriste el mensaje.",
   "reader.showImages": "Mostrar imágenes",
+  "reader.loadingImages": "Cargando imágenes…",
   "reader.alwaysSender": "Siempre de {sender}",
   "reader.attachments": "Archivos adjuntos ({n})",
   "reader.loading": "Cargando el mensaje…",

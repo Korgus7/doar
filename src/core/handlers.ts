@@ -52,7 +52,7 @@ export interface CoreContext {
   net: DiscoveryNet
   emit<E extends EventChannel>(ch: E, data: CoreEvents[E]): void
   /** Stiahnutie vzdialených obrázkov (v testoch sa dá nahradiť). */
-  fetchRemote?: (urls: string[]) => Promise<Map<string, string>>
+  fetchRemote?: (urls: string[], opts?: { onLate?: () => void }) => Promise<Map<string, string>>
   /** Sieť pre AI (v testoch falošný server). */
   aiFetch?: FetchFn
   /** Prihlásenie cez Microsoft/Google – rovnaký objekt používa synchronizácia. */

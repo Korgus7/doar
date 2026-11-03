@@ -20,6 +20,8 @@
   let view = $state<MessageView | null>(null)
   let error = $state<string | null>(null)
   let loading = $state(false)
+  /** Správa, pre ktorú sa práve sťahujú vzdialené obrázky (tlačidlo „Zobraziť obrázky“). */
+  let remoteLoading = $state<number | null>(null)
   let frame: HTMLIFrameElement | undefined = $state()
   let seq = 0
   /** Konverzácia otvorenej správy (zo všetkých priečinkov konta) – len ak má viac správ. */
@@ -62,6 +64,25 @@
       if (my === seq) loading = false
     }
   }
+
+  /** Zobraziť obrázky: hneď viditeľné, že sa niečo deje (tlačidlá sa vypnú, text „Načítavam obrázky…“). */
+  async function showImages(always: boolean): Promise<void> {
+    if (!view || remoteLoading !== null) return
+    const id = view.id
+    remoteLoading = id
+    try {
+      await load(id, { showRemote: true, ...(always ? { alwaysForSender: true } : {}) })
+    } finally {
+      if (remoteLoading === id) remoteLoading = null
+    }
+  }
+
+  // Pomalšie obrázky dobehli na pozadí – správu zobraziť znova (obrázky sú už v pamäti jadra, je to hneď).
+  $effect(() =>
+    window.doar.on('messages.remoteReady', ({ id }) => {
+      if (view?.id === id && view.remoteShown && remoteLoading === null) void load(id, { showRemote: true })
+    })
+  )
 
   $effect(() => {
     const id = mail.selectedId
@@ -330,9 +351,13 @@ img{max-width:100%;height:auto}.doar-inline-img{margin:12px 0}table{max-width:10
         <div class="banner" role="note">
           <span>🛡 {t('reader.remoteBlocked')}</span>
           <span class="banner-actions">
-            <button class="btn small" onclick={() => view && load(view.id, { showRemote: true })}>{t('reader.showImages')}</button>
-            {#if sender}
-              <button class="btn small" onclick={() => view && load(view.id, { showRemote: true, alwaysForSender: true })}>{t('reader.alwaysSender', { sender })}</button>
+            {#if remoteLoading === view.id}
+              <span class="busy" role="status"><span class="spin" aria-hidden="true">⟳</span> {t('reader.loadingImages')}</span>
+            {:else}
+              <button class="btn small" onclick={() => void showImages(false)}>{t('reader.showImages')}</button>
+              {#if sender}
+                <button class="btn small" onclick={() => void showImages(true)}>{t('reader.alwaysSender', { sender })}</button>
+              {/if}
             {/if}
           </span>
         </div>
@@ -432,6 +457,11 @@ img{max-width:100%;height:auto}.doar-inline-img{margin:12px 0}table{max-width:10
   header {
     padding: 1rem 1.25rem 0.6rem;
     border-bottom: 1px solid var(--border);
+    /* Hlavička správy (predmet, tlačidlá, Od/Komu) na teplom sivom podklade – oddelená od textu správy. */
+    background: var(--surface-3);
+  }
+  header .icon:hover {
+    background: color-mix(in srgb, var(--text) 8%, var(--surface-3));
   }
   .titlebar {
     display: flex;
@@ -597,6 +627,27 @@ img{max-width:100%;height:auto}.doar-inline-img{margin:12px 0}table{max-width:10
     display: flex;
     gap: 0.3rem;
     flex-wrap: wrap;
+  }
+  .busy {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35em;
+    padding: 0.05em 0.5em;
+    font-weight: 600;
+  }
+  .spin {
+    display: inline-block;
+    animation: spin 1s linear infinite;
+  }
+  @keyframes spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .spin {
+      animation: none;
+    }
   }
   .banner .btn.small {
     padding: 0.05em 0.5em;

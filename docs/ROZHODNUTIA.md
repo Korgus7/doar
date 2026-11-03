@@ -422,9 +422,21 @@ Používateľ si vybral sadu funkcií naraz („nebudeme robiť verziu zakaždý
 - **Tá istá schránka dvakrát:** konto sa nepridá, ak už je v Doare konto s rovnakým serverom IMAP a rovnakým prihlasovacím menom (aj s inou adresou); zmena nastavení servera na meno iného konta skončí chybou `ACCOUNT_SAME_MAILBOX`.
 - Overené: unit testy (názvy pri obnove, tá istá schránka), integračný test proti Dovecotu (ponuka, zlúčenie Sent Items do Odoslaných – 1 presunutá, 1 duplicita v Koši, priečinok zmizol aj na serveri; potom automatické zlúčenie Deleted Items do Koša pri synchronizácii), e2e bez zmeny. Neoverené: pruh a voľba v nastaveniach v rozhraní (e2e), Microsoft Graph naostro.
 
-## 2026-11-03 – vlastná doména
+## 2026-11-03 – vlastná doména doar.sk
 
-- Stránka sa presúva na **https://doar.sk**, kontakt **info@doar.sk** (O aplikácii, README, ochrana súkromia na stránke – e-mail vedľa GitHub Issues). Overenie u Googlu (OAuth) a Microsoftu sa bude viazať na doménu doar.sk.
+- Stránka Doaru sa presunula z `cami.sk/doar` na vlastnú doménu **https://doar.sk** (súbory v `site/`, na serveri v koreni domény). `site/.htaccess` presmeruje http a www na https://doar.sk.
+- `cami.sk/doar` trvalo presmeruje (301) na doar.sk, aby fungovali staré odkazy aj okno O aplikácii v starších verziách.
+- O aplikácii (`WEBSITE` v `src/main/menu.ts`) a README odkazujú na https://doar.sk, kontakt **info@doar.sk** (O aplikácii, README, `package.json`, ochrana súkromia na stránke – e-mail vedľa GitHub Issues). Zásady súkromia sú na `https://doar.sk/#sukromie` – rovnakú adresu treba uviesť v Google Cloud (obrazovka súhlasu OAuth); overenie u Googlu a Microsoftu sa bude viazať na doménu doar.sk.
+
+## 2026-11-03 – rýchlejšie „Zobraziť obrázky“
+
+- Po kliknutí na „Zobraziť obrázky“ sa tlačidlá hneď zmenia na „Načítavam obrázky…“ s otáčajúcou sa ikonou (predtým nebolo vidno, či sa niečo deje).
+- Správa sa zobrazí najneskôr po 2,5 s s obrázkami, ktoré dovtedy prišli; pomalé servery (sledovacie pixely, preťažené CDN) ju nezdržia. Zvyšné obrázky sa sťahujú ďalej (najviac 15 s na obrázok) a keď dobehnú, správa sa zobrazí znova (udalosť `messages.remoteReady`).
+- Stiahnuté obrázky si jadro pamätá do zatvorenia aplikácie (najviac 64 MB, najstaršie preč; neúspešné sa skúsia znova po 10 min). Ďalšie otvorenie správy, odosielateľ s „Vždy zobrazovať“ a preklad správy už nesťahujú znova. Najviac 120 obrázkov na správu (predtým 60), rovnaká adresa sa sťahuje raz.
+
+## 2026-11-03 – hlavička správy na sivom podklade (1.0.4)
+
+- Hlavička otvorenej správy (predmet, tlačidlá Odpovedať/Preposlať…, Od/Komu/Dátum) má podklad `--surface-3` (teplá sivá; v tmavom vzhľade o odtieň svetlejšia) – oddelená od textu správy ako v Outlooku. Vybraté z troch nafotených návrhov (teplá sivá / tlmená oceľová).
 
 ## Licencie závislostí (overené 2026-10-21 cez `npm view`)
 

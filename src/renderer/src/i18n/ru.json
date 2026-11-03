@@ -193,6 +193,7 @@
   "reader.date": "Дата",
   "reader.remoteBlocked": "Внешние изображения заблокированы, чтобы отправитель не узнал, когда вы открыли письмо.",
   "reader.showImages": "Показать изображения",
+  "reader.loadingImages": "Загружаю изображения…",
   "reader.alwaysSender": "Всегда от {sender}",
   "reader.attachments": "Вложения ({n})",
   "reader.loading": "Загрузка письма…",

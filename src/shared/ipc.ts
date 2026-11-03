@@ -935,6 +935,8 @@ export interface CoreEvents {
   /** Pribudla ponuka na zlúčenie priečinkov iných programov, alebo sa zlúčili automaticky. */
   'folders.mergeOffer': null
   'messages.changed': { folderIds: number[] }
+  /** Dobehli pomalšie vzdialené obrázky správy – zobraziť ju znova (z pamäte, hneď). */
+  'messages.remoteReady': { id: number }
   'outbox.changed': null
   'export.progress': ExportProgress
   'export.finished': ExportSummary

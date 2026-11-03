@@ -193,6 +193,7 @@
   "reader.date": "Dátum",
   "reader.remoteBlocked": "Vzdialené obrázky sú zablokované, aby odosielateľ nezistil, kedy ste správu otvorili.",
   "reader.showImages": "Zobraziť obrázky",
+  "reader.loadingImages": "Načítavam obrázky…",
   "reader.alwaysSender": "Vždy od {sender}",
   "reader.attachments": "Prílohy ({n})",
   "reader.loading": "Načítavam správu…",

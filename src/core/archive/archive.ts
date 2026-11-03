@@ -62,7 +62,7 @@ export interface ArchiveDeps {
   db: Db
   files: FileGrants
   emit<E extends EventChannel>(ch: E, data: CoreEvents[E]): void
-  fetchRemote?: (urls: string[]) => Promise<Map<string, string>>
+  fetchRemote?: (urls: string[], opts?: { onLate?: () => void }) => Promise<Map<string, string>>
 }
 
 /**

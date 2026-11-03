@@ -193,6 +193,7 @@
   "reader.date": "Dátum",
   "reader.remoteBlocked": "A távoli képek le vannak tiltva, így a feladó nem tudja meg, mikor nyitotta meg az üzenetet.",
   "reader.showImages": "Képek megjelenítése",
+  "reader.loadingImages": "Képek betöltése…",
   "reader.alwaysSender": "Mindig tőle: {sender}",
   "reader.attachments": "Mellékletek ({n})",
   "reader.loading": "Az üzenet betöltése…",

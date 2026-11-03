@@ -193,6 +193,7 @@
   "reader.date": "Datum",
   "reader.remoteBlocked": "Externe Bilder sind blockiert, damit der Absender nicht erfährt, wann Sie die Nachricht geöffnet haben.",
   "reader.showImages": "Bilder anzeigen",
+  "reader.loadingImages": "Bilder werden geladen…",
   "reader.alwaysSender": "Immer von {sender}",
   "reader.attachments": "Anhänge ({n})",
   "reader.loading": "Nachricht wird geladen…",

@@ -1,7 +1,16 @@
-# Stránka Doar: tlačidlo „Stiahnuť“ si zisťuje najnovšie vydanie z GitHubu (api.github.com).
-# Nahrádza bezpečnostnú hlavičku (CSP) nadradeného webu len pre tento priečinok.
+# Stránka Doar na vlastnej doméne doar.sk.
+
+# Vždy https a bez www
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  RewriteCond %{HTTPS} off [OR]
+  RewriteCond %{HTTP_HOST} ^www\. [NC]
+  RewriteRule ^(.*)$ https://doar.sk/$1 [R=301,L]
+</IfModule>
+
+# Tlačidlo „Stiahnuť“ si zisťuje najnovšie vydanie z GitHubu (api.github.com).
 <IfModule mod_headers.c>
-  Header unset Content-Security-Policy
-  Header always unset Content-Security-Policy
   Header always set Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src https://api.github.com; frame-ancestors 'none'; base-uri 'self'; form-action 'none'"
+  Header always set X-Content-Type-Options "nosniff"
+  Header always set Referrer-Policy "strict-origin-when-cross-origin"
 </IfModule>

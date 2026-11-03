@@ -193,6 +193,7 @@
   "reader.date": "תאריך",
   "reader.remoteBlocked": "תמונות מרוחקות חסומות, כדי שהשולח לא יידע מתי פתחת את ההודעה.",
   "reader.showImages": "הצגת תמונות",
+  "reader.loadingImages": "טוען תמונות…",
   "reader.alwaysSender": "תמיד מ‑{sender}",
   "reader.attachments": "קבצים מצורפים ({n})",
   "reader.loading": "טוען הודעה…",
