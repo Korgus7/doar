@@ -140,6 +140,17 @@ describe('zoznam priečinkov', () => {
     const b = add('b@x.sk')
     store.syncFolders(b, [f('INBOX', null, 'inbox'), f('INBOX.Projekt', 'INBOX'), f('Sent', null, 'sent')])
     expect(store.listFolders(b).find((x) => x.path === 'INBOX.Projekt')).toMatchObject({ parentPath: 'INBOX', depth: 1 })
+    // Gmail: obal [Gmail] sa nezobrazí, jeho priečinky sú na najvyššej úrovni.
+    const g = add('c@gmail.com')
+    const gf = (path: string, parentPath: string | null, specialUse: 'inbox' | 'sent' | 'all' | null = null, selectable = true) => ({
+      path, delimiter: '/', name: path.split('/').pop()!, parentPath, specialUse, specialUseSource: specialUse ? ('server' as const) : null, selectable, subscribed: true
+    })
+    store.syncFolders(g, [gf('INBOX', null, 'inbox'), gf('[Gmail]', null, null, false), gf('[Gmail]/Sent Mail', '[Gmail]', 'sent'), gf('[Gmail]/All Mail', '[Gmail]', 'all'), gf('Faktúry', null)])
+    const gl = store.listFolders(g)
+    expect(gl.some((x) => x.path === '[Gmail]')).toBe(false)
+    expect(gl.find((x) => x.path === '[Gmail]/All Mail')).toMatchObject({ parentPath: null, depth: 0 })
+    expect(gl.find((x) => x.path === '[Gmail]/Sent Mail')).toMatchObject({ parentPath: null, depth: 0 })
+    expect(gl.find((x) => x.path === 'Faktúry')).toMatchObject({ parentPath: null, depth: 0 })
     db.close()
   })
 })

@@ -185,7 +185,15 @@ export class MailStore {
       if (own.some((r) => r.parentPath === null && r.id !== inbox.id)) continue
       underInbox.add(acc)
     }
-    const items = rows.map((r) => {
+    // Gmail: priečinok [Gmail] je len obal (nedá sa otvoriť) – jeho priečinky (Všetka pošta, Dôležité, S hviezdičkou…)
+    // sa zobrazia na najvyššej úrovni ako v Gmaile, obal sa nezobrazí.
+    const gmailBox = (r: (typeof rows)[number]): boolean => r.parentPath === null && !r.selectable && /^\[(Gmail|Google Mail)\]$/i.test(r.path)
+    const boxes = new Set(rows.filter(gmailBox).map((r) => `${r.accountId}\u0000${r.path}`))
+    const items = rows.filter((r) => !boxes.has(`${r.accountId}\u0000${r.path}`)).map((r) => {
+      if (r.parentPath !== null && boxes.has(`${r.accountId}\u0000${r.parentPath}`)) {
+        const depth = r.delimiter === null ? chain(r).length - 2 : r.path.split(r.delimiter).length - 2
+        return { sortKey: sortKey(r), id: r.id, accountId: r.accountId, path: r.path, name: r.name, parentPath: null, specialUse: r.specialUse, selectable: !!r.selectable, unread: r.unread, total: r.total, localCount: r.localCount, depth: Math.max(0, depth) }
+      }
       const flat = underInbox.has(r.accountId) && r.parentPath !== null
       const depth = !r.parentPath ? 0 : r.delimiter === null ? chain(r).length - 1 : r.path.split(r.delimiter).length - 1
       return {

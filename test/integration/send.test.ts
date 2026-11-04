@@ -233,4 +233,24 @@ describe('odosielanie', () => {
     expect(items.every((i) => i.state !== 'sent' || i.sentCopyState === 'pending' || i.sentCopyState === 'failed')).toBe(true)
     expect(items.some((i) => i.subject === 'Odmietnutá' && i.state === 'error')).toBe(true)
   })
+
+  it('kópiu do Odoslaných si uloží server sám (Gmail) → Odoslané sa načítajú hneď po odoslaní', async () => {
+    await h['accounts.update']({ id: accountId, patch: { saveSentCopy: false } })
+    await sync.restart(accountId)
+    await until(() => sync.get(accountId)!.status.lastSync !== null)
+    const { outboxId } = await h['compose.send']({
+      accountId, to: 'gita@doar.test', cc: '', bcc: '', subject: 'Uloží server', text: 'Text', replyToMessage: null
+    })
+    expect(outbox(outboxId).sent_copy_state).toBe('not_needed')
+    await until(() => outbox(outboxId).state === 'sent')
+    // Ako Gmail: server vloží kópiu do Odoslaných sám, Doar ju nevkladá.
+    const c = imap(FROM)
+    await c.connect()
+    await c.append('Sent', blobs.read(outbox(outboxId).blob_sha256), ['\\Seen'])
+    await c.logout()
+    const sentFolder = store.listFolders(accountId).find((f) => f.specialUse === 'sent')!
+    // Bez čakania na pravidelnú synchronizáciu (každých 5 minút).
+    await until(() => store.listMessages(sentFolder.id, 0, 50).items.some((m) => m.subject === 'Uloží server'), 10_000)
+    await h['accounts.update']({ id: accountId, patch: { saveSentCopy: true } })
+  })
 })

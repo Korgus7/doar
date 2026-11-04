@@ -484,10 +484,14 @@ export class AccountSync {
     // 1. Odoslanie čakajúcich – potrebuje len SMTP (IMAP môže byť nedostupný).
     this.outboxOffline = false
     const now = Date.now()
+    let serverSavesCopy = false
     for (const r of store.outboxRows(this.account.id).filter((x) => x.state === 'queued' && isDue(x, now))) {
       if (this.stopped || this.outboxOffline) break
       await this.sendOne(r)
+      // Kópiu do Odoslaných si uloží server sám (Gmail, Outlook) – Odoslané treba hneď načítať, nie až pri ďalšej synchronizácii.
+      if (r.sent_copy_state === 'not_needed' && store.outboxRow(r.id)?.state === 'sent') serverSavesCopy = true
     }
+    if (serverSavesCopy && !this.stopped) await this.refreshSentSoon()
     this.scheduleNextSend()
     if (this.outboxOffline) {
       this.setStatus({})
@@ -504,6 +508,20 @@ export class AccountSync {
       if (this.stopped) return
       if (r.state === 'uncertain') await this.resolveUncertain(client, r)
       else await this.appendSentCopy(client, r)
+    }
+  }
+
+  /** Po odoslaní cez server, ktorý kópiu ukladá sám: chvíľu počkať a načítať Odoslané. */
+  private async refreshSentSoon(): Promise<void> {
+    const sent = this.deps.store.specialFolder(this.account.id, 'sent')
+    if (!sent) return
+    await new Promise((r) => setTimeout(r, 1500))
+    if (this.stopped) return
+    try {
+      const client = await this.ensureClient()
+      await this.syncFolder(client, sent)
+    } catch (e) {
+      log.info('Odoslané sa načítajú pri ďalšej synchronizácii', { account: this.account.id, code: classifyError(e).code })
     }
   }
 
@@ -918,6 +936,8 @@ export class AccountSync {
     const ops = store.pendingOperations(this.account.id)
     if (ops.length) {
       const client = await this.ensureClient()
+      // Gmail: priečinok „S hviezdičkou“ je len pohľad servera – po zmene hviezdičky ho treba načítať hneď.
+      let starChanged = false
       for (const op of ops) {
         if (this.stopped) return
         // Medzitým zrušená cez „Vrátiť späť“ → preskočiť.
@@ -926,6 +946,10 @@ export class AccountSync {
         try {
           await this.runOperation(client, op.kind, op.payload, touched)
           store.finishOperation(op.id, true)
+          if (op.kind === 'flags') {
+            const p = op.payload as { add?: string[]; remove?: string[] }
+            if ([...(p.add ?? []), ...(p.remove ?? [])].includes('\\Flagged')) starChanged = true
+          }
         } catch (e) {
           if (!client.usable) {
             store.releaseOperation(op.id)
@@ -937,6 +961,14 @@ export class AccountSync {
           if (op.attempts + 1 >= 3) this.giveUp(op.kind, op.payload, touched)
         }
         this.deps.emit('messages.changed', { folderIds: [...touched] })
+      }
+      const starred = starChanged && client.capabilities.has('X-GM-EXT-1') ? store.specialFolder(this.account.id, 'flagged') : null
+      if (starred && !this.stopped) {
+        try {
+          await this.syncFolder(client, starred)
+        } catch (e) {
+          if (!client.usable) throw e
+        }
       }
     }
     this.scheduleDelayedOperations()

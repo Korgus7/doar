@@ -448,6 +448,13 @@ Používateľ si vybral sadu funkcií naraz („nebudeme robiť verziu zakaždý
 - Riadok konta v ľavom paneli už nemá ikony nastavení a nového priečinka – oboje je v ponuke pravého tlačidla na konte (a „Nový podpriečinok“ na priečinku).
 - Aplikačné menu (skryté; Mac) a klávesové skratky zostávajú.
 
+## 2026-11-04 – Gmail: Odoslané hneď, bez obalu [Gmail]
+
+- Konto, kde kópiu do Odoslaných ukladá server (Gmail, Doar ju neukladá – `sent_copy_state = not_needed`): 1,5 s po odoslaní sa Odoslané načítajú zo servera. Predtým sa odoslaná správa ukázala až pri pravidelnej synchronizácii (každých 5 minút).
+- Gmail: po zmene hviezdičky sa hneď načíta priečinok S hviezdičkou (`[Gmail]/Starred` je len pohľad servera), inak by sa správa ukázala/zmizla až pri ďalšej synchronizácii. Neoverené testom (testovací server nie je Gmail).
+- Zoznam priečinkov Gmailu: obal `[Gmail]` (`\Noselect`) sa nezobrazuje, jeho priečinky (Všetka pošta, Dôležité, S hviezdičkou…) sú na najvyššej úrovni ako v Gmaile.
+- Overené: integračný test (server vloží kópiu sám → Odoslané v Doare do 10 s bez pravidelnej synchronizácie), unit test zoznamu priečinkov.
+
 ## Licencie závislostí (overené 2026-10-21 cez `npm view`)
 
 Všetky sú kompatibilné s MIT.
