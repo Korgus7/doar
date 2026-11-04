@@ -1,5 +1,13 @@
 # Stránka Doar na vlastnej doméne doar.sk.
 
+# Úvodná stránka je index.php (štatistika návštev).
+DirectoryIndex index.php index.html
+
+# Pripojenie k databáze a pomocné súbory štatistiky nie sú pre prehliadač.
+<FilesMatch "^(conf\.php|Database\.php|track_visit\.php|tracking\.php)$">
+  Require all denied
+</FilesMatch>
+
 # Vždy https a bez www
 <IfModule mod_rewrite.c>
   RewriteEngine On

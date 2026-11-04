@@ -12,3 +12,8 @@ Thumbs.db
 *.mbox
 *.mbox.part
 __Test zaloha/
+
+# Štatistika stránky doar.sk – len na serveri (pripojenie k databáze), nikdy do repozitára
+site/stat/
+site/classes/
+site/conf.php

@@ -1,3 +1,26 @@
+<?php
+// Štatistika návštev – rovnaká ako na tanach.sk a ivrit.sk (tabuľka page_views, prehľad v stat.php na tanach.sk).
+// Súbory stat/, classes/ a config/ sú len na serveri, nie v repozitári; bez nich sa stránka zobrazí normálne.
+$track = is_file(__DIR__ . '/stat/track_visit.php');
+if ($track) {
+    require_once __DIR__ . '/stat/track_visit.php';
+}
+
+// Tlačidlo „Stiahnuť“: zapíše stiahnutie do štatistiky (stránka „Stiahnutie <súbor>“) a presmeruje na súbor na GitHube.
+if (isset($_GET['stiahnut'])) {
+    $file = (string)$_GET['stiahnut'];
+    $ok = preg_match('/^Doar-\d+\.\d+\.\d+-(win-x64\.zip|mac-(arm64|x64)\.dmg)$/', $file) === 1;
+    if ($track) {
+        trackVisit('Stiahnutie ' . ($ok ? $file : '(stránka vydaní)'));
+    }
+    header('Location: ' . ($ok ? 'https://github.com/Korgus7/doar/releases/latest/download/' . $file : 'https://github.com/Korgus7/doar/releases/latest'), true, 302);
+    exit;
+}
+
+if ($track) {
+    trackVisit();
+}
+?>
 <!doctype html>
 <html lang="sk">
 <head>
@@ -170,7 +193,7 @@
       <h1 data-i18n="h1">Jednoduchý e‑mailový program pre Windows</h1>
       <p class="lead" data-i18n="lead">V duchu starého Outlook Expressu: rýchly, prehľadný a zadarmo. Bez reklám, bez sledovania – vaša pošta zostáva u vás.</p>
       <div class="cta">
-        <a class="btn" id="download" href="https://github.com/Korgus7/doar/releases/latest">
+        <a class="btn" id="download" href="/?stiahnut=1">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11"/><path d="m7 10 5 5 5-5"/><path d="M5 20h14"/></svg>
           <span data-i18n="dl">Stiahnuť pre Windows</span>
         </a>
@@ -249,6 +272,8 @@
         <p lang="en">Doar's use and transfer of information received from Google APIs will adhere to the <a href="https://developers.google.com/terms/api-services-user-data-policy">Google API Services User Data Policy</a>, including the Limited Use requirements. Gmail data is used only to provide the email client features to the user on their own computer; it is never sent to the developer, sold, used for advertising or used to train AI models.</p>
         <h3>Prihlásenie cez Microsoft (Outlook.com, Hotmail, Microsoft 365)</h3>
         <p>Doar dostane povolenie čítať, usporiadať a odosielať vašu poštu (Mail.ReadWrite, Mail.Send) cez Microsoft Graph – len na to, aby vám ju zobrazil a odoslal. Heslo zadávate priamo Microsoftu, Doar ho nevidí. Prístup zrušíte odstránením konta v Doar alebo na <a href="https://account.live.com/consent/Manage">account.live.com/consent/Manage</a>.</p>
+        <h3>Táto stránka (doar.sk)</h3>
+        <p>Stránka doar.sk si na vlastnom serveri zapisuje jednoduchú štatistiku návštev: ktorú stránku ste otvorili, odkiaľ ste prišli, prehliadač, krajinu a IP adresu. Slúži len na to, aby autor videl, koľko ľudí Doar zaujíma. Nepoužívajú sa žiadne reklamné ani sledovacie služby tretích strán a údaje sa nikomu neposielajú.</p>
         <h3>Kontakt</h3>
         <p>Otázky a pripomienky: <a href="mailto:info@doar.sk">info@doar.sk</a> alebo <a href="https://github.com/Korgus7/doar/issues">github.com/Korgus7/doar/issues</a></p>
       </div>
@@ -278,7 +303,7 @@
         <details><summary>Musím používať AI?</summary><p>Nie. AI je predvolene vypnutá a bez nej program funguje úplne rovnako. Ak ju zapnete, obsah sa odošle zvolenému poskytovateľovi (Anthropic, OpenRouter alebo lokálny model) len po kliknutí a vždy vidíte, čo a kam. Prílohy sa neodosielajú nikdy.</p></details>
         <details><summary>Funguje Outlook.com alebo Hotmail?</summary><p>Áno. Pri pridaní konta zvoľte prihlásenie cez účet Microsoft – heslo zadáte priamo Microsoftu, Doar ho neuvidí.</p></details>
         <details><summary>Windows zobrazil upozornenie – je to v poriadku?</summary><p>Doar zatiaľ nie je digitálne podpísaný, preto môže Windows pri prvom spustení zobraziť „Windows ochránil váš počítač“. Kliknite na <em>Ďalšie informácie</em> → <em>Spustiť aj tak</em>. Ak má počítač zapnutú <em>Inteligentnú kontrolu aplikácií</em> (Smart App Control), Windows nepodpísaný program zablokuje úplne a spustiť ho nepôjde.</p></details>
-        <details><summary>Dá sa preniesť pošta zo starého programu?</summary><p>Ak je pošta na serveri (IMAP), stačí pridať konto. Poštu z Outlooku (.pst, .ost), Outlook Expressu (.dbx), Thunderbirdu (.mbox) a súbory .eml naimportujete cez <em>Importovať z iného programu…</em>. Zálohy mbox viete aj otvoriť ako archív len na čítanie.</p></details>
+        <details><summary>Dá sa preniesť pošta zo starého programu?</summary><p>Ak je pošta na serveri (IMAP), stačí pridať konto. Poštu z Outlooku (.pst, .ost), Outlook Expressu (.dbx) a Windows Mail (.eml) prenesiete cez <em>Nastavenia → Záloha → Preniesť poštu z iného programu…</em>, súbor .mbox (napr. z Thunderbirdu) cez <em>Obnoviť zálohu do konta…</em>. Zálohy aj uložené správy viete len prezrieť cez <em>Prezrieť zálohu alebo uloženú správu…</em>.</p></details>
       </div>
     </div>
   </section>
@@ -293,7 +318,7 @@
 
 <script>
   (function () {
-    // Jazyk stránky: ?lang= → uložená voľba → jazyk prehliadača (slovenčina/čeština → SK, inak EN).
+    // Jazyk stránky: ?lang= → uložená voľba → predvolene slovenčina (angličtina len po kliknutí na EN).
     var EN = {
 "title": "Doar – a simple email program for Windows",
 "desc": "Doar is a free email program for Windows in the spirit of Outlook Express: multiple accounts, mail backup, offline work and optional AI. No ads and no tracking.",
@@ -335,14 +360,14 @@
 "g.steps": "<li><div><strong>Turn on 2-Step Verification</strong><span>In your Google Account: <a href=\"https://myaccount.google.com/signinoptions/twosv\">Security → 2-Step Verification</a>. Skip this step if it is already on.</span></div></li>\n        <li><div><strong>Create an app password</strong><span>Open <a href=\"https://myaccount.google.com/apppasswords\">myaccount.google.com/apppasswords</a>, enter the name “Doar” and click Create. A 16-letter password appears.</span></div></li>\n        <li><div><strong>Add the account in Doar</strong><span>Add account → your name, your @gmail.com address and the app password as the password (not your regular password). Doar fills in the server settings by itself.</span></div></li>",
 "g.note": "You do not need to remember the app password – Doar stores it securely. If you revoke it in your Google Account, Doar loses access to your mail.",
 "p.h": "Privacy",
-"p.body": "<h3>What data Doar processes</h3>\n        <p>Doar is a program on your computer. It stores your mail, contacts and settings only on this computer and works with them only on your mail server. The author of the program has no access to them – Doar has no server of its own, sends no usage data and shows no ads.</p>\n        <h3>Sign in with Google (Gmail)</h3>\n        <p>If you sign in with Google, Doar receives the <code>https://mail.google.com/</code> permission. It uses it solely to show, send and organize your mail via IMAP and SMTP – just like when you sign in with a password. You enter your Google password directly with Google; Doar never sees it. The access token is stored encrypted in the secure storage of Windows on your computer.</p>\n        <ul>\n          <li>Gmail data is never sent to anyone, sold, or used for advertising or AI training.</li>\n          <li>If you turn on the optional AI yourself and click its button, the text of that message is sent to the AI provider you chose – you always see what is sent and where.</li>\n          <li>You can revoke access by removing the account in Doar or at <a href=\"https://myaccount.google.com/permissions\">myaccount.google.com/permissions</a>.</li>\n        </ul>\n        <p lang=\"en\">Doar's use and transfer of information received from Google APIs will adhere to the <a href=\"https://developers.google.com/terms/api-services-user-data-policy\">Google API Services User Data Policy</a>, including the Limited Use requirements. Gmail data is used only to provide the email client features to the user on their own computer; it is never sent to the developer, sold, used for advertising or used to train AI models.</p>\n        <h3>Sign in with Microsoft (Outlook.com, Hotmail, Microsoft 365)</h3>\n        <p>Doar receives permission to read, organize and send your mail (Mail.ReadWrite, Mail.Send) via Microsoft Graph – solely to show and send it for you. You enter your password directly with Microsoft; Doar never sees it. You can revoke access by removing the account in Doar or at <a href=\"https://account.live.com/consent/Manage\">account.live.com/consent/Manage</a>.</p>\n        <h3>Contact</h3>\n        <p>Questions and feedback: <a href=\"mailto:info@doar.sk\">info@doar.sk</a> or <a href=\"https://github.com/Korgus7/doar/issues\">github.com/Korgus7/doar/issues</a></p>",
+"p.body": "<h3>What data Doar processes</h3>\n        <p>Doar is a program on your computer. It stores your mail, contacts and settings only on this computer and works with them only on your mail server. The author of the program has no access to them – Doar has no server of its own, sends no usage data and shows no ads.</p>\n        <h3>Sign in with Google (Gmail)</h3>\n        <p>If you sign in with Google, Doar receives the <code>https://mail.google.com/</code> permission. It uses it solely to show, send and organize your mail via IMAP and SMTP – just like when you sign in with a password. You enter your Google password directly with Google; Doar never sees it. The access token is stored encrypted in the secure storage of Windows on your computer.</p>\n        <ul>\n          <li>Gmail data is never sent to anyone, sold, or used for advertising or AI training.</li>\n          <li>If you turn on the optional AI yourself and click its button, the text of that message is sent to the AI provider you chose – you always see what is sent and where.</li>\n          <li>You can revoke access by removing the account in Doar or at <a href=\"https://myaccount.google.com/permissions\">myaccount.google.com/permissions</a>.</li>\n        </ul>\n        <p lang=\"en\">Doar's use and transfer of information received from Google APIs will adhere to the <a href=\"https://developers.google.com/terms/api-services-user-data-policy\">Google API Services User Data Policy</a>, including the Limited Use requirements. Gmail data is used only to provide the email client features to the user on their own computer; it is never sent to the developer, sold, used for advertising or used to train AI models.</p>\n        <h3>Sign in with Microsoft (Outlook.com, Hotmail, Microsoft 365)</h3>\n        <p>Doar receives permission to read, organize and send your mail (Mail.ReadWrite, Mail.Send) via Microsoft Graph – solely to show and send it for you. You enter your password directly with Microsoft; Doar never sees it. You can revoke access by removing the account in Doar or at <a href=\"https://account.live.com/consent/Manage\">account.live.com/consent/Manage</a>.</p>\n        <h3>This website (doar.sk)</h3>\n        <p>The doar.sk website keeps simple visit statistics on its own server: which page you opened, where you came from, your browser, country and IP address. They only help the author see how many people are interested in Doar. No advertising or third-party tracking services are used and the data is not shared with anyone.</p>\n        <h3>Contact</h3>\n        <p>Questions and feedback: <a href=\"mailto:info@doar.sk\">info@doar.sk</a> or <a href=\"https://github.com/Korgus7/doar/issues\">github.com/Korgus7/doar/issues</a></p>",
 "s.h": "Support Doar",
 "s.p": "Doar is free, with no ads and no tracking. If it helps you, you can voluntarily contribute to its development and to verification by Microsoft and Apple, so that Windows and Mac do not block it.",
 "s.qr": "Scan the QR code with your phone or banking app (Slovak banks) – you choose the amount.",
 "s.pp": "Donate via PayPal",
 "s.qralt": "QR code for a voluntary contribution (payme.sk)",
 "q.h": "Frequently asked questions",
-"q.body": "<details><summary>Is Doar really free?</summary><p>Yes. It is open-source software under the MIT license – no ads, no subscription and no usage tracking.</p></details>\n        <details><summary>Where are my mail and passwords?</summary><p>On your computer and on your mail server. Passwords are kept in the secure storage of Windows. Doar connects only to your mail servers and to GitHub (checking for a new version, can be turned off).</p></details>\n        <details><summary>Do I have to use AI?</summary><p>No. AI is off by default and the program works exactly the same without it. If you turn it on, content is sent to the provider you chose (Anthropic, OpenRouter or a local model) only when you click, and you always see what is sent and where. Attachments are never sent.</p></details>\n        <details><summary>Does Outlook.com or Hotmail work?</summary><p>Yes. When adding the account, choose signing in with a Microsoft account – you enter your password directly with Microsoft; Doar never sees it.</p></details>\n        <details><summary>Windows showed a warning – is that OK?</summary><p>Doar is not digitally signed yet, so Windows may show “Windows protected your PC” on the first start. Click <em>More info</em> → <em>Run anyway</em>. If the computer has <em>Smart App Control</em> turned on, Windows blocks unsigned programs completely and Doar cannot be started.</p></details>\n        <details><summary>Can I move my mail from my old program?</summary><p>If your mail is on the server (IMAP), just add the account. Mail from Outlook (.pst, .ost), Outlook Express (.dbx), Thunderbird (.mbox) and .eml files can be imported via <em>Import from another program…</em>. Mbox backups can also be opened as a read-only archive.</p></details>",
+"q.body": "<details><summary>Is Doar really free?</summary><p>Yes. It is open-source software under the MIT license – no ads, no subscription and no usage tracking.</p></details>\n        <details><summary>Where are my mail and passwords?</summary><p>On your computer and on your mail server. Passwords are kept in the secure storage of Windows. Doar connects only to your mail servers and to GitHub (checking for a new version, can be turned off).</p></details>\n        <details><summary>Do I have to use AI?</summary><p>No. AI is off by default and the program works exactly the same without it. If you turn it on, content is sent to the provider you chose (Anthropic, OpenRouter or a local model) only when you click, and you always see what is sent and where. Attachments are never sent.</p></details>\n        <details><summary>Does Outlook.com or Hotmail work?</summary><p>Yes. When adding the account, choose signing in with a Microsoft account – you enter your password directly with Microsoft; Doar never sees it.</p></details>\n        <details><summary>Windows showed a warning – is that OK?</summary><p>Doar is not digitally signed yet, so Windows may show “Windows protected your PC” on the first start. Click <em>More info</em> → <em>Run anyway</em>. If the computer has <em>Smart App Control</em> turned on, Windows blocks unsigned programs completely and Doar cannot be started.</p></details>\n        <details><summary>Can I move my mail from my old program?</summary><p>If your mail is on the server (IMAP), just add the account. Mail from Outlook (.pst, .ost), Outlook Express (.dbx) and Windows Mail (.eml) is moved via <em>Settings → Backup → Move mail from another program…</em>, an .mbox file (e.g. from Thunderbird) via <em>Restore backup to account…</em>. Backups and saved messages can also just be viewed via <em>View backup or saved message…</em>.</p></details>",
 "ft1": "© Doar · MIT license · no telemetry",
 "ft2": "<a href=\"https://github.com/Korgus7/doar\">Source code on GitHub</a> · <a href=\"https://github.com/Korgus7/doar/releases\">All versions</a> · <a href=\"#sukromie\">Privacy</a>",
 "ver": "Version",
@@ -361,8 +386,7 @@
       var m = /[?&]lang=(sk|en)\b/.exec(location.search)
       if (m) return m[1]
       try { var saved = localStorage.getItem('doar-lang'); if (saved === 'sk' || saved === 'en') return saved } catch (e) {}
-      var first = String((navigator.languages && navigator.languages[0]) || navigator.language || '').toLowerCase()
-      return /^(sk|cs)\b/.test(first) ? 'sk' : 'en'
+      return 'sk'
     }
 
     function meta() {
@@ -403,7 +427,8 @@
         if (!data || !data.assets) return
         var zip = data.assets.filter(function (a) { return /-win-x64\.zip$/.test(a.name) })[0]
         if (!zip) return
-        document.getElementById('download').href = zip.browser_download_url
+        // Cez doar.sk, aby sa stiahnutie zapísalo do štatistiky (index.php presmeruje na súbor na GitHube).
+        document.getElementById('download').href = '/?stiahnut=' + encodeURIComponent(zip.name)
         rel = { ver: String(data.tag_name || '').replace(/^v/, ''), mb: Math.round(zip.size / 1048576) }
         meta()
       })
