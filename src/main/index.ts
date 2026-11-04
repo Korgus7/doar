@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os'
 import { randomUUID } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import { SecretStore } from './secrets'
-import { buildMenu, showAbout, systemUiLocale, translate } from './menu'
+import { buildMenu, showAbout, showSupport, systemUiLocale, translate } from './menu'
 import { loadWindowState, trackWindowState } from './window-state'
 import { ensureShortcuts, recreateShortcuts } from './shortcuts'
 import { Updater } from './updater'
@@ -237,7 +237,7 @@ function createWindow(): BrowserWindow {
     backgroundColor: '#00000000',
     webPreferences: webPreferences()
   })
-  // Klasické menu (Súbor, Úpravy…) sa nezobrazuje – všetko je v ponuke ☰. Klávesové skratky z neho fungujú ďalej.
+  // Klasické menu (Súbor, Úpravy…) sa nezobrazuje – všetko je v Nastaveniach. Klávesové skratky z neho fungujú ďalej.
   win.setMenuBarVisibility(false)
   win.once('ready-to-show', () => {
     if (state.maximized) win.maximize()
@@ -480,6 +480,9 @@ if (!gotLock) {
     })
     ipcMain.on('show-about', (e) => {
       if (mainWindow && e.sender === mainWindow.webContents) showAbout(mainWindow)
+    })
+    ipcMain.on('show-support', (e) => {
+      if (mainWindow && e.sender === mainWindow.webContents) showSupport(mainWindow)
     })
     ipcMain.on('open-compose', (e, mode: unknown, messageId: unknown, to: unknown) => {
       if (!senderWindow(e)) return

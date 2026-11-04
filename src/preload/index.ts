@@ -71,6 +71,9 @@ const api: DoarApi = {
   showAbout() {
     ipcRenderer.send('show-about')
   },
+  showSupport() {
+    ipcRenderer.send('show-support')
+  },
   openCompose(mode, messageId, to) {
     ipcRenderer.send('open-compose', mode, messageId, to)
   },

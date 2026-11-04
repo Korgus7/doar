@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { ImapFlow } from 'imapflow'
-import { addAccountViaWizard, launchApp, testServer } from './helpers'
+import { addAccountViaWizard, launchApp, openSettingsTab, testServer } from './helpers'
 
 /** Verzia 0.9: odhlásenie z odberu, okno správy, PDF/.eml, označiť priečinok, pravidlá, šablóny, odoslať neskôr. */
 
@@ -137,8 +137,8 @@ test('správa: označiť všetko ako prečítané, odhlásiť z odberu, samostat
   await app.evaluate(({ dialog }, p) => {
     dialog.showOpenDialog = (async () => ({ canceled: false, filePaths: [p] })) as typeof dialog.showOpenDialog
   }, other)
-  await win.getByRole('button', { name: 'Ponuka' }).click()
-  const [ew] = await Promise.all([app.waitForEvent('window'), win.getByRole('menu').getByRole('menuitem', { name: /Otvoriť správu zo súboru/ }).click()])
+  const set = await openSettingsTab(win, 'Záloha')
+  const [ew] = await Promise.all([app.waitForEvent('window'), set.getByRole('button', { name: 'Prezrieť zálohu alebo uloženú správu…' }).click()])
   await expect(ew.getByRole('heading', { name: 'Správa zo súboru' })).toBeVisible({ timeout: 15_000 })
   await expect(ew.getByText('Súbor .eml – len na čítanie')).toBeVisible()
   await ew.close()

@@ -1,6 +1,6 @@
 import type { MailRuleInput } from '../../../shared/ipc'
 
-export type SettingsTab = 'accounts' | 'general' | 'rules' | 'ai'
+export type SettingsTab = 'accounts' | 'general' | 'rules' | 'ai' | 'backup' | 'about'
 
 /** Otvorenie dialógu Nastavenia (z menu, z panela priečinkov, Ctrl+,). */
 export const settingsUi = $state({

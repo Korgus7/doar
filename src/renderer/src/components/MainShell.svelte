@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte'
   import { t, kbd } from '../i18n/index.svelte'
-  import { mail, findFolder, setThreads } from '../lib/mail.svelte'
+  import { mail, findFolder } from '../lib/mail.svelte'
   import { isArchiveId } from '../../../shared/ipc'
   import FolderPane from './FolderPane.svelte'
   import MessageList from './MessageList.svelte'
@@ -18,14 +18,9 @@
   import { runSearch } from '../lib/mail.svelte'
   import { openSettings } from '../lib/settings.svelte'
   import Icon from './Icon.svelte'
-  import { openMenu } from '../lib/actions.svelte'
-  import { backup } from '../lib/backup.svelte'
-  import { restore } from '../lib/restore.svelte'
-  import { openArchive, openDroppedFiles } from '../lib/archive.svelte'
+  import { openDroppedFiles } from '../lib/archive.svelte'
   import AdvancedSearch from './AdvancedSearch.svelte'
-  import { checkUpdates } from '../lib/update.svelte'
 
-  let { onAddAccount }: { onAddAccount: () => void } = $props()
 
   const KEY = 'doar.panes'
   let widths = $state({ folders: 240, list: 400 })
@@ -109,32 +104,6 @@
       e.preventDefault()
       document.querySelector<HTMLElement>('[role="listbox"]')?.focus()
     }
-  }
-
-  /** Ponuka ☰: veci, ktoré boli dole v paneli priečinkov, plus nastavenia a pomocník. */
-  function appMenu(e: MouseEvent): void {
-    const r = (e.currentTarget as HTMLElement).getBoundingClientRect()
-    const rtl = document.documentElement.dir === 'rtl'
-    openMenu(rtl ? r.left : r.right - 240, r.bottom + 4, [
-      { label: t('menu.addAccount'), run: onAddAccount },
-      {
-        label: t('menu.backup'),
-        run: () => {
-          backup.accountId = mail.folderId === null ? null : (findFolder(mail.folderId)?.accountId ?? null)
-          backup.open = true
-        }
-      },
-      { label: t('menu.restore'), run: () => ((restore.kind = 'restore'), (restore.open = true)) },
-      { label: t('menu.importOther'), run: () => ((restore.kind = 'import'), (restore.open = true)) },
-      { label: t('menu.openArchive'), run: () => void openArchive() },
-      { label: t('menu.openEml'), run: () => void openArchive() },
-      'sep',
-      { label: `${mail.threads ? '✓ ' : ''}${t('menu.threads')}`, run: () => void setThreads(!mail.threads) },
-      'sep',
-      { label: t('menu.settings'), shortcut: kbd('Ctrl+,'), run: () => openSettings() },
-      { label: t('menu.checkUpdates'), run: checkUpdates },
-      { label: t('menu.about'), run: () => window.doar.showAbout() }
-    ], t('toolbar.menu'))
   }
 
   function syncNow(): void {
@@ -223,7 +192,6 @@
       {/if}
     </div>
     <button class="btn icon-btn" onclick={() => openSettings()} title={kbd(`${t('toolbar.settings')} (Ctrl+,)`)} aria-label={t('toolbar.settings')}><Icon name="settings" size={17} /></button>
-    <button class="btn icon-btn" onclick={appMenu} title={t('toolbar.menu')} aria-label={t('toolbar.menu')} aria-haspopup="menu"><Icon name="menu" size={17} /></button>
   </div>
   <UpdateBanner />
   <OutboxBanner />

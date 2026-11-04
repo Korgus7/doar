@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test'
 import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { addAccountViaWizard, launchApp, testServer } from './helpers'
+import { addAccountViaWizard, launchApp, openSettingsTab, testServer } from './helpers'
 import { encodeMessage } from '../../src/core/export/mboxrd'
 import { dbxFolders, dbxMessages } from '../fixtures/dbx-writer'
 
@@ -76,7 +76,7 @@ test('obnova zo zálohy cez rozhranie: výber súboru, priebeh, súhrn, opakovan
   await app.close()
 })
 
-test('import z Outlook Expressu cez ponuku ☰: výber priečinka, náhľad, štandardné priečinky', async () => {
+test('import z Outlook Expressu cez Nastavenia → Záloha: výber priečinka, náhľad, štandardné priečinky', async () => {
   test.setTimeout(150_000)
   const dir = mkdtempSync(join(tmpdir(), 'doar-e2e-oe-'))
   writeFileSync(
@@ -98,8 +98,7 @@ test('import z Outlook Expressu cez ponuku ☰: výber priečinka, náhľad, št
     dialog.showOpenDialog = (async () => ({ canceled: false, filePaths: [p] })) as typeof dialog.showOpenDialog
   }, dir)
 
-  await win.getByRole('button', { name: 'Ponuka' }).click()
-  await win.getByRole('menu', { name: 'Ponuka' }).getByRole('menuitem', { name: 'Importovať z iného programu…' }).click()
+  await (await openSettingsTab(win, 'Záloha')).getByRole('button', { name: 'Preniesť poštu z iného programu…' }).click()
   const dlg = win.getByRole('dialog', { name: 'Import z iného programu' })
   await dlg.getByRole('button', { name: 'Vybrať priečinok s poštou…' }).click()
   await expect(dlg.getByText('Outlook Express · priečinky: 2 · správy: 3')).toBeVisible()
@@ -136,8 +135,7 @@ test('import: server odmietne prihlásenie → zadanie hesla priamo v okne impor
   await app.evaluate(({ dialog }, p) => {
     dialog.showOpenDialog = (async () => ({ canceled: false, filePaths: [p] })) as typeof dialog.showOpenDialog
   }, dir)
-  await win.getByRole('button', { name: 'Ponuka' }).click()
-  await win.getByRole('menu', { name: 'Ponuka' }).getByRole('menuitem', { name: 'Importovať z iného programu…' }).click()
+  await (await openSettingsTab(win, 'Záloha')).getByRole('button', { name: 'Preniesť poštu z iného programu…' }).click()
   const dlg = win.getByRole('dialog', { name: 'Import z iného programu' })
   await dlg.getByRole('button', { name: 'Vybrať priečinok s poštou…' }).click()
   await dlg.getByRole('button', { name: 'Začať import' }).click()

@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { ImapFlow } from 'imapflow'
-import { addAccountViaWizard, launchApp, testServer } from './helpers'
+import { addAccountViaWizard, launchApp, openSettingsTab, testServer } from './helpers'
 
 /** Jednofarebný 24-bitový BMP (testovacia „fotka“ ľubovoľnej veľkosti bez ďalších knižníc). */
 function bmp(w: number, h: number): Buffer {
@@ -115,9 +115,10 @@ test('konverzácie, rozšírené hľadanie a náhľad príloh', async () => {
   await folders.getByRole('button', { name: /^Doručená pošta/ }).click()
   await expect(list.getByRole('option')).toHaveCount(4, { timeout: 30_000 })
 
-  // Konverzácie: zapnúť v ponuke ☰ – odpoveď a pôvodná správa sú jeden riadok.
-  await win.getByRole('button', { name: 'Ponuka' }).click()
-  await win.getByRole('menu').getByRole('menuitem', { name: /Zoskupiť do konverzácií/ }).click()
+  // Konverzácie: zapnúť v Nastaveniach (Všeobecné) – odpoveď a pôvodná správa sú jeden riadok.
+  let set = await openSettingsTab(win, 'Všeobecné')
+  await set.getByLabel(/Zoskupiť správy do konverzácií/).check()
+  await set.getByRole('button', { name: 'Zavrieť' }).click()
   await expect(list.getByRole('option')).toHaveCount(3)
   const conv = list.getByRole('option', { name: /Re: Plán výletu/ })
   await expect(conv).toContainText('2')
@@ -129,8 +130,9 @@ test('konverzácie, rozšírené hľadanie a náhľad príloh', async () => {
   await expect(reader.getByRole('heading', { name: 'Plán výletu', exact: true })).toBeVisible()
   await win.screenshot({ path: 'test-results/konverzacie.png' })
   // Vypnúť – opäť štyri riadky.
-  await win.getByRole('button', { name: 'Ponuka' }).click()
-  await win.getByRole('menu').getByRole('menuitem', { name: /✓ Zoskupiť do konverzácií/ }).click()
+  set = await openSettingsTab(win, 'Všeobecné')
+  await set.getByLabel(/Zoskupiť správy do konverzácií/).uncheck()
+  await set.getByRole('button', { name: 'Zavrieť' }).click()
   await expect(list.getByRole('option')).toHaveCount(4)
 
   // Rozšírené hľadanie: len s prílohou (príloha sa zistí po stiahnutí správ – počkáme na sťahovanie).
@@ -353,8 +355,7 @@ test('podpisy s logom a skupiny v adresári', async () => {
 test('poradie kont: ponuka a ťahanie myšou', async () => {
   test.setTimeout(120_000)
   const { app, win } = await start(USER)
-  await win.getByRole('button', { name: 'Ponuka' }).click()
-  await win.getByRole('menu', { name: 'Ponuka' }).getByRole('menuitem', { name: 'Pridať konto…' }).click()
+  await (await openSettingsTab(win, 'Kontá')).getByRole('button', { name: '+ Pridať konto…' }).click()
   await addAccountViaWizard(win, srv!, USER2, { openWizard: false })
   const pane = win.getByRole('navigation', { name: 'Priečinky' })
   const names = pane.locator('section.account:not(.archive) h2 .acc-name')

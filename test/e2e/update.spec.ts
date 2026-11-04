@@ -38,10 +38,10 @@ test('aktualizácie: ručná kontrola, ponuka novej verzie, „Čo je nové“, 
   await banner.getByRole('button', { name: 'Neskôr' }).click()
   await expect(banner).toHaveCount(0)
 
-  // Nastavenia → Všeobecné: verzia, automatická kontrola, ručná kontrola.
+  // Nastavenia → O aplikácii: verzia, automatická kontrola, ručná kontrola.
   await win.getByRole('button', { name: 'Nastavenia' }).first().click()
   const dlg = win.getByRole('dialog')
-  await dlg.getByRole('tab', { name: /Všeobecné/ }).click()
+  await dlg.getByRole('tab', { name: 'O aplikácii' }).click()
   await expect(dlg.getByText(`Verzia ${VERSION}`, { exact: false })).toBeVisible()
   const auto = dlg.getByRole('checkbox', { name: /Automaticky kontrolovať nové verzie/ })
   await expect(auto).toBeChecked()

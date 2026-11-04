@@ -164,7 +164,7 @@
         onCancel={() => (wizardOpen = false)}
       />
     {:else if ready && mail.accounts.length > 0}
-      <MainShell onAddAccount={() => (wizardOpen = true)} />
+      <MainShell />
     {:else if ready || coreError}
       <Welcome onAddAccount={() => (wizardOpen = true)} />
     {/if}
@@ -174,7 +174,7 @@
 <BackupDialog />
 <ImportDialog />
 <ContactsDialog />
-<SettingsDialog />
+<SettingsDialog onAddAccount={() => (wizardOpen = true)} />
 
 <style>
   .app {

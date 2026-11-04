@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test'
 import { readFileSync } from 'node:fs'
 import { ImapFlow } from 'imapflow'
-import { addAccountViaWizard, launchApp, testServer } from './helpers'
+import { addAccountViaWizard, launchApp, openSettingsTab, testServer } from './helpers'
 
 const srv = testServer()
 test.skip(!srv, 'testovací poštový server (Dovecot) nie je k dispozícii')
@@ -98,52 +98,57 @@ test('nastavenia: názov, farba, podpis v novej správe, server, upozornenia, od
   await accToggle.click()
   await expect(folders.getByRole('button', { name: /^Doručená pošta/ })).toBeVisible()
 
-  // Ponuka ☰: položky, ktoré boli dole v paneli; „Pridať konto…“ otvorí sprievodcu.
-  await win.getByRole('button', { name: 'Ponuka' }).click()
-  const menu = win.getByRole('menu', { name: 'Ponuka' })
-  await expect(menu.getByRole('menuitem')).toHaveText([/^Pridať konto…/, /^Zálohovať konto…/, /^Obnoviť zo zálohy…/, /^Importovať z iného programu…/, /^Otvoriť archív…/, /^Otvoriť správu zo súboru \(\.eml\)…/, /Zoskupiť do konverzácií/, /^Nastavenia…/, /^Skontrolovať aktualizácie…/, /^O aplikácii Doar/])
-  await menu.getByRole('menuitem', { name: 'Pridať konto…' }).click()
+  // Bez ponuky ☰: všetko je v Nastaveniach. Kontá → „+ Pridať konto…“ otvorí sprievodcu.
+  await expect(win.getByRole('button', { name: 'Ponuka' })).toHaveCount(0)
+  let set = await openSettingsTab(win, 'Kontá')
+  await expect(set.getByRole('tab')).toHaveText(['Kontá', 'Všeobecné', 'Pravidlá', 'AI', 'Záloha', 'O aplikácii'])
+  await set.getByRole('button', { name: '+ Pridať konto…' }).click()
   await expect(win.getByRole('heading', { name: 'Pridať konto' })).toBeVisible()
   await win.getByRole('button', { name: 'Zrušiť' }).click()
   await expect(folders).toBeVisible()
 
-  // O aplikácii: odkaz na stránku a na GitHub (tlačidlo „GitHub“ otvorí repozitár v prehliadači).
-  await app.evaluate(({ dialog, shell }) => {
-    const g = globalThis as { about?: string; opened?: string; origBox?: unknown; origOpen?: unknown }
-    g.origBox = dialog.showMessageBox
+  // Záloha: štyri voľby, každá s vysvetlením; „Obnoviť zálohu do konta…“ otvorí obnovu.
+  set = await openSettingsTab(win, 'Záloha')
+  await expect(set.getByRole('tabpanel').getByRole('button')).toHaveText([
+    'Zálohovať konto…',
+    'Obnoviť zálohu do konta…',
+    'Prezrieť zálohu alebo uloženú správu…',
+    'Preniesť poštu z iného programu…'
+  ])
+  await expect(set.getByText('len na čítanie', { exact: false })).toBeVisible()
+  await set.getByRole('button', { name: 'Obnoviť zálohu do konta…' }).click()
+  await expect(set).toBeHidden()
+  const rest = win.getByRole('dialog', { name: 'Obnoviť zo zálohy' })
+  await expect(rest).toBeVisible()
+  await win.keyboard.press('Escape')
+  await expect(rest).toBeHidden()
+
+  // O aplikácii: stránka, GitHub, e-mail a Podporiť Doar (odkazy idú do prehliadača).
+  await app.evaluate(({ shell }) => {
+    const g = globalThis as { opened?: string; origOpen?: unknown }
     g.origOpen = shell.openExternal
-    dialog.showMessageBox = (async (...a: unknown[]) => {
-      const o = a[a.length - 1] as { detail?: string; buttons?: string[] }
-      g.about = `${o.detail}|${(o.buttons ?? []).join(',')}`
-      return { response: 2, checkboxChecked: false }
-    }) as typeof dialog.showMessageBox
     shell.openExternal = async (url: string) => {
       g.opened = url
     }
   })
-  await win.getByRole('button', { name: 'Ponuka' }).click()
-  await win.getByRole('menu', { name: 'Ponuka' }).getByRole('menuitem', { name: /^O aplikácii Doar/ }).click()
+  set = await openSettingsTab(win, 'O aplikácii')
+  await expect(set.getByRole('heading', { name: /^Doar/ })).toBeVisible()
+  await set.getByRole('button', { name: 'GitHub' }).click()
   await expect.poll(() => app.evaluate(() => (globalThis as { opened?: string }).opened)).toBe('https://github.com/Korgus7/doar')
-  const about = await app.evaluate(() => (globalThis as { about?: string }).about)
-  expect(about).toContain('https://doar.sk')
-  expect(about).toContain('info@doar.sk')
-  expect(about).toContain('OK,Webová stránka,GitHub,Podporiť Doar')
+  await set.getByRole('button', { name: 'Webová stránka' }).click()
+  await expect.poll(() => app.evaluate(() => (globalThis as { opened?: string }).opened)).toBe('https://doar.sk/')
+  await set.getByRole('button', { name: 'info@doar.sk' }).click()
+  await expect.poll(() => app.evaluate(() => (globalThis as { opened?: string }).opened)).toBe('mailto:info@doar.sk')
   // Podporiť Doar: okno s QR kódom a PayPal (odkaz do prehliadača).
-  await app.evaluate(({ dialog }) => {
-    dialog.showMessageBox = (async () => ({ response: 3, checkboxChecked: false })) as typeof dialog.showMessageBox
-  })
-  const [sup] = await Promise.all([app.waitForEvent('window'), (async () => {
-    await win.getByRole('button', { name: 'Ponuka' }).click()
-    await win.getByRole('menu', { name: 'Ponuka' }).getByRole('menuitem', { name: /^O aplikácii Doar/ }).click()
-  })()])
+  const [sup] = await Promise.all([app.waitForEvent('window'), set.getByRole('button', { name: 'Podporiť Doar' }).click()])
   await expect(sup.getByRole('heading', { name: 'Podporiť Doar' })).toBeVisible()
   await expect(sup.getByRole('img', { name: /QR kódom/ })).toBeVisible()
   await sup.getByRole('link', { name: 'Prispieť cez PayPal' }).click({ noWaitAfter: true })
   await expect.poll(() => app.evaluate(() => (globalThis as { opened?: string }).opened)).toBe('https://paypal.me/korgus')
   await sup.close()
-  await app.evaluate(({ dialog, shell }) => {
-    const g = globalThis as { origBox?: typeof dialog.showMessageBox; origOpen?: typeof shell.openExternal }
-    dialog.showMessageBox = g.origBox!
+  await set.getByRole('button', { name: 'Zavrieť' }).click()
+  await app.evaluate(({ shell }) => {
+    const g = globalThis as { origOpen?: typeof shell.openExternal }
     shell.openExternal = g.origOpen!
   })
 

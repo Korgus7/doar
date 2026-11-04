@@ -10,7 +10,7 @@ import fr from '../renderer/src/i18n/fr.json'
 import es from '../renderer/src/i18n/es.json'
 import ru from '../renderer/src/i18n/ru.json'
 import he from '../renderer/src/i18n/he.json'
-import { LOCALE_NAMES, UI_LOCALES, pickUiLocale, type UiLocale } from '../shared/ipc'
+import { DOAR_LINKS, LOCALE_NAMES, UI_LOCALES, pickUiLocale, type UiLocale } from '../shared/ipc'
 
 const DICT: Record<UiLocale, Record<Key, string>> = { sk, en, cs, de, hu, fr, es, ru, he }
 type Key = keyof typeof sk
@@ -27,11 +27,11 @@ export function translate(locale: UiLocale, k: Key, params?: Record<string, stri
 
 let currentLocale: UiLocale = 'sk'
 
-/** Okno „O programe“ (z menu Pomocník aj z ponuky ☰ v rozhraní). */
+/** Okno „O programe“ (menu Pomocník na Macu; v rozhraní je karta Nastavenia → O aplikácii). */
 /** Webová stránka Doaru (stiahnutie, návod, ochrana súkromia) a zdrojový kód. */
-export const WEBSITE = 'https://doar.sk'
-export const CONTACT = 'info@doar.sk'
-export const GITHUB = 'https://github.com/Korgus7/doar'
+export const WEBSITE = DOAR_LINKS.website
+export const CONTACT = DOAR_LINKS.contact
+export const GITHUB = DOAR_LINKS.github
 /** Dobrovoľná podpora: PayPal a QR platba (payme.sk – otvorí bankovú aplikáciu). */
 export const PAYPAL = 'https://paypal.me/korgus'
 /** Odkaz z QR kódu (payme.sk – rovnaký ako v obrázku), aby sa dalo zaplatiť aj kliknutím. */

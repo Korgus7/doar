@@ -438,6 +438,16 @@ Používateľ si vybral sadu funkcií naraz („nebudeme robiť verziu zakaždý
 
 - Hlavička otvorenej správy (predmet, tlačidlá Odpovedať/Preposlať…, Od/Komu/Dátum) má podklad `--surface-3` (teplá sivá; v tmavom vzhľade o odtieň svetlejšia) – oddelená od textu správy ako v Outlooku. Vybraté z troch nafotených návrhov (teplá sivá / tlmená oceľová).
 
+## 2026-11-04 – bez ponuky ☰, všetko v Nastaveniach
+
+- Horná lišta má len **Nastavenia** (Ctrl+,); ponuka ☰ zmizla – väčšina jej položiek len opakovala Nastavenia (konverzácie, aktualizácie).
+- Nastavenia: **Kontá | Všeobecné | Pravidlá | AI | Záloha | O aplikácii**.
+  - Kontá: tlačidlo „+ Pridať konto…“ pod zoznamom kont.
+  - Záloha: štyri tlačidlá, každé s jednou vetou – Zálohovať konto, Obnoviť zálohu do konta, Prezrieť zálohu alebo uloženú správu (.mbox/.eml, len na čítanie; nahrádza „Otvoriť archív“ a „Otvoriť správu zo súboru“), Preniesť poštu z iného programu.
+  - O aplikácii: verzia a popis, Webová stránka, GitHub, info@doar.sk, Podporiť Doar (okno s QR a PayPal cez `show-support`), aktualizácie (presunuté zo Všeobecné). Odkazy v `DOAR_LINKS` (shared).
+- Riadok konta v ľavom paneli už nemá ikony nastavení a nového priečinka – oboje je v ponuke pravého tlačidla na konte (a „Nový podpriečinok“ na priečinku).
+- Aplikačné menu (skryté; Mac) a klávesové skratky zostávajú.
+
 ## Licencie závislostí (overené 2026-10-21 cez `npm view`)
 
 Všetky sú kompatibilné s MIT.

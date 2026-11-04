@@ -106,6 +106,9 @@ export interface MailAddressItem {
   count: number
 }
 
+/** Stránka, kontakt a zdrojový kód Doaru (O aplikácii). */
+export const DOAR_LINKS = { website: 'https://doar.sk', contact: 'info@doar.sk', github: 'https://github.com/Korgus7/doar' } as const
+
 /** Priečinky iného programu, ktoré sa dajú zlúčiť so špeciálnymi priečinkami konta. */
 export interface MergeOffer {
   accountId: number
@@ -1121,8 +1124,10 @@ export interface DoarApi {
   setUiLocale(locale: UiLocale): void
   /** Oznámi hlavnému procesu zvolený vzhľad (titulok okna, posuvníky, ostatné okná). */
   setTheme(theme: 'system' | 'light' | 'dark'): void
-  /** Okno „O programe“ (z ponuky ☰). */
+  /** Okno „O programe“ (aplikačné menu na Macu). */
   showAbout(): void
+  /** Okno „Podporiť Doar“ (QR platba, PayPal). */
+  showSupport(): void
   /** Akcie z aplikačného menu (napr. 'add-account'). */
   onMenuAction(fn: (action: string) => void): () => void
   /** Otvorí odkaz (http, https, mailto) v systémovom prehliadači / poštovom programe. */

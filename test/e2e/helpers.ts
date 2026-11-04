@@ -1,4 +1,4 @@
-import { _electron as electron, expect, type ElectronApplication, type Page } from '@playwright/test'
+import { _electron as electron, expect, type ElectronApplication, type Locator, type Page } from '@playwright/test'
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -13,6 +13,14 @@ export async function launchApp(env: Record<string, string> = {}): Promise<{ app
   const ca = process.env['DOAR_TEST_CA'] ? { NODE_EXTRA_CA_CERTS: process.env['DOAR_TEST_CA'] } : {}
   const app = await electron.launch({ args, env: { ...process.env, ...ca, ...env, DOAR_DATA_DIR: dataDir } as Record<string, string> })
   return { app, dataDir }
+}
+
+/** Otvorí Nastavenia (tlačidlo v hornej lište) na zvolenej karte a vráti dialóg. */
+export async function openSettingsTab(win: Page, tab: 'Kontá' | 'Všeobecné' | 'Pravidlá' | 'AI' | 'Záloha' | 'O aplikácii'): Promise<Locator> {
+  await win.getByRole('button', { name: 'Nastavenia', exact: true }).click()
+  const dlg = win.getByRole('dialog', { name: 'Nastavenia' })
+  await dlg.getByRole('tab', { name: tab }).click()
+  return dlg
 }
 
 export interface E2eServer {

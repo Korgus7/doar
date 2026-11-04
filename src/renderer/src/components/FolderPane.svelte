@@ -348,8 +348,6 @@
           <span class="acc-name">{!acc.name || acc.name === acc.email.split('@')[1] ? acc.email : acc.name}</span>
           {#if unread && !open}<span class="badge">{unread}</span>{/if}
         </button>
-        <button class="new" title={t('folders.accountSettings')} aria-label={`${t('folders.accountSettings')} – ${acc.email}`} onclick={() => openSettings({ accountId: acc.id })}><Icon name="settings" size={14} /></button>
-        <button class="new" title={t('actions.newFolder')} aria-label={`${t('actions.newFolder')} – ${acc.email}`} onclick={() => newFolder(acc.id, null)}><Icon name="plus" size={14} /></button>
       </h2>
       <ul class="tree" hidden={!open}>
         {#each foldersOf(acc.id) as f (f.id)}

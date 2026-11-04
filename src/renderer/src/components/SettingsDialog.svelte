@@ -13,6 +13,13 @@
   import AiSettings from './AiSettings.svelte'
   import { oauthProviderName, oauthSignIn } from '../lib/oauth.svelte'
   import { setTheme, themeChoice, type ThemeChoice } from '../lib/theme'
+  import { backup } from '../lib/backup.svelte'
+  import { restore } from '../lib/restore.svelte'
+  import { openArchive } from '../lib/archive.svelte'
+  import { DOAR_LINKS } from '../../../shared/ipc'
+
+  /** Pridať konto (sprievodca je v App). */
+  let { onAddAccount }: { onAddAccount: () => void } = $props()
 
   let dialogEl: HTMLDivElement | undefined = $state()
   let shortcutsDone = $state<'ok' | 'failed' | null>(null)
@@ -63,6 +70,23 @@
 
   function close(): void {
     settingsUi.open = false
+  }
+
+  /** Karta Záloha: zatvorí Nastavenia a otvorí príslušné okno. */
+  function backupAction(kind: 'backup' | 'restore' | 'view' | 'import'): void {
+    close()
+    if (kind === 'backup') {
+      backup.accountId = selectedId
+      backup.open = true
+    } else if (kind === 'restore' || kind === 'import') {
+      restore.kind = kind
+      restore.open = true
+    } else void openArchive()
+  }
+
+  function addAccount(): void {
+    close()
+    onAddAccount()
   }
 
   async function saveAccount(e: SubmitEvent): Promise<void> {
@@ -162,7 +186,7 @@
   function tabKey(e: KeyboardEvent): void {
     if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return
     e.preventDefault()
-    const tabs = ['accounts', 'general', 'rules', 'ai'] as const
+    const tabs = ['accounts', 'general', 'rules', 'ai', 'backup', 'about'] as const
     settingsUi.tab = tabs[(tabs.indexOf(settingsUi.tab) + (e.key === 'ArrowRight' ? 1 : tabs.length - 1)) % tabs.length]!
     void tick().then(() => dialogEl?.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]')?.focus())
   }
@@ -188,6 +212,8 @@
           <button role="tab" aria-selected={settingsUi.tab === 'general'} tabindex={settingsUi.tab === 'general' ? 0 : -1} onclick={() => (settingsUi.tab = 'general')} onkeydown={tabKey}>{t('settings.tabGeneral')}</button>
           <button role="tab" aria-selected={settingsUi.tab === 'rules'} tabindex={settingsUi.tab === 'rules' ? 0 : -1} onclick={() => (settingsUi.tab = 'rules')} onkeydown={tabKey}>{t('settings.tabRules')}</button>
           <button role="tab" aria-selected={settingsUi.tab === 'ai'} tabindex={settingsUi.tab === 'ai' ? 0 : -1} onclick={() => (settingsUi.tab = 'ai')} onkeydown={tabKey}>{t('settings.tabAi')}</button>
+          <button role="tab" aria-selected={settingsUi.tab === 'backup'} tabindex={settingsUi.tab === 'backup' ? 0 : -1} onclick={() => (settingsUi.tab = 'backup')} onkeydown={tabKey}>{t('settings.tabBackup')}</button>
+          <button role="tab" aria-selected={settingsUi.tab === 'about'} tabindex={settingsUi.tab === 'about' ? 0 : -1} onclick={() => (settingsUi.tab = 'about')} onkeydown={tabKey}>{t('settings.tabAbout')}</button>
         </div>
         <button class="x" aria-label={t('settings.close')} title={t('settings.close')} onclick={close}>×</button>
       </header>
@@ -203,6 +229,7 @@
                 </button>
               </li>
             {/each}
+            <li class="add"><button class="btn" onclick={addAccount}>+ {t('menu.addAccount')}</button></li>
           </ul>
 
           {#if details}
@@ -333,6 +360,40 @@
         <div class="general" role="tabpanel">
           <RulesSettings />
         </div>
+      {:else if settingsUi.tab === 'backup'}
+        <div class="general" role="tabpanel">
+          {#each [['backup', 'backupTab.backup', 'backupTab.backupHint'], ['restore', 'backupTab.restore', 'backupTab.restoreHint'], ['view', 'backupTab.view', 'backupTab.viewHint'], ['import', 'backupTab.import', 'backupTab.importHint']] as const as [kind, label, hint] (kind)}
+            <div class="choice">
+              <button class="btn" disabled={kind !== 'view' && !mail.accounts.length} onclick={() => backupAction(kind)}>{t(label)}</button>
+              <p class="note">{t(hint)}</p>
+            </div>
+          {/each}
+        </div>
+      {:else if settingsUi.tab === 'about'}
+        <div class="general" role="tabpanel">
+          <h2 class="about-title">{t('app.name')}{#if upd.s} {upd.s.current}{/if}</h2>
+          <p class="note">{t('about.detail')}</p>
+          <div class="links">
+            <button class="btn" onclick={() => window.doar.openExternal(DOAR_LINKS.website)}>{t('about.website')}</button>
+            <button class="btn" onclick={() => window.doar.openExternal(DOAR_LINKS.github)}>GitHub</button>
+            <button class="btn" onclick={() => window.doar.openExternal(`mailto:${DOAR_LINKS.contact}`)}>{DOAR_LINKS.contact}</button>
+            <button class="btn" onclick={() => window.doar.showSupport()}>{t('about.support')}</button>
+          </div>
+          {#if upd.s}
+            {@const u = upd.s}
+            <fieldset class="field">
+              <legend>{t('general.updates')}</legend>
+              <p class="note">{t('general.version', { version: u.current })}{#if u.lastCheck} · {t('general.lastCheck', { time: timeOnly(u.lastCheck) })}{/if}</p>
+              <label class="check">
+                <input type="checkbox" checked={u.auto} onchange={(e) => window.doar.updateSetAuto((e.currentTarget as HTMLInputElement).checked)} />
+                <span>{t('general.updatesAuto')}<small>{t('general.updatesPrivacy')}</small></span>
+              </label>
+              <div>
+                <button class="btn" disabled={u.phase === 'checking' || u.phase === 'downloading' || u.phase === 'installing'} onclick={checkUpdates}>{t('general.updatesCheck')}</button>
+              </div>
+            </fieldset>
+          {/if}
+        </div>
       {:else}
         <div class="general" role="tabpanel">
           <label class="field">
@@ -399,20 +460,6 @@
                 />
                 <span>{t('general.notifyShowContent')}<small>{t('general.notifyShowContentHint')}</small></span>
               </label>
-            </fieldset>
-          {/if}
-          {#if upd.s}
-            {@const u = upd.s}
-            <fieldset class="field">
-              <legend>{t('general.updates')}</legend>
-              <p class="note">{t('general.version', { version: u.current })}{#if u.lastCheck} · {t('general.lastCheck', { time: timeOnly(u.lastCheck) })}{/if}</p>
-              <label class="check">
-                <input type="checkbox" checked={u.auto} onchange={(e) => window.doar.updateSetAuto((e.currentTarget as HTMLInputElement).checked)} />
-                <span>{t('general.updatesAuto')}<small>{t('general.updatesPrivacy')}</small></span>
-              </label>
-              <div>
-                <button class="btn" disabled={u.phase === 'checking' || u.phase === 'downloading' || u.phase === 'installing'} onclick={checkUpdates}>{t('general.updatesCheck')}</button>
-              </div>
             </fieldset>
           {/if}
           {#if upd.s?.canInstall}
@@ -514,6 +561,38 @@
     border-inline-end: 1px solid var(--border);
     background: var(--surface-2);
     overflow: auto;
+  }
+  .acc-list .add {
+    padding: 0.6rem 0.2rem 0;
+  }
+  .acc-list .add .btn {
+    width: 100%;
+    justify-content: center;
+    border: 1px solid var(--border);
+    background: var(--surface);
+  }
+  .acc-list .add .btn:hover {
+    background: var(--surface-3);
+  }
+  .choice {
+    margin-bottom: 1rem;
+  }
+  .choice .btn {
+    min-width: 18rem;
+    justify-content: flex-start;
+  }
+  .choice .note {
+    margin: 0.3rem 0 0;
+  }
+  .about-title {
+    margin: 0 0 0.3rem;
+    font-size: 1.15rem;
+  }
+  .links {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+    margin: 0.8rem 0 1.2rem;
   }
   .acc-list button {
     display: flex;
