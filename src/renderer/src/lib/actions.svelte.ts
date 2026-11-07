@@ -45,13 +45,13 @@ export const ui = $state({
 let toastSeq = 0
 let toastTimer: ReturnType<typeof setTimeout> | null = null
 
-export function showToast(text: string, opts: { undo?: number[]; restore?: number[]; tone?: 'info' | 'error' } = {}): void {
+export function showToast(text: string, opts: { undo?: number[]; restore?: number[]; tone?: 'info' | 'error'; ms?: number } = {}): void {
   if (toastTimer) clearTimeout(toastTimer)
   const seq = ++toastSeq
   ui.toast = { seq, text, undo: opts.undo?.length ? opts.undo : null, restore: opts.restore ?? [], tone: opts.tone ?? 'info' }
   toastTimer = setTimeout(() => {
     if (ui.toast?.seq === seq) ui.toast = null
-  }, TOAST_MS)
+  }, opts.ms ?? TOAST_MS)
 }
 
 export function hideToast(): void {

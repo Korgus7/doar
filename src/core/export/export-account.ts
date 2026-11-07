@@ -66,6 +66,14 @@ export interface ExportRun {
   path: string
   signal: AbortSignal
   onProgress(p: ExportProgress): void
+  /**
+   * server = snímka zo servera, chýbajúce originály sa stiahnu (bežná záloha).
+   * local = len z kópií v počítači, bez pripojenia (server nedostupný, zlé heslo, zmazaná schránka).
+   * Správy bez stiahnutého obsahu sú potom nedostupné a záloha je neúplná.
+   */
+  source?: 'server' | 'local'
+  /** Len pri source = local: obmedziť na tieto správy (záchrana pred zmazaním). */
+  messageIds?: number[]
   /** Len pre testy: zavolá sa po snímke, pred sťahovaním a zápisom. */
   afterSnapshot?: () => Promise<void>
 }
@@ -88,6 +96,8 @@ interface FolderSnap {
   path: string
   /** Graph: priečinok je ID v Graph (path = to isté ID). */
   graph?: boolean
+  /** Snímka z lokálnej databázy (záloha bez servera) – nič sa nesťahuje. */
+  local?: boolean
   segments: string[]
   specialUse: SpecialUseFlag | null
   uidvalidity: number
@@ -152,6 +162,7 @@ export async function exportAccount(deps: ExportDeps, run: ExportRun): Promise<E
     | undefined
   if (!acc) throw new ExportFailure('NO_ACCOUNT', 'Konto neexistuje')
   const graphMode = acc.protocol === 'graph'
+  const localMode = run.source === 'local'
   const partPath = `${run.path}.part`
   const progress: ExportProgress = {
     jobId: run.jobId,
@@ -246,6 +257,66 @@ export async function exportAccount(deps: ExportDeps, run: ExportRun): Promise<E
     }
   }
 
+  /**
+   * Bez servera: priečinky a správy z lokálnej databázy, obsah z lokálnych originálov. Gmail (ak má Doar
+   * Všetku poštu) rovnako ako pri bežnej zálohe: len Všetka pošta, Kôš a Spam.
+   */
+  function snapshotLocal(): void {
+    type FRow = { id: number; path: string; delimiter: string | null; special_use: string | null }
+    let frows = deps.db
+      .prepare('SELECT id, path, delimiter, special_use FROM folders WHERE account_id = ? AND selectable = 1')
+      .all(run.accountId) as unknown as FRow[]
+    if (gmail && frows.some((f) => f.special_use === 'all')) frows = frows.filter((f) => f.special_use === 'all' || f.special_use === 'trash' || f.special_use === 'junk')
+    frows.sort((a, b) => (a.special_use === 'inbox' ? -1 : b.special_use === 'inbox' ? 1 : a.path.localeCompare(b.path)))
+    const only = run.messageIds ? new Set(run.messageIds) : null
+    const flagOf: Record<string, SpecialUseFlag> = { inbox: '\\Inbox', sent: '\\Sent', drafts: '\\Drafts', trash: '\\Trash', junk: '\\Junk', archive: '\\Archive', all: '\\All' }
+    type MRow = { id: number; uid: number; sha: string | null; size: number; internal_date: string | null; seen: number; flagged: number; answered: number; draft: number; keywords_json: string; gm_labels_json: string | null }
+    const q = deps.db.prepare(
+      `SELECT id, uid, blob_sha256 AS sha, size, internal_date, seen, flagged, answered, draft, keywords_json, gm_labels_json
+         FROM messages WHERE folder_id = ? ORDER BY uid`
+    )
+    for (const f of frows) {
+      isAbort(run.signal)
+      const rows = (q.all(f.id) as unknown as MRow[]).filter((r) => !only || only.has(r.id))
+      if (!rows.length) continue
+      const items: Item[] = rows.map((r) => {
+        const flags = new Set<string>()
+        if (r.seen) flags.add('\\Seen')
+        if (r.flagged) flags.add('\\Flagged')
+        if (r.answered) flags.add('\\Answered')
+        if (r.draft) flags.add('\\Draft')
+        for (const k of parseList(r.keywords_json)) flags.add(k)
+        const d = r.internal_date ? new Date(r.internal_date) : null
+        const sha = r.sha && deps.blobs.has(r.sha) ? r.sha : null
+        return {
+          uid: r.uid,
+          size: r.size,
+          internalDate: d && !Number.isNaN(d.getTime()) ? d : null,
+          flags,
+          labels: r.gm_labels_json ? parseList(r.gm_labels_json) : undefined,
+          sha,
+          localId: r.id,
+          localHasBody: !!sha,
+          // Obsah sa nikdy nestiahol a server nie je k dispozícii – správa v zálohe chýba (neúplná záloha).
+          state: sha ? 'pending' : 'unavailable'
+        }
+      })
+      folders.push({
+        path: f.path,
+        local: true,
+        segments: f.delimiter ? f.path.split(f.delimiter) : [f.path],
+        specialUse: f.special_use ? (flagOf[f.special_use] ?? null) : null,
+        uidvalidity: 0,
+        items
+      })
+      progress.foldersTotal++
+      progress.foldersDone++
+      progress.messagesTotal += items.length
+      progress.missing += items.filter((i) => !i.sha).length
+    }
+    emit(undefined, true)
+  }
+
   /** Graph: strom priečinkov a zoznam správ priamo zo servera (nie z lokálnej databázy – môže byť neúplná). */
   async function snapshotGraph(): Promise<void> {
     const known = await gcall((g) => wellKnownIds(g))
@@ -306,13 +377,15 @@ export async function exportAccount(deps: ExportDeps, run: ExportRun): Promise<E
   try {
     // ---------- 1. snímka ----------
     emit('scan', true)
-    if (graphMode) await snapshotGraph()
+    if (localMode) snapshotLocal()
+    else if (graphMode) await snapshotGraph()
     else await snapshotImap()
     await run.afterSnapshot?.()
 
     // ---------- 2. kontrola lokálnej kópie ----------
     emit('check', true)
     for (const f of folders) {
+      if (f.local) continue // už spočítané v snímke
       if (f.graph) {
         const rows = deps.db
           .prepare(
@@ -361,6 +434,11 @@ export async function exportAccount(deps: ExportDeps, run: ExportRun): Promise<E
     emit('download', true)
     const download = async (f: FolderSnap, items: Item[]): Promise<void> => {
       if (!items.length) return
+      if (f.local) {
+        // Bez servera sa nič nestiahne (ani poškodená lokálna kópia).
+        for (const it of items) if (!it.sha && it.state === 'pending') it.state = 'failed'
+        return
+      }
       if (f.graph) return downloadGraph(items)
       for (let attempt = 0; ; attempt++) {
         isAbort(run.signal)
@@ -533,6 +611,7 @@ export async function exportAccount(deps: ExportDeps, run: ExportRun): Promise<E
       email: acc.email,
       result: complete ? 'complete' : 'incomplete',
       errorCode: null,
+      local: localMode,
       path: finalPath,
       startedAt,
       finishedAt: new Date().toISOString(),
@@ -554,6 +633,7 @@ export async function exportAccount(deps: ExportDeps, run: ExportRun): Promise<E
       email: acc.email,
       result: cancelled ? 'cancelled' : 'failed',
       errorCode: code,
+      local: localMode,
       path: null,
       startedAt,
       finishedAt: new Date().toISOString(),
@@ -569,6 +649,15 @@ export async function exportAccount(deps: ExportDeps, run: ExportRun): Promise<E
       await c.logout().catch(() => {})
       c.close()
     }
+  }
+}
+
+function parseList(json: string): string[] {
+  try {
+    const v = JSON.parse(json) as unknown
+    return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []
+  } catch {
+    return []
   }
 }
 

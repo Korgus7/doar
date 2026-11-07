@@ -537,6 +537,8 @@ export interface ExportSummary {
   result: ExportResult
   /** Pri result = failed: DISK_FULL, WRITE_FAILED, AUTH_FAILED, … */
   errorCode: string | null
+  /** Záloha len z kópií v počítači (bez servera). */
+  local?: boolean
   /** Výsledný súbor (pri neúplnej zálohe s „-NEUPLNA“), null ak súbor nevznikol. */
   path: string | null
   startedAt: string
@@ -801,7 +803,8 @@ export interface CoreRequests {
   'templates.list': [void, MailTemplate[]]
   'templates.save': [Omit<MailTemplate, 'id'> & { id?: number }, MailTemplate]
   'templates.delete': [{ id: number }, void]
-  'export.start': [{ accountId: number; path: string }, { jobId: number }]
+  /** source = local: záloha len z kópií v počítači, bez pripojenia k serveru. */
+  'export.start': [{ accountId: number; path: string; source?: 'server' | 'local' }, { jobId: number }]
   'export.cancel': [{ jobId: number }, void]
   'export.state': [void, ExportState]
   'messages.move': [{ ids: number[]; folderId?: number; special?: 'trash' | 'archive' | 'junk' | 'inbox' }, { undo: number[]; count: number }]
@@ -940,6 +943,8 @@ export interface CoreEvents {
   'messages.changed': { folderIds: number[] }
   /** Dobehli pomalšie vzdialené obrázky správy – zobraziť ju znova (z pamäte, hneď). */
   'messages.remoteReady': { id: number }
+  /** Pred hromadným zmazaním zo servera sa lokálne kópie uložili do súboru a otvorili ako archív. */
+  'sync.rescued': { email: string; folderPath: string; path: string; written: number; missing: number }
   'outbox.changed': null
   'export.progress': ExportProgress
   'export.finished': ExportSummary

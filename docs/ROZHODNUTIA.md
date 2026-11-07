@@ -455,6 +455,22 @@ Používateľ si vybral sadu funkcií naraz („nebudeme robiť verziu zakaždý
 - Zoznam priečinkov Gmailu: obal `[Gmail]` (`\Noselect`) sa nezobrazuje, jeho priečinky (Všetka pošta, Dôležité, S hviezdičkou…) sú na najvyššej úrovni ako v Gmaile.
 - Overené: integračný test (server vloží kópiu sám → Odoslané v Doare do 10 s bez pravidelnej synchronizácie), unit test zoznamu priečinkov.
 
+## Záchrana lokálnych kópií a záloha bez servera (2026-11-07)
+
+Pri presune schránky milan@cami.sk sa ukázalo, že synchronizácia zmaže lokálne kópie, keď sa schránka na serveri zmaže a založí nanovo (iné UIDVALIDITY), a že záloha bez prihlásenia na server nefunguje, hoci všetko je uložené v počítači.
+
+- **Záchrana pred hromadným zmazaním** (rozhodnuté: bez otázky, Doar uloží sám): skôr ako Doar zmaže lokálne kópie, uloží ich do súboru mbox vo formáte zálohy Doar a otvorí ho ako archív v ľavom paneli. Platí pre:
+  - zmenu UIDVALIDITY priečinka (schránka založená nanovo),
+  - priečinok, ktorý zo servera zmizol a má lokálne správy,
+  - naraz chýbajúce správy: aspoň 20 a aspoň 30 % priečinka, alebo celý priečinok (od 5 správ).
+  Kôš, Spam a Koncepty sa pri chýbajúcich správach nezachraňujú (vyprázdňujú sa bežne).
+- Súbory: `<dátový priečinok>/zachranene/Zachránené – konto – priečinok – dátum čas.mbox`; vznikajú cez `.part`, pri chýbajúcom obsahu s „-NEUPLNA“. Správy bez stiahnutého obsahu v nich nie sú (počet je v hlásení).
+- Ak sa záchrana nepodarí (plný disk), nič sa nezmaže a stav konta ukáže `RESCUE_FAILED`; pri ďalšej synchronizácii sa skúsi znova.
+- Používateľ dostane hlásenie (30 s) a archív sa dá obnoviť do konta bežnou obnovou zálohy.
+- **Záloha z kópií v počítači**: keď sa záloha nevie spojiť so serverom (zlé heslo, výpadok, zmazaná schránka), okno zálohy ponúkne „Zálohovať z kópií v počítači…“. Záloha sa nepripája k serveru, nič nesťahuje; správy bez stiahnutého obsahu sú „nedostupné“ a záloha je neúplná (`-NEUPLNA`).
+- Microsoft (Graph) synchronizácia zatiaľ záchranu nemá – mazanie tam prichádza po jednej správe (delta).
+- Overené: unit test prahov a názvu súboru, integračný test proti testovaciemu serveru (schránka založená nanovo, zmazaný priečinok, vyprázdnená doručená pošta, zlyhaná záchrana nič nezmaže, záloha bez servera úplná aj neúplná).
+
 ## Licencie závislostí (overené 2026-10-21 cez `npm view`)
 
 Všetky sú kompatibilné s MIT.

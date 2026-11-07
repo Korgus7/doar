@@ -19,6 +19,7 @@
   import { loadAiConfig } from './lib/ai.svelte'
   import SettingsDialog from './components/SettingsDialog.svelte'
   import { openSettings } from './lib/settings.svelte'
+  import { showToast } from './lib/actions.svelte'
   import { setSelection } from './lib/mail.svelte'
 
   let info = $state<AppInfo | null>(null)
@@ -90,7 +91,9 @@
       window.doar.on('accounts.changed', () => void loadAccounts().then(() => scheduleRefresh([], true))),
       window.doar.on('folders.changed', () => scheduleRefresh()),
       window.doar.on('messages.changed', (d) => scheduleRefresh(d.folderIds)),
-      window.doar.on('sync.status', (s) => (mail.statuses[s.accountId] = s))
+      window.doar.on('sync.status', (s) => (mail.statuses[s.accountId] = s)),
+      // Lokálne kópie zachránené pred hromadným zmazaním zo servera – archív pribudol v ľavom paneli.
+      window.doar.on('sync.rescued', (r) => showToast(t('rescue.saved', { email: r.email, folder: r.folderPath, n: r.written }), { ms: 30_000 }))
     ]
     void loadAiConfig()
     // Pripojenie k sieti → hneď skúsiť synchronizovať a odoslať, čo čaká.

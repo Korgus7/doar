@@ -44,6 +44,7 @@ export class SyncManager {
     draftDelayMs?: number
     onNewMail?: SyncDeps['onNewMail']
     onArrived?: SyncDeps['onArrived']
+    rescue?: SyncDeps['rescue']
     /** Pre testy: falošný server Microsoft Graph. */
     graphBase?: string
     graphFetch?: GraphFetch
@@ -63,6 +64,7 @@ export class SyncManager {
       smtpSend: opts.smtpSend,
       onNewMail: opts.onNewMail,
       onArrived: opts.onArrived,
+      rescue: opts.rescue,
       onAuthRejected: (acc) => opts.oauth?.invalidate(acc.id),
       getPassword: async (acc) => {
         if (acc.auth_type === 'oauth2') {

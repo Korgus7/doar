@@ -13,6 +13,7 @@ import { realNet } from './providers/net'
 import { MailStore } from './store/mailstore'
 import { SyncManager } from './sync/manager'
 import { ExportManager } from './export/manager'
+import { rescueMessages, RESCUE_DIR } from './export/rescue'
 import { ImportManager } from './import/manager'
 import { ArchiveManager } from './archive/archive'
 import { FileGrants, cleanOpenDir } from './files'
@@ -107,6 +108,14 @@ function init(dataDir: string, appVersion: string): void {
         log.warn('pravidlá sa nepodarilo použiť', { error: e })
         return new Set<number>()
       }
+    },
+    // Pred hromadným zmazaním zo servera: lokálne kópie do súboru a otvoriť ho ako archív (ľavý panel).
+    rescue: async ({ accountId, folderPath, messageIds }) => {
+      const r = await rescueMessages({ db, store, blobs, dir: join(dataDir, RESCUE_DIR) }, accountId, folderPath, messageIds)
+      if (!r) return
+      files.allow(r.path, 'read')
+      await archives?.open(r.path).catch((e) => log.warn('zachránený súbor sa nepodarilo otvoriť ako archív', { error: e }))
+      emit('sync.rescued', { email: r.email, folderPath: r.folderPath, path: r.path, written: r.written, missing: r.missing })
     },
     // Nová pošta → systémové oznámenie (zobrazí main proces), ak ho používateľ nevypol.
     onNewMail: ({ messageIds }) => {

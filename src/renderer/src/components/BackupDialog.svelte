@@ -23,15 +23,22 @@
     return t(key) !== key ? t(key) : t('errors.UNKNOWN')
   }
 
-  async function start(): Promise<void> {
-    if (!account || starting) return
+  /** Záloha sa nevedela spojiť so serverom (zlé heslo, výpadok, zmazaná schránka) – dá sa urobiť z kópií v počítači. */
+  const LOCAL_NOT_HELPFUL = new Set(['DISK_FULL', 'WRITE_FAILED', 'NO_ACCOUNT', 'EXPORT_RUNNING', 'PATH_NOT_ALLOWED'])
+  function offerLocal(s: { result: string; errorCode: string | null; local?: boolean }): boolean {
+    return s.result === 'failed' && !s.local && !LOCAL_NOT_HELPFUL.has(s.errorCode ?? '')
+  }
+
+  async function start(source: 'server' | 'local' = 'server'): Promise<void> {
+    const acc = source === 'local' && backup.summary ? (mail.accounts.find((a) => a.id === backup.summary!.accountId) ?? account) : account
+    if (!acc || starting) return
     error = null
     starting = true
     try {
-      const path = await window.doar.chooseExportFile(defaultBackupName(account.email))
+      const path = await window.doar.chooseExportFile(defaultBackupName(acc.email))
       if (!path) return
       backup.summary = null
-      await window.doar.invoke('export.start', { accountId: account.id, path })
+      await window.doar.invoke('export.start', { accountId: acc.id, path, source })
     } catch (e) {
       error = errText((e as { code?: string }).code)
     } finally {
@@ -137,7 +144,7 @@
         <div class="actions">
           <button class="btn" onclick={close}>{t('wizard.cancel')}</button>
           <span class="spacer"></span>
-          <button class="btn btn-primary" onclick={start} disabled={!account || starting}>{t('backup.start')}</button>
+          <button class="btn btn-primary" onclick={() => start()} disabled={!account || starting}>{t('backup.start')}</button>
         </div>
       {:else if view === 'running'}
         <ol class="steps" aria-live="polite">
@@ -171,6 +178,7 @@
           {:else}
             <strong>✕ {t('backup.result.failed', { reason: errText(s.errorCode) })}</strong>
           {/if}
+          {#if s.local && s.result !== 'failed'}<div class="line">{t('backup.localDone')}</div>{/if}
           {#if s.path}
             <div class="line">
               {t('backup.summaryLine', { messages: s.totals.exported, size: fileSize(s.sizeBytes), start: timeOnly(s.startedAt), end: timeOnly(s.finishedAt) })}
@@ -208,11 +216,14 @@
               </tbody>
             </table>
           </div>
-          {#if s.totals.unavailable > 0}<p class="hint">{t('backup.unavailableHint')}</p>{/if}
+          {#if s.totals.unavailable > 0}<p class="hint">{t(s.local ? 'backup.localUnavailableHint' : 'backup.unavailableHint')}</p>{/if}
           {#if s.gmail}<p class="hint">{t('backup.gmail')}</p>{/if}
         {/if}
+        {#if offerLocal(s)}<p class="hint">{t('backup.localOffer')}</p>{/if}
+        {#if error}<p class="alert error" role="alert">{error}</p>{/if}
         <div class="actions">
           {#if s.path}<button class="btn" onclick={() => window.doar.showInFolder(s.path!)}>{t('backup.openFolder')}</button>{/if}
+          {#if offerLocal(s)}<button class="btn" onclick={() => start('local')} disabled={starting}>{t('backup.startLocal')}</button>{/if}
           <span class="spacer"></span>
           <button class="btn btn-primary" onclick={close}>{t('backup.close')}</button>
         </div>

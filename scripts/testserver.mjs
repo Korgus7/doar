@@ -65,6 +65,7 @@ const USERS = [
   { name: 'urban' },
   { name: 'vlado' },
   { name: 'zuzana' },
+  { name: 'zachrana' },
   { name: 'xaver' },
   { name: 'yvona' },
   { name: 'adam' },

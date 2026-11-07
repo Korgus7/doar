@@ -47,7 +47,7 @@ export class ExportManager {
     }
   }
 
-  start(accountId: number, path: string): { jobId: number } {
+  start(accountId: number, path: string, source: 'server' | 'local' = 'server'): { jobId: number } {
     if (!Number.isInteger(accountId)) throw err('INVALID', 'Neplatné konto')
     if (!this.allowed.has(path)) throw err('PATH_NOT_ALLOWED', 'Súbor zálohy treba vybrať v dialógu')
     if ([...this.running.values()].some((r) => r.accountId === accountId)) throw err('EXPORT_RUNNING', 'Záloha tohto konta už prebieha')
@@ -63,6 +63,7 @@ export class ExportManager {
       jobId,
       accountId,
       path,
+      source,
       signal: controller.signal,
       afterSnapshot: this.testHooks.afterSnapshot,
       onProgress: (p) => {

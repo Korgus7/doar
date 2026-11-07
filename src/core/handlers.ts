@@ -284,7 +284,7 @@ export function createHandlers(ctx: CoreContext): Handlers {
       const path = typeof data?.path === 'string' ? data.path : ''
       // Povolenie cesty prichádza od main procesu iným kanálom – chvíľu naň počkáme.
       for (let i = 0; i < 20 && !ctx.exports.isAllowed(path); i++) await new Promise((r) => setTimeout(r, 50))
-      return ctx.exports.start(Number(data?.accountId), path)
+      return ctx.exports.start(Number(data?.accountId), path, data?.source === 'local' ? 'local' : 'server')
     },
 
     'export.cancel': (data) => {

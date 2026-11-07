@@ -444,6 +444,18 @@ export class MailStore {
     return changed
   }
 
+  /** ID všetkých lokálnych správ priečinka. */
+  folderMessageIds(folderId: number): number[] {
+    return (this.db.prepare('SELECT id FROM messages WHERE folder_id = ? ORDER BY uid').all(folderId) as { id: number }[]).map((r) => r.id)
+  }
+
+  /** ID lokálnych správ, ktoré na serveri chýbajú (to, čo by removeMissing zmazal). */
+  missingIds(folderId: number, serverUids: Set<number>): number[] {
+    return (this.db.prepare('SELECT id, uid FROM messages WHERE folder_id = ? ORDER BY uid').all(folderId) as { id: number; uid: number }[])
+      .filter((r) => !serverUids.has(r.uid))
+      .map((r) => r.id)
+  }
+
   /** Odstráni lokálne záznamy správ, ktoré na serveri už nie sú (zmazané inde). */
   removeMissing(folderId: number, serverUids: Set<number>): number {
     const gone = [...this.localUids(folderId)].filter((u) => !serverUids.has(u))

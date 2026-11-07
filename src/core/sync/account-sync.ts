@@ -68,6 +68,26 @@ export interface SyncDeps {
   onNewMail?: (n: { accountId: number; folderId: number; messageIds: number[] }) => void
   /** Nové správy v doručenej pošte (aj prečítané) – pravidlá. Vráti správy, o ktorých sa nemá oznamovať. */
   onArrived?: (n: { accountId: number; folderId: number; messageIds: number[] }) => Set<number>
+  /**
+   * Záchrana lokálnych kópií pred hromadným zmazaním (zmenená schránka, zmiznutý priečinok, naraz chýba
+   * veľa správ): uloží ich do súboru a otvorí ako archív. Chyba = správy sa nemažú, synchronizácia priečinka zlyhá.
+   */
+  rescue?: (r: { accountId: number; folderPath: string; messageIds: number[] }) => Promise<void>
+}
+
+/** Od koľkých naraz chýbajúcich správ (a akého podielu priečinka) sa lokálne kópie pred zmazaním uložia. */
+export const RESCUE_MIN = 20
+export const RESCUE_SHARE = 0.3
+
+/**
+ * Treba pred zmazaním zachrániť lokálne kópie? Kôš, Spam a Koncepty nie – tie sa vyprázdňujú bežne.
+ * Áno, ak naraz chýba veľa správ (aspoň RESCUE_MIN a RESCUE_SHARE priečinka), alebo sa vyprázdnil celý priečinok.
+ */
+export function needsRescue(specialUse: string | null, gone: number, local: number): boolean {
+  if (specialUse === 'trash' || specialUse === 'junk' || specialUse === 'drafts') return false
+  if (gone <= 0) return false
+  if (gone === local && gone >= 5) return true
+  return gone >= RESCUE_MIN && gone >= local * RESCUE_SHARE
 }
 
 const SPECIAL: Record<string, SpecialUse> = {
@@ -246,6 +266,9 @@ export class AccountSync {
       this.running = false
     }
   }
+
+  /** Počas poslednej synchronizácie zlyhala záchrana lokálnych kópií (správy sa preto nezmazali). */
+  private rescueFailed = false
 
   private setStatus(patch: Partial<SyncStatus>): void {
     this.status = {
@@ -435,8 +458,23 @@ export class AccountSync {
     await this.processOperations()
 
     const list = await client.list()
-    this.deps.store.syncFolders(this.account.id, list.map(toFolderInfo))
-    this.deps.emit('folders.changed', { accountId: this.account.id })
+    this.rescueFailed = false
+    // Priečinky, ktoré na serveri zmizli, sa lokálne zmažú aj so správami – kópie najprv zachrániť.
+    // Ak sa to nepodarí, zoznam priečinkov sa tentoraz nemení (nič sa nezmaže).
+    const onServer = new Set(list.map((f) => f.path))
+    let keepFolders = false
+    for (const f of this.deps.store.folderRows(this.account.id)) {
+      if (onServer.has(f.path) || f.special_use === 'trash' || f.special_use === 'junk') continue
+      try {
+        await this.rescue(f, this.deps.store.folderMessageIds(f.id), 'priečinok zmizol zo servera')
+      } catch {
+        keepFolders = true
+      }
+    }
+    if (!keepFolders) {
+      this.deps.store.syncFolders(this.account.id, list.map(toFolderInfo))
+      this.deps.emit('folders.changed', { accountId: this.account.id })
+    }
 
     const order: Record<string, number> = { inbox: 0, sent: 1, drafts: 2 }
     const folders = this.deps.store
@@ -453,7 +491,8 @@ export class AccountSync {
         log.warn('priečinok sa nepodarilo synchronizovať', { account: this.account.id, folder: f.id, code: classifyError(e).code })
       }
     }
-    this.setStatus({ state: 'idle', code: undefined, lastSync: new Date().toISOString() })
+    // Záchrana lokálnych kópií zlyhala (napr. plný disk) – správy ostali, používateľ to musí vedieť.
+    this.setStatus(this.rescueFailed ? { state: 'error', code: 'RESCUE_FAILED', lastSync: new Date().toISOString() } : { state: 'idle', code: undefined, lastSync: new Date().toISOString() })
     if (this.deps.store.outboxRows(this.account.id).some((r) => (r.state === 'queued' && isDue(r, Date.now())) || r.state === 'uncertain' || r.sent_copy_state === 'pending' || r.sent_copy_state === 'failed')) {
       void this.processOutboxNow().catch(() => {})
     }
@@ -797,6 +836,19 @@ export class AccountSync {
     this.emitOutbox()
   }
 
+  /** Lokálne kópie správ, ktoré sa idú hromadne zmazať, uloží do súboru (archív). Bez záchrany sa nič nemaže. */
+  private async rescue(folder: FolderRow, ids: number[], why: string): Promise<void> {
+    if (!ids.length || !this.deps.rescue) return
+    log.warn('hromadné zmazanie zo servera – ukladám lokálne kópie', { account: this.account.id, folder: folder.id, count: ids.length, why })
+    try {
+      await this.deps.rescue({ accountId: this.account.id, folderPath: folder.path, messageIds: ids })
+    } catch (e) {
+      log.error('lokálne kópie sa nepodarilo uložiť – správy sa nemažú', { account: this.account.id, folder: folder.id, error: e })
+      this.rescueFailed = true
+      throw Object.assign(new Error('Lokálne kópie sa nepodarilo uložiť'), { code: 'RESCUE_FAILED' })
+    }
+  }
+
   /** Synchronizuje jeden priečinok: nové správy (od najnovších), zmazané, zmenené príznaky. */
   private async syncFolder(client: ImapFlow, folder: FolderRow): Promise<void> {
     const store = this.deps.store
@@ -810,6 +862,8 @@ export class AccountSync {
       const uidvalidity = Number(mb.uidValidity)
       if (folder.uidvalidity !== null && folder.uidvalidity !== uidvalidity) {
         log.info('zmena UIDVALIDITY – priečinok sa načíta znova', { account: this.account.id, folder: folder.id })
+        // Schránku na serveri mohol niekto zmazať a založiť nanovo (prázdnu) – lokálne kópie najprv zachrániť.
+        await this.rescue(folder, store.folderMessageIds(folder.id), 'zmena UIDVALIDITY')
         store.resetFolder(folder.id, uidvalidity)
         folder = { ...folder, uidvalidity, highestmodseq: null, uidnext: null }
       }
@@ -822,6 +876,8 @@ export class AccountSync {
       const local = store.localUids(folder.id)
       const fresh = serverUids.filter((u) => !local.has(u)).sort((a, b) => b - a)
 
+      const gone = store.missingIds(folder.id, serverSet)
+      if (needsRescue(folder.special_use, gone.length, local.size)) await this.rescue(folder, gone, 'naraz chýba veľa správ')
       let changed = store.removeMissing(folder.id, serverSet) > 0
       for (let i = 0; i < fresh.length; i += HEADER_CHUNK) {
         const chunk = fresh.slice(i, i + HEADER_CHUNK)
