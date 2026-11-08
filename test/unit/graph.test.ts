@@ -266,6 +266,8 @@ describe('Graph: prechod doterajších kont Microsoft', () => {
   it('migrácia 019: konto s prihlásením cez Microsoft prejde na Graph, priečinky z IMAP sa zahodia; ostatné kontá nie', () => {
     const file = join(mkdtempSync(join(tmpdir(), 'doar-g19-')), 'doar.db')
     const old = openDb(file)
+    old.exec('DELETE FROM schema_migrations WHERE version = 21; ALTER TABLE folders DROP COLUMN sort_order')
+    old.exec('DELETE FROM schema_migrations WHERE version = 20; DROP INDEX accounts_email_host; CREATE UNIQUE INDEX accounts_email_host ON accounts(lower(email), lower(imap_host)); ALTER TABLE folders DROP COLUMN hidden; ALTER TABLE accounts DROP COLUMN local_only')
     old.exec('DELETE FROM schema_migrations WHERE version = 19; DROP INDEX messages_remote; ALTER TABLE messages DROP COLUMN remote_id; ALTER TABLE folders DROP COLUMN delta_link; ALTER TABLE accounts DROP COLUMN protocol')
     old.exec(`INSERT INTO accounts(id,email,imap_host,imap_port,imap_security,smtp_host,smtp_port,smtp_security,username,auth_type,provider_key)
       VALUES (1,'a@outlook.com','outlook.office365.com',993,'tls','smtp.office365.com',587,'starttls','a@outlook.com','oauth2','microsoft'),

@@ -471,6 +471,27 @@ Pri presune schránky milan@cami.sk sa ukázalo, že synchronizácia zmaže lok�
 - Microsoft (Graph) synchronizácia zatiaľ záchranu nemá – mazanie tam prichádza po jednej správe (delta).
 - Overené: unit test prahov a názvu súboru, integračný test proti testovaciemu serveru (schránka založená nanovo, zmazaný priečinok, vyprázdnená doručená pošta, zlyhaná záchrana nič nezmaže, záloha bez servera úplná aj neúplná).
 
+## Priečinky bez pripojenia a konto len v počítači (2026-11-08)
+
+- Zmena priečinka (nový, premenovanie, presun pod iný priečinok, odstránenie) bez pripojenia sa urobí hneď v Doare a uloží do fronty operácií (`folderCreate`, `folderRename`, `folderDelete`); po pripojení ide na server v poradí s ostatnými zmenami, ešte pred porovnaním zoznamu priečinkov so serverom. Platí aj pri zlom hesle (server sa nedá použiť).
+- Server, ktorý zmenu priečinka odmietne (napr. názov medzitým obsadený), ju neopakuje: lokálna zmena sa vráti a priečinky sú ako na serveri. Správy sa pri tom nestrácajú (sú na serveri).
+- Odstránený priečinok bez pripojenia sa skryje (`folders.hidden`), jeho správy sa hneď ukážu v Koši; zo servera sa odstráni po pripojení.
+- Microsoft (Graph) zatiaľ zmeny priečinkov bez pripojenia nemá.
+- „Ponechať len v počítači“ (Nastavenia → konto): pre schránku zrušenú na serveri. Doar sa na server prestane pripájať (`accounts.local_only`), heslo a prihlásenie sa zmažú, neodoslané správy sa označia `LOCAL_ONLY`. Pošta, priečinky a koncepty ostanú; presuny, mazanie, príznaky a priečinky sa robia len lokálne (`LocalSync`), presunutá správa dostane v cieli nové lokálne UID. Odosielať sa nedá, záloha ide vždy z lokálnych kópií. Späť to nejde – schránku na serveri možno pridať znova ako nové konto (jedinečnosť adresy platí len pre pripojené kontá).
+- Ťahanie priečinka na čiaru medzi dva priečinky = na ich úroveň a do vlastného poradia (`folders.sort_order`, len v Doare – IMAP poradie nepozná); na stred riadka = dovnútra. Špeciálne priečinky sú vždy hore, nezoradené ručne abecedne za ručne zoradenými.
+- Chyba spojenia bez vlastného kódu (napr. „Command failed“ pri zlom hesle) dostane pri odpovedi rozhraniu kód podľa `classifyError` (AUTH_FAILED…), aby sa ukázala zrozumiteľná hláška.
+- Overené: integračný test proti testovaciemu serveru (zmeny bez pripojenia a ich vykonanie po pripojení so zachovaním ID správ, odmietnuté premenovanie sa vráti, konto len v počítači: presuny, Vrátiť späť, mazanie, priečinky bez zmeny na serveri, nové pridanie tej istej schránky).
+
+## Presun a kópia medzi kontami (2026-11-08)
+
+- Správy ťahané na priečinok iného konta a priečinok ťahaný na priečinok alebo hlavičku iného konta sa presunú do toho konta (`src/core/transfer.ts`). S Ctrl je to kópia.
+- Správa sa nahrá do cieľa (IMAP APPEND s príznakmi a dátumom; cieľ len v počítači = lokálna kópia s obsahom a fulltextom). Pri presune ide v pôvodnom konte do Koša až po tom, ako ju cieľ prijal – nič sa nemaže natrvalo.
+- Správy, ktoré v cieľovom priečinku už sú (rovnaké Message-ID), sa nenahrajú druhýkrát; pri presune idú v pôvodnom konte tiež do Koša.
+- Obsah správy sa berie z počítača; ak tam nie je, stiahne sa zo servera pôvodného konta. Pri konte len v počítači sa správa bez obsahu presunúť nedá (súhrn ju uvedie).
+- Priečinok: v cieli vznikne aj s podpriečinkami (priečinok s rovnakým názvom sa použije). Pôvodný sa odstráni len vtedy, keď sa presunulo všetko; inak ostane so správami, ktoré sa presunúť nedali.
+- Presun potrebuje spojenie s cieľom; ak ho niet, nič sa nezačne. Naraz beží najviac jeden presun. Do kont cez Microsoft Graph sa zatiaľ presúvať nedá (z nich áno).
+- Overené: integračný test (IMAP → IMAP správy aj priečinok s podpriečinkom, kópia bez duplicít, nedostupný cieľ, konto len v počítači ako zdroj aj cieľ), test UI (ťahanie správy, Ctrl = kópia, priečinok na hlavičku iného konta).
+
 ## Licencie závislostí (overené 2026-10-21 cez `npm view`)
 
 Všetky sú kompatibilné s MIT.

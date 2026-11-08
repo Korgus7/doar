@@ -69,6 +69,30 @@ export async function removeAccount(ctx: CoreContext, id: number): Promise<void>
   setTimeout(() => collectBlobs(ctx, 60_000), 0)
 }
 
+/**
+ * Konto ostane len v počítači (schránka na serveri zrušená): synchronizácia sa zastaví, heslo a prihlásenie
+ * sa zmažú, neodoslané správy z konta sa označia ako neodoslateľné. Pošta, priečinky a koncepty ostanú
+ * a dajú sa ďalej triediť – všetky zmeny už len lokálne. Na serveri sa nič nemení.
+ */
+export async function makeLocalOnly(ctx: CoreContext, id: number): Promise<void> {
+  const acc = getAccount(ctx.db, id) // NOT_FOUND
+  if (acc.localOnly) return
+  if (ctx.exports.state().running?.accountId === id) throw err('EXPORT_RUNNING', 'Záloha tohto konta práve prebieha')
+  await ctx.sync.stop(id)
+  ctx.db.prepare('UPDATE accounts SET local_only = 1 WHERE id = ?').run(id)
+  ctx.db.prepare(`UPDATE outbox SET state = 'error', error = 'LOCAL_ONLY' WHERE account_id = ? AND state = 'queued'`).run(id)
+  // Synchronizácia adresára cez toto konto (Google) už nepôjde; kontakty ostanú.
+  ctx.db.prepare('DELETE FROM contact_sync WHERE account_id = ?').run(id)
+  await ctx.secrets.delete(passwordKey(id)).catch(() => {})
+  await ctx.sessionSecrets.delete(passwordKey(id)).catch(() => {})
+  await ctx.oauth?.forget(id)
+  log.info('konto je odteraz len v počítači', { account: id })
+  ctx.sync.start(id)
+  ctx.emit('accounts.changed', null)
+  ctx.emit('folders.changed', { accountId: id })
+  ctx.emit('outbox.changed', null)
+}
+
 /** Upratanie úložiska originálov. `minAgeMs` chráni práve zapisované súbory. */
 export function collectBlobs(ctx: Pick<CoreContext, 'store' | 'blobs'>, minAgeMs = 10 * 60_000): number {
   try {

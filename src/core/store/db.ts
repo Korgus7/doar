@@ -20,6 +20,8 @@ import m016 from './migrations/016_contact_no_email'
 import m017 from './migrations/017_rules_templates'
 import m018 from './migrations/018_threads_groups_signatures'
 import m019 from './migrations/019_graph'
+import m020 from './migrations/020_local_only'
+import m021 from './migrations/021_folder_order'
 
 /** Zoznam migrácií v poradí. Pridávaj len na koniec. */
 export const MIGRATIONS: readonly { version: number; name: string; sql: string }[] = [
@@ -41,7 +43,9 @@ export const MIGRATIONS: readonly { version: number; name: string; sql: string }
   { version: 16, name: 'contact_no_email', sql: m016 },
   { version: 17, name: 'rules_templates', sql: m017 },
   { version: 18, name: 'threads_groups_signatures', sql: m018 },
-  { version: 19, name: 'graph', sql: m019 }
+  { version: 19, name: 'graph', sql: m019 },
+  { version: 20, name: 'local_only', sql: m020 },
+  { version: 21, name: 'folder_order', sql: m021 }
 ]
 
 export type Db = DatabaseSync

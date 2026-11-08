@@ -4,7 +4,7 @@
   import { mail, selectFolder, loadAccounts } from '../lib/mail.svelte'
   import { closeArchive, archivePercent } from '../lib/archive.svelte'
   import type { MessageKey } from '../i18n/index.svelte'
-  import { ui, moveTo, openMenu, folderLabel, deleteFolder, renameFolder, descendantIds, showToast, errorText, type MenuEntry } from '../lib/actions.svelte'
+  import { ui, moveTo, openMenu, folderLabel, deleteFolder, renameFolder, placeFolder, transferMessagesTo, transferFolderTo, descendantIds, showToast, errorText, type MenuEntry } from '../lib/actions.svelte'
   import { openSettings } from '../lib/settings.svelte'
   import Icon, { type IconName } from './Icon.svelte'
   import type { SpecialUse } from '../../../shared/ipc'
@@ -48,14 +48,16 @@
 
   const label = folderLabel
   let dropTarget = $state<number | null>(null)
+  /** Ťahaný priečinok nad hornou/dolnou časťou riadka = „medzi“ priečinky (na úroveň toho riadka), nie dovnútra. */
+  let dropEdge = $state<'before' | 'after' | null>(null)
   /** Konto, na ktorého hlavičku sa práve ťahá priečinok (presun na najvyššiu úroveň). */
   let headDrop = $state<number | null>(null)
 
-  /** Dajú sa ťahané správy pustiť na tento priečinok? (len v rámci konta, nie do toho istého priečinka) */
+  /** Dajú sa ťahané správy pustiť na tento priečinok? (správy z jedného konta; do iného konta = presun medzi kontami) */
   function canDrop(f: FolderItem): boolean {
     const d = ui.dragging
     if (!d || !f.selectable) return false
-    if (d.accountIds.length !== 1 || d.accountIds[0] !== f.accountId) return false
+    if (d.accountIds.length !== 1) return false
     return !(d.ids.length && mail.folderId === f.id)
   }
 
@@ -65,15 +67,17 @@
   /** Dá sa ťahaný priečinok pustiť sem? (to isté konto, nie do seba, podpriečinka ani tam, kde už je) */
   function canDropFolder(f: FolderItem | null, accountId: number): boolean {
     const d = ui.draggingFolder
-    if (!d || d.accountId !== accountId) return false
+    if (!d) return false
     const dragged = mail.folders.find((x) => x.id === d.id)
     if (!dragged) return false
+    // Do iného konta: kamkoľvek (presun/kópia medzi kontami).
+    if (d.accountId !== accountId) return true
     if (f === null) return dragged.parentPath !== null
     if (f.id === dragged.id || descendantIds(dragged).has(f.id)) return false
     return dragged.parentPath !== f.path
   }
 
-  async function dropFolder(target: FolderItem | null, accountId: number): Promise<void> {
+  async function dropFolder(target: FolderItem | null, accountId: number, copy = false): Promise<void> {
     const d = ui.draggingFolder
     const ok = canDropFolder(target, accountId)
     ui.draggingFolder = null
@@ -81,6 +85,10 @@
     if (!d || !ok) return
     const dragged = mail.folders.find((x) => x.id === d.id)
     if (!dragged) return
+    if (dragged.accountId !== accountId) {
+      await transferFolderTo(dragged, accountId, target?.id ?? null, copy)
+      return
+    }
     try {
       await renameFolder(dragged.id, dragged.name, target?.id ?? null)
     } catch (err) {
@@ -95,29 +103,75 @@
     }
     ui.draggingFolder = { id: f.id, accountId: f.accountId }
     if (e.dataTransfer) {
-      e.dataTransfer.effectAllowed = 'move'
+      e.dataTransfer.effectAllowed = 'copyMove'
       e.dataTransfer.setData('text/plain', label(f))
+    }
+  }
+
+  /** Dá sa ťahaný priečinok zaradiť pred/za tento riadok? (to isté konto, nie k sebe ani do svojho podpriečinka) */
+  function canPlaceFolder(f: FolderItem): boolean {
+    const d = ui.draggingFolder
+    if (!d || d.id === f.id) return false
+    if (d.accountId !== f.accountId) return true
+    const dragged = mail.folders.find((x) => x.id === d.id)
+    return !!dragged && !descendantIds(dragged).has(f.id)
+  }
+
+  /** Horná a dolná tretina riadka = medzi priečinky (čiara: na tú istú úroveň, do poradia), stred = dovnútra. */
+  function edgeAt(e: DragEvent, f: FolderItem): 'before' | 'after' | null {
+    const r = (e.currentTarget as HTMLElement).getBoundingClientRect()
+    const y = e.clientY - r.top
+    const edge = y < r.height * 0.3 ? 'before' : y > r.height * 0.7 ? 'after' : null
+    if (edge && canPlaceFolder(f)) return edge
+    return null
+  }
+
+  async function placeDropped(f: FolderItem, edge: 'before' | 'after', copy = false): Promise<void> {
+    const d = ui.draggingFolder
+    ui.draggingFolder = null
+    dropTarget = null
+    if (!d) return
+    if (d.accountId !== f.accountId) {
+      // Do iného konta na úroveň tohto riadka (poradie sa tam neurčuje).
+      const dragged = mail.folders.find((x) => x.id === d.id)
+      const parent = f.parentPath === null ? null : (byPath.get(key(f.accountId, f.parentPath)) ?? null)
+      if (dragged) await transferFolderTo(dragged, f.accountId, parent?.id ?? null, copy)
+      return
+    }
+    try {
+      await placeFolder(d.id, f.id, edge)
+    } catch (err) {
+      showToast(errorText(err), { tone: 'error' })
     }
   }
 
   function onDragOver(e: DragEvent, f: FolderItem): void {
     if (ui.draggingFolder) {
-      if (!canDropFolder(f, f.accountId)) return
+      const edge = edgeAt(e, f)
+      if (!edge && !canDropFolder(f, f.accountId)) {
+        if (dropTarget === f.id) (dropTarget = null), (dropEdge = null)
+        return
+      }
       e.preventDefault()
-      if (e.dataTransfer) e.dataTransfer.dropEffect = 'move'
+      if (e.dataTransfer) e.dataTransfer.dropEffect = ui.draggingFolder.accountId !== f.accountId && e.ctrlKey ? 'copy' : 'move'
       dropTarget = f.id
+      dropEdge = edge
       return
     }
     if (!canDrop(f)) return
     e.preventDefault()
-    if (e.dataTransfer) e.dataTransfer.dropEffect = 'move'
+    // Do iného konta s Ctrl = kópia.
+    if (e.dataTransfer) e.dataTransfer.dropEffect = ui.dragging?.accountIds[0] !== f.accountId && e.ctrlKey ? 'copy' : 'move'
     dropTarget = f.id
   }
 
   function onDrop(e: DragEvent, f: FolderItem): void {
     if (ui.draggingFolder) {
       e.preventDefault()
-      void dropFolder(f, f.accountId)
+      const edge = edgeAt(e, f)
+      dropEdge = null
+      if (edge) void placeDropped(f, edge, e.ctrlKey)
+      else void dropFolder(f, f.accountId, e.ctrlKey)
       return
     }
     const d = ui.dragging
@@ -125,7 +179,8 @@
     if (!d || !canDrop(f)) return
     e.preventDefault()
     ui.dragging = null
-    void moveTo(d.ids, { folderId: f.id })
+    if (d.accountIds[0] !== f.accountId) void transferMessagesTo(d.ids, f, e.ctrlKey)
+    else void moveTo(d.ids, { folderId: f.id })
   }
 
   /** Ťahané konto (zmena poradia kont) a konto, nad ktorým práve je. */
@@ -310,7 +365,7 @@
           if (!ui.draggingFolder) return
           e.preventDefault()
           headDrop = null
-          void dropFolder(null, acc.id)
+          void dropFolder(null, acc.id, e.ctrlKey)
         }}
         oncontextmenu={(e) => {
           e.preventDefault()
@@ -346,6 +401,7 @@
           <span class="chev" class:shut={!open}><Icon name="chevron" size={14} /></span>
           <span class="dot" aria-hidden="true"></span>
           <span class="acc-name">{!acc.name || acc.name === acc.email.split('@')[1] ? acc.email : acc.name}</span>
+          {#if acc.localOnly}<span class="local-tag" title={t('account.localOnlyTagTitle')}>{t('account.localOnlyTag')}</span>{/if}
           {#if unread && !open}<span class="badge">{unread}</span>{/if}
         </button>
       </h2>
@@ -369,17 +425,20 @@
               class="item"
               class:active={mail.folderId === f.id}
               class:unread={f.unread > 0}
-              class:drop={dropTarget === f.id}
+              class:drop={dropTarget === f.id && !dropEdge}
+              class:drop-before={dropTarget === f.id && dropEdge === 'before'}
+              class:drop-after={dropTarget === f.id && dropEdge === 'after'}
               aria-current={mail.folderId === f.id ? 'page' : undefined}
               disabled={!f.selectable}
               style:padding-inline-start={`${1.25 + f.depth * 0.9}rem`}
+              style:--ind={`${1.25 + f.depth * 0.9}rem`}
               onclick={() => selectFolder(f.id)}
               oncontextmenu={(e) => folderMenu(e, f)}
               draggable={movable(f) ? 'true' : undefined}
               ondragstart={(e) => onDragStartFolder(e, f)}
-              ondragend={() => ((ui.draggingFolder = null), (dropTarget = null), (headDrop = null))}
+              ondragend={() => ((ui.draggingFolder = null), (dropTarget = null), (dropEdge = null), (headDrop = null))}
               ondragover={(e) => onDragOver(e, f)}
-              ondragleave={() => dropTarget === f.id && (dropTarget = null)}
+              ondragleave={() => dropTarget === f.id && ((dropTarget = null), (dropEdge = null))}
               ondrop={(e) => onDrop(e, f)}
             >
               <span class="ficon"><Icon name={f.specialUse ? ICON_OF[f.specialUse] : 'folder'} /></span>
@@ -504,6 +563,16 @@
     border-radius: 2px;
     background: var(--acc);
   }
+  .local-tag {
+    flex: none;
+    font-size: 0.7rem;
+    font-weight: 500;
+    color: var(--text-muted);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: 0 0.3rem;
+    line-height: 1.3;
+  }
   .acc-name {
     flex: 1;
     min-width: 0;
@@ -542,7 +611,26 @@
     outline: 2px dashed var(--accent);
     outline-offset: -2px;
   }
+  /* Medzi priečinky: čiara na úrovni riadka (odsadená ako jeho názov). */
+  .item.drop-before::after,
+  .item.drop-after::after {
+    content: '';
+    position: absolute;
+    inset-inline-start: var(--ind, 1.25rem);
+    inset-inline-end: 0.2rem;
+    height: 3px;
+    border-radius: 2px;
+    background: var(--accent);
+    pointer-events: none;
+  }
+  .item.drop-before::after {
+    top: -2px;
+  }
+  .item.drop-after::after {
+    bottom: -2px;
+  }
   .item {
+    position: relative;
     display: flex;
     align-items: center;
     gap: 0.5rem;

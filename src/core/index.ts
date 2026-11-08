@@ -24,6 +24,7 @@ import { ContactSync } from './contact-sync'
 import { getAccount } from './accounts'
 import type { CoreToMain, MainToCore, PortMessage } from '../shared/ipc'
 import { isRequestChannel } from '../shared/ipc'
+import { classifyError } from './mail/connection-test'
 
 interface ParentPortLike {
   on(event: 'message', fn: (e: { data: unknown; ports: MessagePortLike[] }) => void): void
@@ -76,11 +77,17 @@ async function handleRequest(port: MessagePortLike, msg: Extract<PortMessage, { 
   } catch (e) {
     const err = e as Error & { code?: string }
     log.warn('požiadavka zlyhala', { ch: msg.ch, code: err.code, error: err })
+    // Chyba spojenia bez nášho kódu (napr. „Command failed“ pri zlom hesle) dostane zrozumiteľný kód.
+    let code = err.code
+    if (!code || /^E[A-Z]+$/.test(code)) {
+      const c = classifyError(e).code
+      code = c && c !== 'UNKNOWN' ? c : (code ?? 'ERROR')
+    }
     port.postMessage({
       kind: 'res',
       id: msg.id,
       ok: false,
-      error: { code: err.code ?? 'ERROR', message: err.message }
+      error: { code, message: err.message }
     } satisfies PortMessage)
   }
 }

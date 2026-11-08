@@ -32,6 +32,16 @@ export interface FolderRow {
   delta_link: string | null
 }
 
+export interface LocalFolderMeta {
+  id: number
+  path: string
+  name: string
+  parent_path: string | null
+  delimiter: string | null
+  special_use: SpecialUse | null
+  hidden: number
+}
+
 export interface HeaderInput {
   uid: number
   size: number
@@ -138,6 +148,126 @@ export class MailStore {
     }
   }
 
+  // ---------- priečinky bez servera (konto len v počítači, zmeny bez pripojenia) ----------
+
+  /** Priečinky konta s menom, nadradeným priečinkom a oddeľovačom (aj skryté). */
+  folderMeta(accountId: number): LocalFolderMeta[] {
+    return this.db
+      .prepare('SELECT id, path, name, parent_path, delimiter, special_use, hidden FROM folders WHERE account_id = ?')
+      .all(accountId) as unknown as LocalFolderMeta[]
+  }
+
+  /** Oddeľovač priečinkov konta podľa doterajších priečinkov (inak „/“). */
+  folderDelimiter(accountId: number): string {
+    const r = this.db.prepare(`SELECT delimiter FROM folders WHERE account_id = ? AND delimiter IS NOT NULL AND delimiter <> '' LIMIT 1`).get(accountId) as
+      | { delimiter: string }
+      | undefined
+    return r?.delimiter ?? '/'
+  }
+
+  /**
+   * Predpona priečinkov na najvyššej úrovni: na serveroch s menným priestorom „INBOX.“ sú všetky priečinky
+   * pod Doručenou poštou (INBOX.Odoslané…), inak prázdna.
+   */
+  topLevelPrefix(accountId: number): string {
+    const rows = this.folderMeta(accountId).filter((r) => r.delimiter)
+    const inbox = rows.find((r) => r.path.toUpperCase() === 'INBOX' && r.parent_path === null)
+    if (!inbox?.delimiter) return ''
+    const others = rows.filter((r) => r.id !== inbox.id)
+    return others.length && others.every((r) => r.path.toUpperCase().startsWith(`INBOX${inbox.delimiter}`)) ? `${inbox.path}${inbox.delimiter}` : ''
+  }
+
+  /** Nový priečinok len v lokálnej databáze. Vráti jeho ID. */
+  addLocalFolder(accountId: number, f: { path: string; delimiter: string; name: string; parentPath: string | null; specialUse?: SpecialUse | null }): number {
+    const r = this.db
+      .prepare(
+        `INSERT INTO folders (account_id, path, delimiter, name, parent_path, special_use, special_use_source, selectable, subscribed)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 1, 1) RETURNING id`
+      )
+      .get(accountId, f.path, f.delimiter, f.name, f.parentPath, f.specialUse ?? null, f.specialUse ? 'name' : null) as { id: number }
+    return r.id
+  }
+
+  setFoldersHidden(ids: number[], hidden: boolean): void {
+    const st = this.db.prepare('UPDATE folders SET hidden = ? WHERE id = ?')
+    for (const id of ids) st.run(hidden ? 1 : 0, id)
+  }
+
+  /** Odstráni priečinky z lokálnej databázy (aj so správami, ktoré v nich ešte sú). */
+  deleteFolderRows(ids: number[]): void {
+    const st = this.db.prepare('DELETE FROM folders WHERE id = ?')
+    this.db.exec('BEGIN')
+    try {
+      for (const id of ids) st.run(id)
+      this.db.exec('COMMIT')
+    } catch (e) {
+      this.db.exec('ROLLBACK')
+      throw e
+    }
+  }
+
+  /**
+   * Presun bez servera (konto len v počítači): správa dostane v cieľovom priečinku nové lokálne UID.
+   * Originál ostáva, nič sa nesťahuje.
+   */
+  moveLocal(messageIds: number[], targetFolderId: number): void {
+    const move = this.db.prepare(`UPDATE messages SET folder_id = ?, uid = ?, hidden = 0, moving_to = NULL, local_state = 'synced' WHERE id = ?`)
+    this.db.exec('BEGIN')
+    try {
+      let uid = this.maxUid(targetFolderId)
+      for (const id of messageIds) {
+        const r = this.db.prepare('SELECT folder_id FROM messages WHERE id = ?').get(id) as { folder_id: number } | undefined
+        if (!r) continue
+        if (r.folder_id === targetFolderId) {
+          this.db.prepare(`UPDATE messages SET hidden = 0, moving_to = NULL, local_state = 'synced' WHERE id = ?`).run(id)
+          continue
+        }
+        move.run(targetFolderId, ++uid, id)
+      }
+      this.db.exec('COMMIT')
+    } catch (e) {
+      this.db.exec('ROLLBACK')
+      throw e
+    }
+  }
+
+  /**
+   * Kópia správy do priečinka iného konta len v lokálnej databáze (cieľ je konto len v počítači).
+   * Originál (.eml) je ten istý; obsah a fulltext doplní setBody. Vráti ID novej správy.
+   */
+  copyMessageLocal(id: number, targetFolderId: number): number | null {
+    const t = this.folder(targetFolderId)
+    if (!t) return null
+    const r = this.db
+      .prepare(
+        `INSERT INTO messages (account_id, folder_id, uid, size, internal_date, date_header, message_id, in_reply_to, references_hdr, subject,
+           from_addr, from_name, to_json, cc_json, bcc_json, seen, flagged, answered, draft, keywords_json)
+         SELECT ?, ?, ?, size, internal_date, date_header, message_id, in_reply_to, references_hdr, subject,
+           from_addr, from_name, to_json, cc_json, bcc_json, seen, flagged, answered, draft, keywords_json
+         FROM messages WHERE id = ? RETURNING id`
+      )
+      .get(t.account_id, t.id, this.maxUid(t.id) + 1, id) as { id: number } | undefined
+    if (!r) return null
+    this.assignThread(r.id)
+    return r.id
+  }
+
+  /** Message-ID správ v priečinku (bez < >, malými písmenami) – aby sa pri presune nenahrali druhýkrát. */
+  folderMessageIdSet(folderId: number): Set<string> {
+    const rows = this.db.prepare('SELECT message_id FROM messages WHERE folder_id = ? AND hidden = 0 AND message_id IS NOT NULL').all(folderId) as { message_id: string }[]
+    return new Set(rows.map((r) => normalizeMessageId(r.message_id)).filter(Boolean))
+  }
+
+  /** Počty správ priečinkov podľa lokálnej databázy (konto bez servera). */
+  recountLocal(folderIds: number[]): void {
+    const st = this.db.prepare(
+      `UPDATE folders SET total_count = (SELECT COUNT(*) FROM messages WHERE folder_id = folders.id AND hidden = 0),
+         synced_bodies_count = (SELECT COUNT(*) FROM messages WHERE folder_id = folders.id AND hidden = 0 AND blob_sha256 IS NOT NULL)
+       WHERE id = ?`
+    )
+    for (const id of new Set(folderIds)) st.run(id)
+  }
+
   folderRows(accountId: number): FolderRow[] {
     return this.db
       .prepare('SELECT id, account_id, path, special_use, uidvalidity, uidnext, highestmodseq, total_count, selectable, delta_link FROM folders WHERE account_id = ?')
@@ -155,12 +285,12 @@ export class MailStore {
     const rows = this.db
       .prepare(
         `SELECT f.id, f.account_id AS accountId, f.path, f.name, f.parent_path AS parentPath, f.special_use AS specialUse, f.selectable,
-                f.total_count AS total, f.synced_bodies_count AS syncedBodies, f.delimiter,
+                f.total_count AS total, f.synced_bodies_count AS syncedBodies, f.delimiter, f.sort_order AS sortOrder,
                 (SELECT COUNT(*) FROM messages m WHERE ((m.folder_id = f.id AND m.hidden = 0) OR m.moving_to = f.id) AND m.seen = 0) AS unread,
                 (SELECT COUNT(*) FROM messages m WHERE (m.folder_id = f.id AND m.hidden = 0) OR m.moving_to = f.id) AS localCount
-         FROM folders f ${accountId === undefined ? '' : 'WHERE f.account_id = ?'}`
+         FROM folders f WHERE f.hidden = 0 ${accountId === undefined ? '' : 'AND f.account_id = ?'}`
       )
-      .all(...(accountId === undefined ? [] : [accountId])) as unknown as (Omit<FolderItem, 'selectable' | 'depth'> & { selectable: number; delimiter: string | null })[]
+      .all(...(accountId === undefined ? [] : [accountId])) as unknown as (Omit<FolderItem, 'selectable' | 'depth'> & { selectable: number; delimiter: string | null; sortOrder: number | null })[]
     // Priečinky bez oddeľovača (Graph – cesta je ID): hĺbka a poradie podľa reťazca nadradených priečinkov.
     const byPath = new Map(rows.map((r) => [`${r.accountId}\u0000${r.path}`, r]))
     const chain = (r: (typeof rows)[number]): (typeof rows)[number][] => {
@@ -211,14 +341,49 @@ export class MailStore {
         depth: flat ? depth - 1 : depth
       }
     })
-    return items
-      .sort(
-        (a, b) =>
-          a.accountId - b.accountId ||
-          (SPECIAL_ORDER[a.specialUse ?? ''] ?? 10) - (SPECIAL_ORDER[b.specialUse ?? ''] ?? 10) ||
-          a.sortKey.localeCompare(b.sortKey, 'sk')
-      )
-      .map(({ sortKey: _k, ...item }) => item)
+    // Strom: každý priečinok hneď za svojím nadradeným; súrodenci – špeciálne v pevnom poradí, potom ručné
+    // poradie (ťahaním), potom abecedne.
+    const order = new Map(rows.map((r) => [r.id, r.sortOrder]))
+    const cmp = (a: (typeof items)[number], b: (typeof items)[number]): number =>
+      (SPECIAL_ORDER[a.specialUse ?? ''] ?? 10) - (SPECIAL_ORDER[b.specialUse ?? ''] ?? 10) ||
+      (order.get(a.id) ?? 1e9) - (order.get(b.id) ?? 1e9) ||
+      a.sortKey.localeCompare(b.sortKey, 'sk')
+    const out: typeof items = []
+    for (const acc of [...new Set(items.map((i) => i.accountId))].sort((a, b) => a - b)) {
+      const own = items.filter((i) => i.accountId === acc)
+      const paths = new Set(own.map((i) => i.path))
+      const children = new Map<string | null, typeof items>()
+      for (const i of own) {
+        const p = i.parentPath !== null && paths.has(i.parentPath) ? i.parentPath : null
+        children.set(p, [...(children.get(p) ?? []), i])
+      }
+      const seen = new Set<number>()
+      const walk = (p: string | null, depth: number): void => {
+        if (depth > 64) return
+        for (const i of (children.get(p) ?? []).sort(cmp)) {
+          if (seen.has(i.id)) continue
+          seen.add(i.id)
+          out.push(i)
+          walk(i.path, depth + 1)
+        }
+      }
+      walk(null, 0)
+      for (const i of own.filter((x) => !seen.has(x.id)).sort(cmp)) out.push(i)
+    }
+    return out.map(({ sortKey: _k, ...item }) => item)
+  }
+
+  /** Ručné poradie priečinkov na jednej úrovni (ID v poradí zhora nadol). */
+  setFolderOrder(ids: number[]): void {
+    const st = this.db.prepare('UPDATE folders SET sort_order = ? WHERE id = ?')
+    this.db.exec('BEGIN')
+    try {
+      ids.forEach((id, i) => st.run(i, id))
+      this.db.exec('COMMIT')
+    } catch (e) {
+      this.db.exec('ROLLBACK')
+      throw e
+    }
   }
 
   /** Zmena UIDVALIDITY: všetky lokálne záznamy priečinka sú neplatné. Originály (.eml) ostávajú. */
@@ -445,6 +610,11 @@ export class MailStore {
   }
 
   /** ID všetkých lokálnych správ priečinka. */
+  /** Viditeľné správy priečinka (bez tých, ktoré čakajú na presun inam). */
+  visibleMessageIds(folderId: number): number[] {
+    return (this.db.prepare('SELECT id FROM messages WHERE folder_id = ? AND hidden = 0').all(folderId) as { id: number }[]).map((r) => r.id)
+  }
+
   folderMessageIds(folderId: number): number[] {
     return (this.db.prepare('SELECT id FROM messages WHERE folder_id = ? ORDER BY uid').all(folderId) as { id: number }[]).map((r) => r.id)
   }
@@ -936,6 +1106,13 @@ export class MailStore {
       | { kind: string; payload_json: string }
       | undefined
     return r ? { kind: r.kind, payload: JSON.parse(r.payload_json) } : null
+  }
+
+  /** Server zmenu odmietol a opakovať ju nemá zmysel (zmena priečinkov sa už vrátila späť). */
+  abandonOperation(id: number, error: string): void {
+    this.db
+      .prepare(`UPDATE operations SET state = 'failed', attempts = 3, last_error = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?`)
+      .run(error, id)
   }
 
   finishOperation(id: number, ok: boolean, error?: string): void {

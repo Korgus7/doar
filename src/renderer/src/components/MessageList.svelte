@@ -171,7 +171,8 @@
     const accountIds = [...new Set(itemsById(ids).map((m) => m.accountId))]
     ui.dragging = { ids, accountIds }
     if (!e.dataTransfer) return
-    e.dataTransfer.effectAllowed = 'move'
+    // Do iného konta s Ctrl = kópia.
+    e.dataTransfer.effectAllowed = 'copyMove'
     e.dataTransfer.setData('application/x-doar-messages', JSON.stringify(ids))
     // Štítok pri kurzore: koľko správ sa presúva.
     const ghost = document.createElement('div')

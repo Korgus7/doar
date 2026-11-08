@@ -154,7 +154,7 @@
   async function removeAccount(): Promise<void> {
     if (!details || busy) return
     const d = details
-    const q = t('account.removeConfirm', { email: d.email }) + (d.pendingOutbox ? `\n\n${t('account.removePending', { n: d.pendingOutbox })}` : '')
+    const q = t(d.localOnly ? 'account.removeConfirmLocal' : 'account.removeConfirm', { email: d.email }) + (d.pendingOutbox && !d.localOnly ? `\n\n${t('account.removePending', { n: d.pendingOutbox })}` : '')
     if (!confirm(q)) return
     busy = true
     try {
@@ -165,6 +165,24 @@
       await selectFolder(null)
       showToast(t('account.removed', { email: d.email }))
       if (!mail.accounts.length) close()
+    } catch (err) {
+      message = { text: errorText(err), tone: 'error' }
+    } finally {
+      busy = false
+    }
+  }
+
+  /** Schránka na serveri je zrušená – konto ostane len v počítači (pošta sa dá ďalej triediť). */
+  async function makeLocal(): Promise<void> {
+    if (!details || busy) return
+    const d = details
+    if (!confirm(t('account.makeLocalConfirm', { email: d.email }))) return
+    busy = true
+    try {
+      await window.doar.invoke('accounts.makeLocal', { id: d.id })
+      await loadAccounts()
+      details = await window.doar.invoke('accounts.get', { id: d.id })
+      showToast(t('account.madeLocal', { email: d.email }))
     } catch (err) {
       message = { text: errorText(err), tone: 'error' }
     } finally {
@@ -236,7 +254,8 @@
             <div class="editor">
               <form onsubmit={saveAccount}>
                 <h2>{details.email}</h2>
-                {#if details.passwordStorage === 'session'}<p class="note">ℹ {t('account.sessionPassword')}</p>{/if}
+                {#if details.localOnly}<p class="note">ℹ {t('account.localOnlyNote')}</p>
+                {:else if details.passwordStorage === 'session'}<p class="note">ℹ {t('account.sessionPassword')}</p>{/if}
                 <label class="field">
                   <span>{t('account.displayName')}</span>
                   <input bind:value={form.displayName} maxlength="200" />
@@ -260,13 +279,13 @@
                     </div>
                   {/each}
                 </fieldset>
-                {#if details.protocol !== 'graph'}
+                {#if details.protocol !== 'graph' && !details.localOnly}
                   <label class="check">
                     <input type="checkbox" bind:checked={form.saveSentCopy} />
                     <span>{t('wizard.saveSentCopy')}<small>{t('wizard.saveSentCopy.hint')}</small></span>
                   </label>
                 {/if}
-                {#if details.oauthProvider !== 'google'}
+                {#if details.oauthProvider !== 'google' && !details.localOnly}
                   <label class="check">
                     <input type="checkbox" bind:checked={mergeFolders} />
                     <span>{t('merge.setting')}<small>{t('merge.settingHint')}</small></span>
@@ -280,7 +299,9 @@
 
               <SignaturesEditor accountId={details.id} />
 
-              {#if details.protocol === 'graph'}
+              {#if details.localOnly}
+                <!-- Konto len v počítači: nastavenia servera sa nepoužívajú. -->
+              {:else if details.protocol === 'graph'}
                 <details class="server" bind:open={serverOpen}>
                   <summary>{t('account.server')}</summary>
                   <p class="note">{t('account.viaGraph')}</p>
@@ -347,6 +368,12 @@
               {/if}
 
               <div class="danger-zone">
+                {#if !details.localOnly}
+                  <div class="local-offer">
+                    <button class="btn" onclick={makeLocal} disabled={busy}>{t('account.makeLocal')}</button>
+                    <small>{t('account.makeLocalHint')}</small>
+                  </div>
+                {/if}
                 <button class="btn danger" onclick={removeAccount} disabled={busy}>{t('account.remove')}</button>
               </div>
             </div>
@@ -774,6 +801,14 @@
     border-top: 1px solid var(--border);
     padding-top: 0.9rem;
   }
+  .local-offer {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.25rem;
+    margin-bottom: 0.9rem;
+  }
+
   .btn.danger {
     color: var(--danger);
     border-color: color-mix(in srgb, var(--danger) 45%, var(--border));

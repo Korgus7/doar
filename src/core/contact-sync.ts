@@ -192,7 +192,7 @@ export class ContactSync {
 
   status(): ContactSyncStatus {
     const candidates = this.db
-      .prepare(`SELECT id AS accountId, email FROM accounts WHERE auth_type = 'oauth2' AND provider_key = 'gmail' ORDER BY id`)
+      .prepare(`SELECT id AS accountId, email FROM accounts WHERE auth_type = 'oauth2' AND provider_key = 'gmail' AND local_only = 0 ORDER BY id`)
       .all() as unknown as { accountId: number; email: string }[]
     const s = this.db
       .prepare('SELECT s.account_id AS accountId, a.email, s.last_sync AS lastSync, s.last_error AS lastError FROM contact_sync s JOIN accounts a ON a.id = s.account_id LIMIT 1')

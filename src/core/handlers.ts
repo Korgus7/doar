@@ -13,7 +13,8 @@ import { discover } from './providers/discover'
 import { testConnection } from './mail/connection-test'
 import { testGraph } from './graph/test'
 import { addAccount, getAccount, listAccounts, reorderAccounts, updateAccount, validateSettings } from './accounts'
-import { removeAccount, updateServer } from './account-admin'
+import { makeLocalOnly, removeAccount, updateServer } from './account-admin'
+import { transferFolder, transferMessages } from './transfer'
 import { getSettings, setSettings } from './settings'
 import { prepareCompose, resolveOutbox, scheduledOutbox, sendCompose } from './compose-service'
 import { applyRules, deleteRule, listRules, reorderRules, saveRule, type RuleActions } from './rules'
@@ -284,7 +285,10 @@ export function createHandlers(ctx: CoreContext): Handlers {
       const path = typeof data?.path === 'string' ? data.path : ''
       // Povolenie cesty prichádza od main procesu iným kanálom – chvíľu naň počkáme.
       for (let i = 0; i < 20 && !ctx.exports.isAllowed(path); i++) await new Promise((r) => setTimeout(r, 50))
-      return ctx.exports.start(Number(data?.accountId), path, data?.source === 'local' ? 'local' : 'server')
+      const accountId = Number(data?.accountId)
+      // Konto len v počítači: záloha vždy z lokálnych kópií (server nie je).
+      const local = data?.source === 'local' || !!(ctx.db.prepare('SELECT local_only FROM accounts WHERE id = ?').get(accountId) as { local_only?: number } | undefined)?.local_only
+      return ctx.exports.start(accountId, path, local ? 'local' : 'server')
     },
 
     'export.cancel': (data) => {
@@ -366,6 +370,8 @@ export function createHandlers(ctx: CoreContext): Handlers {
 
     'accounts.remove': (data) => removeAccount(ctx, Number(data?.id)),
 
+    'accounts.makeLocal': (data) => makeLocalOnly(ctx, Number(data?.id)),
+
     'accounts.reorder': (data) => {
       reorderAccounts(ctx.db, data?.ids)
       ctx.emit('accounts.changed', null)
@@ -408,6 +414,14 @@ export function createHandlers(ctx: CoreContext): Handlers {
     'folders.delete': (data) => ctx.sync.deleteFolder(Number(data?.folderId)),
     'folders.mergeOffers': async () => ctx.sync.mergeOffers(),
     'folders.mergeAnswer': (data) => ctx.sync.answerMerge(Number(data?.accountId), data?.merge === true),
+    'transfer.messages': (data) =>
+      transferMessages(ctx, Array.isArray(data?.ids) ? data.ids.map(Number).filter(Number.isInteger).slice(0, 100_000) : [], Number(data?.folderId), data?.copy === true),
+
+    'transfer.folder': (data) =>
+      transferFolder(ctx, Number(data?.folderId), Number(data?.accountId), Number.isInteger(data?.parentId) ? (data!.parentId as number) : null, data?.copy === true),
+
+    'folders.place': (data) => ctx.sync.placeFolder(Number(data?.folderId), Number(data?.anchorId), data?.edge === 'before' ? 'before' : 'after'),
+
     'folders.rename': (data) => ctx.sync.renameFolder(Number(data?.folderId), str(data?.name, 300), Number.isInteger(data?.parentId) ? (data!.parentId as number) : null),
 
     'contacts.list': (data) => listContactsWithGroups(ctx.db, str(data?.query, 200), Number.isInteger(data?.groupId) ? data!.groupId : undefined),

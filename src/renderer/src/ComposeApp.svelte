@@ -367,11 +367,14 @@
     document.documentElement.lang = i18n.locale
     void (async () => {
       try {
-        accounts = await window.doar.invoke('accounts.list')
+        const all = await window.doar.invoke('accounts.list')
+        accounts = all
         void loadAiConfig()
         const settings = await window.doar.invoke('settings.get').catch(() => null)
         const pre = await window.doar.invoke('compose.prepare', { mode, messageId })
         accountId = pre.accountId
+        // Z konta len v počítači sa nedá odosielať – v ponuke odosielateľa nie je (okrem konceptu, ktorý z neho je).
+        accounts = all.filter((a) => !a.localOnly || a.id === pre.accountId)
         to = pre.draft ? pre.draft.to : mode === 'new' && presetTo ? presetTo : fmt(pre.to)
         cc = pre.draft ? pre.draft.cc : fmt(pre.cc)
         bcc = pre.draft ? pre.draft.bcc : ''

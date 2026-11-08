@@ -1,4 +1,4 @@
-import type { AttachmentInfo, FolderItem } from '../../../shared/ipc'
+import type { AttachmentInfo, FolderItem, TransferSummary } from '../../../shared/ipc'
 import { isArchiveId, isDangerousFile, previewKind } from '../../../shared/ipc'
 import { t, type MessageKey } from '../i18n/index.svelte'
 import { mail, setSelection, indexOf, messageAt, itemsById, allIds, setFlags, loadFolders, findFolder, selectFolder, expandThreads } from './mail.svelte'
@@ -39,7 +39,9 @@ export const ui = $state({
   /** Ťahaný priečinok (presun pod iný priečinok alebo na najvyššiu úroveň). */
   draggingFolder: null as null | { id: number; accountId: number },
   /** Náhľad prílohy (obrázok, text) nad oknom. */
-  preview: null as null | { messageId: number; attachment: AttachmentInfo; image?: string; text?: string }
+  preview: null as null | { messageId: number; attachment: AttachmentInfo; image?: string; text?: string },
+  /** Priebeh presunu/kópie medzi kontami (stavový riadok). */
+  transfer: null as null | { accountId: number; done: number; total: number; copy: boolean }
 })
 
 let toastSeq = 0
@@ -242,6 +244,53 @@ export async function renameFolder(folderId: number, name: string, parentId: num
   await window.doar.invoke('folders.rename', { folderId, name, parentId })
   await loadFolders()
   showToast(t('folderDialog.renamed', { name: name.trim() }))
+}
+
+/** Priečinok pustený medzi dva priečinky: na ich úroveň a do poradia pred/za priečinok anchorId. */
+export async function placeFolder(folderId: number, anchorId: number, edge: 'before' | 'after'): Promise<void> {
+  await window.doar.invoke('folders.place', { folderId, anchorId, edge })
+  await loadFolders()
+}
+
+const accountEmail = (id: number): string => mail.accounts.find((a) => a.id === id)?.email ?? ''
+
+function transferText(r: TransferSummary, account: string): string {
+  const parts = [t(r.copy ? 'transfer.copied' : 'transfer.moved', { n: r.transferred, account })]
+  if (r.duplicates) parts.push(t('transfer.duplicates', { n: r.duplicates }))
+  if (r.unavailable) parts.push(t('transfer.unavailable', { n: r.unavailable }))
+  if (r.failed) parts.push(t('transfer.failed', { n: r.failed }))
+  if (r.kept) parts.push(t('transfer.kept'))
+  if (r.interrupted) parts.push(errorText({ code: r.interrupted }))
+  return parts.join(' ')
+}
+
+/** Správy do priečinka iného konta: nahrajú sa tam; pri presune idú v pôvodnom konte do Koša. */
+export async function transferMessagesTo(list: number[], folder: FolderItem, copy: boolean): Promise<void> {
+  const ids = writable([...list])
+  if (!ids.length) return
+  const account = accountEmail(folder.accountId)
+  showToast(t(copy ? 'transfer.startCopy' : 'transfer.start', { n: ids.length, account }), { ms: 600_000 })
+  try {
+    const r = await window.doar.invoke('transfer.messages', { ids, folderId: folder.id, copy })
+    showToast(transferText(r, account), { tone: r.interrupted || r.failed ? 'error' : 'info', ms: 12_000 })
+    await loadFolders()
+  } catch (e) {
+    showToast(errorText(e), { tone: 'error' })
+  }
+}
+
+/** Priečinok aj s podpriečinkami do iného konta (po potvrdení). */
+export async function transferFolderTo(folder: FolderItem, accountId: number, parentId: number | null, copy: boolean): Promise<void> {
+  const account = accountEmail(accountId)
+  if (!confirm(t(copy ? 'transfer.confirmFolderCopy' : 'transfer.confirmFolder', { folder: folderLabel(folder), account }))) return
+  showToast(t(copy ? 'transfer.startFolderCopy' : 'transfer.startFolder', { folder: folderLabel(folder), account }), { ms: 600_000 })
+  try {
+    const r = await window.doar.invoke('transfer.folder', { folderId: folder.id, accountId, parentId, copy })
+    showToast(transferText(r, account), { tone: r.interrupted || r.failed ? 'error' : 'info', ms: 12_000 })
+    await loadFolders()
+  } catch (e) {
+    showToast(errorText(e), { tone: 'error' })
+  }
 }
 
 /** Priečinky pod daným priečinkom (všetky úrovne). */

@@ -44,7 +44,7 @@ export function validateSettings(input: unknown): AccountSettings {
   }
 }
 
-const SUMMARY_COLS = `id, email, name, color, display_name AS displayName`
+const SUMMARY_COLS = `id, email, name, color, display_name AS displayName, local_only AS localOnly`
 /** „Server“ kont cez Microsoft Graph (IMAP/SMTP sa nepoužíva; stĺpce v databáze sú povinné). */
 export const GRAPH_HOST = 'graph.microsoft.com'
 
@@ -53,7 +53,7 @@ function withSignatures(db: Db, rows: Omit<AccountSummary, 'signature' | 'signat
   const all = listSignatures(db)
   return rows.map((r) => {
     const signatures = all.filter((s) => s.accountId === r.id)
-    return { ...r, signatures, signature: signatures.find((s) => s.isDefault)?.text.trim() ?? '' }
+    return { ...r, localOnly: !!r.localOnly, signatures, signature: signatures.find((s) => s.isDefault)?.text.trim() ?? '' }
   })
 }
 
@@ -97,6 +97,7 @@ export function getAccount(db: Db, id: number): AccountDetails {
     name: r.name,
     color: r.color,
     displayName: r.displayName,
+    localOnly: !!r.localOnly,
     signature: defaultSignatureText(db, r.id),
     signatures: listSignatures(db, r.id),
     username: r.username,
@@ -190,7 +191,7 @@ export async function saveServerSettings(
 ): Promise<void> {
   const acc = getAccount(db, id)
   const same = db
-    .prepare('SELECT id FROM accounts WHERE id <> ? AND lower(imap_host) = lower(?) AND lower(username) = lower(?)')
+    .prepare('SELECT id FROM accounts WHERE id <> ? AND local_only = 0 AND lower(imap_host) = lower(?) AND lower(username) = lower(?)')
     .get(id, s.imap.host, s.username)
   if (same) throw Object.assign(new Error('Tú istú schránku už používa iné konto'), { code: 'ACCOUNT_SAME_MAILBOX' })
   if (password) await (acc.passwordStorage === 'os' ? secrets : sessionSecrets).set(passwordKey(id), password)
@@ -236,8 +237,9 @@ export async function addAccount(db: Db, secrets: Secrets, sessionSecrets: Secre
   }
 
   // To isté konto = rovnaká adresa alebo rovnaké prihlasovacie meno na tom istom serveri (tá istá schránka).
+  // Konto len v počítači sa nepočíta – schránku na serveri si používateľ môže pridať znova ako nové konto.
   const exists = db
-    .prepare('SELECT id FROM accounts WHERE lower(imap_host) = lower(?) AND (lower(email) = lower(?) OR lower(username) = lower(?))')
+    .prepare('SELECT id FROM accounts WHERE local_only = 0 AND lower(imap_host) = lower(?) AND (lower(email) = lower(?) OR lower(username) = lower(?))')
     .get(settings.imap.host, settings.email, settings.username)
   if (exists) throw err('ACCOUNT_EXISTS', 'Toto konto už je pridané')
 

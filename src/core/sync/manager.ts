@@ -7,6 +7,7 @@ import type { CoreEvents, EventChannel, MergeOffer, SpecialUse, SyncStatus } fro
 import type { ImapFlow } from 'imapflow'
 import { AccountSync, type AccountRow, type MovePayload, type SyncDeps } from './account-sync'
 import { GraphSync } from './graph-sync'
+import { LocalSync } from './local-sync'
 import { GraphClient, type GraphFetch } from '../graph/client'
 import { createImapClient } from '../mail/imap'
 import type { OAuthService } from '../oauth/oauth'
@@ -16,8 +17,13 @@ import { specialByName } from '../mail/special-names'
 
 const log = logger('sync')
 
-/** Synchronizácia jedného konta: IMAP + SMTP, alebo Microsoft Graph. */
-export type MailSync = AccountSync | GraphSync
+/** Konto len v počítači sa na server nepripája (záloha zo servera, obnova na server…). */
+function localOnlyError(): Error {
+  return Object.assign(new Error('Konto je len v počítači'), { code: 'LOCAL_ONLY' })
+}
+
+/** Synchronizácia jedného konta: IMAP + SMTP, Microsoft Graph, alebo konto len v počítači (bez servera). */
+export type MailSync = AccountSync | GraphSync | LocalSync
 
 /** Spravuje synchronizáciu všetkých kont. */
 export class SyncManager {
@@ -79,7 +85,7 @@ export class SyncManager {
   private accountRow(id: number): AccountRow | null {
     return (this.deps.db
       .prepare(
-        'SELECT id, email, username, imap_host, imap_port, imap_security, smtp_host, smtp_port, smtp_security, save_sent_copy, display_name, password_storage, auth_type, protocol FROM accounts WHERE id = ?'
+        'SELECT id, email, username, imap_host, imap_port, imap_security, smtp_host, smtp_port, smtp_security, save_sent_copy, display_name, password_storage, auth_type, protocol, local_only FROM accounts WHERE id = ?'
       )
       .get(id) as unknown as AccountRow | undefined) ?? null
   }
@@ -91,6 +97,7 @@ export class SyncManager {
   async newImapClient(accountId: number): Promise<ImapFlow> {
     const row = this.accountRow(accountId)
     if (!row) throw Object.assign(new Error('Konto neexistuje'), { code: 'NO_ACCOUNT' })
+    if (row.local_only) throw localOnlyError()
     if (row.protocol === 'graph') throw Object.assign(new Error('Pre kontá cez Microsoft Graph zatiaľ nie je dostupné'), { code: 'GRAPH_UNSUPPORTED' })
     const pass = await this.deps.getPassword(row)
     if (!pass) throw Object.assign(new Error('Chýba heslo'), { code: 'PASSWORD_REQUIRED' })
@@ -103,6 +110,7 @@ export class SyncManager {
   graphClient(accountId: number): GraphClient {
     const row = this.accountRow(accountId)
     if (!row) throw Object.assign(new Error('Konto neexistuje'), { code: 'NO_ACCOUNT' })
+    if (row.local_only) throw localOnlyError()
     if (row.protocol !== 'graph') throw Object.assign(new Error('Konto nie je cez Microsoft Graph'), { code: 'NOT_GRAPH' })
     return new GraphClient(
       async (o) => {
@@ -133,7 +141,11 @@ export class SyncManager {
     if (this.syncs.has(accountId)) return
     const row = this.accountRow(accountId)
     if (!row) return
-    const s: MailSync = row.protocol === 'graph' ? new GraphSync(row, { ...this.deps, ...this.graphOpts }) : new AccountSync(row, this.deps)
+    const s: MailSync = row.local_only
+      ? new LocalSync(row, this.deps)
+      : row.protocol === 'graph'
+        ? new GraphSync(row, { ...this.deps, ...this.graphOpts })
+        : new AccountSync(row, this.deps)
     this.syncs.set(accountId, s)
     s.start()
   }
@@ -321,6 +333,37 @@ export class SyncManager {
     const s = this.syncs.get(folder.account_id)
     if (!s) throw Object.assign(new Error('Konto neexistuje'), { code: 'NO_ACCOUNT' })
     return s.renameFolder(folder.path, parent?.path ?? null, clean)
+  }
+
+  /**
+   * Priečinok ťahaný medzi dva priečinky: ostane (alebo sa presunie) na úroveň priečinka `anchorId`
+   * a zaradí sa pred/za neho. Poradie sa drží len v Doare (IMAP ho nepozná).
+   */
+  async placeFolder(folderId: number, anchorId: number, edge: 'before' | 'after'): Promise<void> {
+    const err = (code: string, msg: string): Error => Object.assign(new Error(msg), { code })
+    const folder = this.deps.store.folder(folderId)
+    const anchor0 = this.deps.store.folder(anchorId)
+    if (!folder || !anchor0) throw err('NO_TARGET', 'Priečinok neexistuje')
+    if (folder.account_id !== anchor0.account_id) throw err('CROSS_ACCOUNT', 'Priečinok sa dá presunúť len v rámci konta')
+    if (folderId === anchorId) return
+    const accountId = folder.account_id
+    let items = this.deps.store.listFolders(accountId)
+    const dragged = items.find((f) => f.id === folderId)
+    const anchor = items.find((f) => f.id === anchorId)
+    if (!dragged || !anchor) throw err('NO_TARGET', 'Priečinok neexistuje')
+    if (dragged.parentPath !== anchor.parentPath) {
+      const parent = anchor.parentPath === null ? null : items.find((f) => f.path === anchor.parentPath) ?? null
+      await this.renameFolder(folderId, dragged.name, parent?.id ?? null)
+      items = this.deps.store.listFolders(accountId)
+    }
+    const level = items.find((f) => f.id === folderId)?.parentPath ?? null
+    const siblings = items.filter((f) => f.parentPath === level && !f.specialUse && f.path.toUpperCase() !== 'INBOX' && f.id !== folderId).map((f) => f.id)
+    const at = siblings.indexOf(anchorId)
+    // Medzi špeciálne priečinky (Doručená pošta, Odoslané…) nie – tie sú vždy hore; zaradí sa na začiatok.
+    const pos = at === -1 ? 0 : edge === 'before' ? at : at + 1
+    siblings.splice(pos, 0, folderId)
+    this.deps.store.setFolderOrder(siblings)
+    this.deps.emit('folders.changed', { accountId })
   }
 
   async deleteFolder(folderId: number): Promise<{ moved: number; labelsOnly: boolean }> {

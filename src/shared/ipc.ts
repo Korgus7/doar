@@ -14,6 +14,8 @@ export interface AccountSummary {
   signature: string
   /** Podpisy konta (0.9): formátované, jeden môže byť predvolený. */
   signatures: Signature[]
+  /** Konto len v počítači – na server sa nepripája, odosielať z neho nemožno. */
+  localOnly: boolean
 }
 
 export interface Signature {
@@ -356,6 +358,24 @@ export interface SyncStatus {
 export const EDITOR_FONTS = ['Aptos', 'Arial', 'Calibri', 'Cambria', 'Candara', 'Comic Sans MS', 'Consolas', 'Courier New', 'Georgia', 'Segoe UI', 'Tahoma', 'Times New Roman', 'Trebuchet MS', 'Verdana'] as const
 
 export const OFFLINE_CODES: readonly string[] = ['NO_NETWORK', 'HOST_NOT_FOUND', 'CONNECTION_REFUSED', 'TIMEOUT', 'PROTOCOL']
+
+/** Výsledok presunu/kópie medzi kontami. */
+export interface TransferSummary {
+  total: number
+  /** Nahraté do cieľa. */
+  transferred: number
+  /** V cieli už boli (rovnaké Message-ID) – nenahrali sa znova. */
+  duplicates: number
+  /** Obsah nie je v počítači a nedal sa stiahnuť (napr. konto len v počítači). */
+  unavailable: number
+  /** Cieľ ich odmietol. */
+  failed: number
+  copy: boolean
+  /** Presun priečinka: pôvodný priečinok ostal, lebo sa nepresunulo všetko. */
+  kept?: boolean
+  /** Presun sa prerušil (kód chyby, napr. bez pripojenia). */
+  interrupted?: string
+}
 
 export type OutboxState = 'draft' | 'queued' | 'sending' | 'sent' | 'error' | 'uncertain'
 
@@ -820,6 +840,12 @@ export interface CoreRequests {
   'folders.mergeAnswer': [{ accountId: number; merge: boolean }, { moved: number; duplicates: number }]
   /** Premenuje priečinok a/alebo ho presunie pod iný (parentId null = najvyššia úroveň); podpriečinky idú s ním. */
   'folders.rename': [{ folderId: number; name: string; parentId: number | null }, void]
+  /** Priečinok pustený medzi dva priečinky: na úroveň priečinka anchorId, pred alebo za neho (vlastné poradie). */
+  'folders.place': [{ folderId: number; anchorId: number; edge: 'before' | 'after' }, void]
+  /** Správy do priečinka iného konta (copy = kópia, inak presun: v pôvodnom konte do Koša po nahratí). */
+  'transfer.messages': [{ ids: number[]; folderId: number; copy: boolean }, TransferSummary]
+  /** Priečinok aj s podpriečinkami do iného konta (parentId null = najvyššia úroveň). */
+  'transfer.folder': [{ folderId: number; accountId: number; parentId: number | null; copy: boolean }, TransferSummary]
   'contacts.list': [{ query?: string; groupId?: number }, Contact[]]
   'contacts.groups': [void, ContactGroup[]]
   'contacts.groupSave': [{ id?: number; name: string }, ContactGroup]
@@ -868,6 +894,11 @@ export interface CoreRequests {
   ]
   /** Odstráni konto z Doaru (aj jeho lokálnu kópiu pošty). Pošta na serveri zostane. */
   'accounts.remove': [{ id: number }, void]
+  /**
+   * Konto ostane len v počítači: Doar sa naň prestane pripájať (schránka na serveri zrušená). Stiahnutá pošta
+   * ostane a dá sa ďalej triediť; heslo sa zmaže. Späť to nejde – konto sa dá pridať znova ako nové.
+   */
+  'accounts.makeLocal': [{ id: number }, void]
   'accounts.reorder': [{ ids: number[] }, void]
   'settings.get': [void, AppSettings]
   'settings.set': [Partial<AppSettings>, AppSettings]
@@ -938,6 +969,8 @@ export interface CoreEvents {
   'sync.status': SyncStatus
   'accounts.changed': null
   'folders.changed': { accountId: number }
+  /** Priebeh presunu/kópie medzi kontami. */
+  'transfer.progress': { accountId: number; done: number; total: number; copy: boolean }
   /** Pribudla ponuka na zlúčenie priečinkov iných programov, alebo sa zlúčili automaticky. */
   'folders.mergeOffer': null
   'messages.changed': { folderIds: number[] }
@@ -1009,6 +1042,9 @@ export const REQUEST_CHANNELS = [
   'folders.mergeOffers',
   'folders.mergeAnswer',
   'folders.rename',
+  'folders.place',
+  'transfer.messages',
+  'transfer.folder',
   'contacts.list',
   'contacts.groups',
   'contacts.groupSave',
@@ -1039,6 +1075,7 @@ export const REQUEST_CHANNELS = [
   'accounts.update',
   'accounts.updateServer',
   'accounts.remove',
+  'accounts.makeLocal',
   'accounts.reorder',
   'settings.get',
   'settings.set',

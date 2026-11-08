@@ -60,15 +60,25 @@ export async function originalRaw(ctx: Ctx, messageId: number): Promise<{ raw: B
   return { raw: ctx.blobs.read(row.blob_sha256), accountId: row.account_id, internalDate: row.internal_date }
 }
 
+function sendingAccount(ctx: Ctx, accountId: number): number {
+  const local = ctx.db.prepare('SELECT local_only FROM accounts WHERE id = ?').get(accountId) as { local_only: number } | undefined
+  if (!local?.local_only) return accountId
+  const other = ctx.db.prepare('SELECT id FROM accounts WHERE local_only = 0 ORDER BY sort_order, id LIMIT 1').get() as { id: number } | undefined
+  return other?.id ?? accountId
+}
+
 /** Predvyplnenie okna správy. Pri odpovedi sa použije konto, na ktoré správa prišla. */
 export async function prepareCompose(ctx: Ctx, mode: ComposeMode, messageId?: number): Promise<ComposePrefill> {
   if (mode === 'new' || !messageId) {
-    const first = ctx.db.prepare('SELECT id FROM accounts ORDER BY sort_order, id LIMIT 1').get() as { id: number } | undefined
+    const first = ctx.db.prepare('SELECT id FROM accounts ORDER BY local_only, sort_order, id LIMIT 1').get() as { id: number } | undefined
     if (!first) throw err('NO_ACCOUNT', 'Najprv pridajte konto')
     return { accountId: first.id, to: [], cc: [], subject: '', draft: null, quote: null, forward: null, attachments: [], replyToMessage: null, draftId: null }
   }
   if (mode === 'draft') return prepareDraft(ctx, messageId)
-  const { raw, accountId, internalDate } = await originalRaw(ctx, messageId)
+  const orig = await originalRaw(ctx, messageId)
+  const { raw, internalDate } = orig
+  // Z konta len v počítači sa odoslať nedá – odpovedá sa z prvého pripojeného konta (ak je).
+  const accountId = sendingAccount(ctx, orig.accountId)
   const src = await replySource(raw)
   if (mode === 'forward') {
     const atts = await extractAttachments(raw)
@@ -118,6 +128,9 @@ export async function prepareCompose(ctx: Ctx, mode: ComposeMode, messageId?: nu
 export async function sendCompose(ctx: Ctx, input: ComposeSendInput, opts: { remember?: boolean } = {}): Promise<{ outboxId: number }> {
   const acc = account(ctx.db, Number(input?.accountId))
   if (!acc) throw err('NO_ACCOUNT', 'Konto neexistuje')
+  if ((ctx.db.prepare('SELECT local_only FROM accounts WHERE id = ?').get(acc.id) as { local_only: number }).local_only) {
+    throw err('LOCAL_ONLY_SEND', 'Z konta len v počítači sa nedá odosielať')
+  }
   const str = (v: unknown, max: number): string => (typeof v === 'string' ? v.slice(0, max) : '')
   const to = parseAddressList(str(input.to, 20_000))
   const cc = parseAddressList(str(input.cc, 20_000))
@@ -261,6 +274,9 @@ export function resolveOutbox(ctx: Ctx, id: number, action: 'resend' | 'discard'
   if (row.state !== 'error' && row.state !== 'uncertain' && !waiting) throw err('INVALID_STATE', 'Správa sa práve odosiela alebo už bola odoslaná')
   if (action === 'discard') ctx.store.deleteOutbox(id)
   else {
+    if ((ctx.db.prepare('SELECT local_only FROM accounts WHERE id = ?').get(row.account_id) as { local_only: number } | undefined)?.local_only) {
+      throw err('LOCAL_ONLY_SEND', 'Z konta len v počítači sa nedá odosielať')
+    }
     ctx.store.setOutbox(id, { state: 'queued', error: null })
     void ctx.sync.get(row.account_id)?.processOutboxNow().catch(() => {})
   }

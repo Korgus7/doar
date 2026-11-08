@@ -152,6 +152,16 @@ test('nastavenia: názov, farba, podpis v novej správe, server, upozornenia, od
     shell.openExternal = g.origOpen!
   })
 
+  // Ponechať len v počítači: konto ostane, v zozname priečinkov má značku, nastavenia servera zmiznú.
+  await win.getByRole('button', { name: 'Nastavenia', exact: true }).click()
+  win.once('dialog', (d) => void d.accept())
+  await dlg.getByRole('button', { name: 'Ponechať len v počítači…' }).click()
+  await expect(dlg.getByText(/Toto konto je len v počítači/)).toBeVisible()
+  await expect(dlg.getByRole('button', { name: 'Ponechať len v počítači…' })).toHaveCount(0)
+  await expect(dlg.getByText('Nastavenia servera', { exact: true })).toHaveCount(0)
+  await set.getByRole('button', { name: 'Zavrieť' }).click()
+  await expect(win.locator('.local-tag')).toHaveText('v počítači')
+
   // Odstránenie konta → uvítanie; pošta na serveri zostane.
   await win.getByRole('button', { name: 'Nastavenia', exact: true }).click()
   win.once('dialog', (d) => void d.accept())

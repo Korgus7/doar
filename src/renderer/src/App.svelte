@@ -19,7 +19,7 @@
   import { loadAiConfig } from './lib/ai.svelte'
   import SettingsDialog from './components/SettingsDialog.svelte'
   import { openSettings } from './lib/settings.svelte'
-  import { showToast } from './lib/actions.svelte'
+  import { showToast, ui } from './lib/actions.svelte'
   import { setSelection } from './lib/mail.svelte'
 
   let info = $state<AppInfo | null>(null)
@@ -92,6 +92,7 @@
       window.doar.on('folders.changed', () => scheduleRefresh()),
       window.doar.on('messages.changed', (d) => scheduleRefresh(d.folderIds)),
       window.doar.on('sync.status', (s) => (mail.statuses[s.accountId] = s)),
+      window.doar.on('transfer.progress', (p) => (ui.transfer = p.done < p.total ? p : null)),
       // Lokálne kópie zachránené pred hromadným zmazaním zo servera – archív pribudol v ľavom paneli.
       window.doar.on('sync.rescued', (r) => showToast(t('rescue.saved', { email: r.email, folder: r.folderPath, n: r.written }), { ms: 30_000 }))
     ]
@@ -125,6 +126,11 @@
       const done = bp.phase === 'write' ? bp.written : bp.downloaded
       const total = bp.phase === 'write' ? bp.messagesTotal : bp.missing
       return { text: t('backup.status', { email, done, total }), tone: 'busy' }
+    }
+    const tp = ui.transfer
+    if (tp) {
+      const email = mail.accounts.find((a) => a.id === tp.accountId)?.email ?? ''
+      return { text: t(tp.copy ? 'transfer.statusCopy' : 'transfer.status', { account: email, done: tp.done, total: tp.total }), tone: 'busy' }
     }
     const rp = restore.progress
     if (rp) {

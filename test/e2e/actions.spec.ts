@@ -153,6 +153,31 @@ test('akcie: Kôš a Vrátiť späť, presun do nového priečinka, ťahanie, v�
   await folders.getByRole('button', { name: /^Podklady 2026/ }).dragTo(folders.getByRole('button', { name: /^Projekty Ľubica/ }))
   await expect.poll(async () => (await serverFolders()).includes('Projekty Ľubica/Podklady 2026'), { timeout: 30_000 }).toBe(true)
   await expect(fold).toBeVisible()
+  // Medzi priečinky (horný okraj riadka, čiara) = na úroveň toho riadka – tu najvyššia úroveň.
+  await folders.getByRole('button', { name: /^Podklady 2026/ }).dragTo(folders.getByRole('button', { name: /^Projekty Ľubica/ }), { targetPosition: { x: 40, y: 2 } })
+  await expect.poll(async () => (await serverFolders()).includes('Podklady 2026'), { timeout: 30_000 }).toBe(true)
+  await expect(fold).toHaveCount(0)
+  await folders.getByRole('button', { name: /^Podklady 2026/ }).dragTo(folders.getByRole('button', { name: /^Projekty Ľubica/ }))
+  await expect.poll(async () => (await serverFolders()).includes('Projekty Ľubica/Podklady 2026'), { timeout: 30_000 }).toBe(true)
+  await expect(fold).toBeVisible()
+
+  // Prehodenie poradia v podpriečinku: čiara medzi súrodencami = ostane v tom istom priečinku, len sa zaradí.
+  await folders.getByRole('button', { name: /^Projekty Ľubica/ }).click({ button: 'right' })
+  await win.getByRole('menu').getByRole('menuitem', { name: 'Nový podpriečinok…' }).click()
+  await subDlg.getByLabel('Názov priečinka').fill('Zmluvy')
+  await subDlg.getByRole('button', { name: 'Vytvoriť' }).click()
+  const subOrder = async () => (await folders.getByRole('button', { name: /^(Podklady 2026|Zmluvy)/ }).allTextContents()).map((x) => x.replace(/\d+$/, '').trim())
+  await expect.poll(subOrder).toEqual(['Podklady 2026', 'Zmluvy'])
+  await folders.getByRole('button', { name: /^Zmluvy/ }).dragTo(folders.getByRole('button', { name: /^Podklady 2026/ }), { targetPosition: { x: 60, y: 2 } })
+  await expect.poll(subOrder).toEqual(['Zmluvy', 'Podklady 2026'])
+  const sfolders = await serverFolders()
+  expect(sfolders).toEqual(expect.arrayContaining(['Projekty Ľubica/Zmluvy', 'Projekty Ľubica/Podklady 2026']))
+  expect(sfolders).not.toContain('Zmluvy')
+  // Späť pod Podklady 2026 (dolný okraj) – poradie ostane aj po načítaní priečinkov znova.
+  const podklady = folders.getByRole('button', { name: /^Podklady 2026/ })
+  const h = (await podklady.boundingBox())!.height
+  await folders.getByRole('button', { name: /^Zmluvy/ }).dragTo(podklady, { targetPosition: { x: 60, y: h - 2 } })
+  await expect.poll(subOrder).toEqual(['Podklady 2026', 'Zmluvy'])
 
   // Výber viacerých (Ctrl + klik) a Archív klávesom E.
   await row('Štvrtá').click()
