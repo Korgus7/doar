@@ -329,7 +329,13 @@ export class ContactSync {
       token = await client.syncToken(collection).catch(() => null)
     }
     // Vlastné zmeny, ktoré sme práve odoslali, majú už známy ETag – nesťahovať znova.
-    const hrefs = [...changed].filter(([href, etag]) => !(etag && local.get(href)?.remote_etag === etag)).map(([href]) => href)
+    // Kontakty zmazané v Doare (čakajú na zmazanie na serveri) tiež nie – inak by sa do Doaru vrátili.
+    const deleting = new Set(
+      (this.db.prepare('SELECT href FROM contact_tombstones WHERE account_id = ?').all(accountId) as { href: string }[]).map((t) => t.href)
+    )
+    const hrefs = [...changed]
+      .filter(([href, etag]) => !deleting.has(href) && !(etag && local.get(href)?.remote_etag === etag))
+      .map(([href]) => href)
     const cards = hrefs.length ? await client.fetchCards(collection, hrefs) : []
     for (const card of cards) {
       if (!parseVcards(card.vcard)[0]?.emails.some(isEmail)) result.withoutEmail++

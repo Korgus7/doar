@@ -1,7 +1,7 @@
 import type { Db } from './db'
 import { firstMessageId, isReplySubject, threadSubject } from '../mail/thread'
 import { asQuery, flagsWhere, type SearchQuery } from '../search'
-import type { FolderItem, MessageListItem, OutboxItem, OutboxState, SpecialUse, ThreadMessage } from '../../shared/ipc'
+import { MARK_KEYWORDS, type FolderItem, type MessageListItem, type MessageMark, type OutboxItem, type OutboxState, type SpecialUse, type ThreadMessage } from '../../shared/ipc'
 
 /**
  * Prístup k priečinkom a správam v lokálnej databáze. Žiadna sieť – to rieši `sync`.
@@ -76,6 +76,19 @@ export function flagsFromSet(set: Set<string> | undefined): Flags {
     draft: s.has('\\Draft'),
     keywords: [...s].filter((f) => !f.startsWith('\\')).sort()
   }
+}
+
+/** Stav vybavenia podľa značiek správy zo servera (0 = žiadna naša značka). */
+export function markFromKeywords(keywords: string[]): MessageMark {
+  for (const m of [1, 2, 3] as const) if (keywords.includes(MARK_KEYWORDS[m])) return m
+  return 0
+}
+
+/** Podmienka filtra stavu vybavenia (prázdne = bez filtra). */
+function markWhere(marks: MessageMark[] | undefined): { where: string; args: number[] } {
+  const list = [...new Set((marks ?? []).filter((m) => m >= 0 && m <= 3))]
+  if (!list.length) return { where: '1', args: [] }
+  return { where: `m.mark IN (${list.map(() => '?').join(',')})`, args: list }
 }
 
 const SPECIAL_ORDER: Record<string, number> = { inbox: 0, drafts: 1, sent: 2, archive: 3, junk: 4, trash: 5 }
@@ -241,9 +254,9 @@ export class MailStore {
     const r = this.db
       .prepare(
         `INSERT INTO messages (account_id, folder_id, uid, size, internal_date, date_header, message_id, in_reply_to, references_hdr, subject,
-           from_addr, from_name, to_json, cc_json, bcc_json, seen, flagged, answered, draft, keywords_json)
+           from_addr, from_name, to_json, cc_json, bcc_json, seen, flagged, answered, draft, keywords_json, mark)
          SELECT ?, ?, ?, size, internal_date, date_header, message_id, in_reply_to, references_hdr, subject,
-           from_addr, from_name, to_json, cc_json, bcc_json, seen, flagged, answered, draft, keywords_json
+           from_addr, from_name, to_json, cc_json, bcc_json, seen, flagged, answered, draft, keywords_json, mark
          FROM messages WHERE id = ? RETURNING id`
       )
       .get(t.account_id, t.id, this.maxUid(t.id) + 1, id) as { id: number } | undefined
@@ -542,8 +555,8 @@ export class MailStore {
     if (!list.length) return 0
     const ins = this.db.prepare(
       `INSERT OR IGNORE INTO messages (account_id, folder_id, uid, size, internal_date, date_header, message_id, in_reply_to, subject,
-         from_addr, from_name, to_json, cc_json, seen, flagged, answered, draft, keywords_json, remote_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`
+         from_addr, from_name, to_json, cc_json, seen, flagged, answered, draft, keywords_json, remote_id, mark)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`
     )
     const fts = this.db.prepare('INSERT INTO messages_fts(rowid, subject, from_text, to_text, body_text) VALUES (?, ?, ?, ?, ?)')
     let added = 0
@@ -570,7 +583,8 @@ export class MailStore {
           f.answered ? 1 : 0,
           f.draft ? 1 : 0,
           JSON.stringify(f.keywords),
-          h.remoteId ?? null
+          h.remoteId ?? null,
+          markFromKeywords(f.keywords)
         ) as { id: number } | undefined
         if (!row) continue
         added++
@@ -585,21 +599,36 @@ export class MailStore {
     return added
   }
 
-  /** Príznaky zo servera. Správy s neodoslanou lokálnou zmenou sa preskočia (lokálna zmena má prednosť). */
+  /**
+   * Príznaky zo servera. Správy s neodoslanou lokálnou zmenou sa preskočia (lokálna zmena má prednosť).
+   * Stav vybavenia: naša značka na serveri → jej stav. Ak značka na serveri zmizla (predtým tam bola),
+   * stav sa zruší. Server, ktorý vlastné značky neukladá, ich nikdy nevráti – stav ostáva lokálny.
+   */
   applyServerFlags(folderId: number, list: { uid: number; flags: Set<string> }[]): number[] {
-    const upd = this.db.prepare(
-      `UPDATE messages SET seen = ?, flagged = ?, answered = ?, draft = ?, keywords_json = ?
-       WHERE folder_id = ? AND uid = ? AND local_state = 'synced'
-         AND (seen != ? OR flagged != ? OR answered != ? OR draft != ? OR keywords_json != ?) RETURNING id`
-    )
+    const get = this.db.prepare(`SELECT id, seen, flagged, answered, draft, keywords_json, mark FROM messages WHERE folder_id = ? AND uid = ? AND local_state = 'synced'`)
+    const upd = this.db.prepare('UPDATE messages SET seen = ?, flagged = ?, answered = ?, draft = ?, keywords_json = ?, mark = ? WHERE id = ?')
     const changed: number[] = []
     this.db.exec('BEGIN')
     try {
       for (const m of list) {
+        const row = get.get(folderId, m.uid) as
+          | { id: number; seen: number; flagged: number; answered: number; draft: number; keywords_json: string; mark: number }
+          | undefined
+        if (!row) continue
         const f = flagsFromSet(m.flags)
-        const v = [f.seen ? 1 : 0, f.flagged ? 1 : 0, f.answered ? 1 : 0, f.draft ? 1 : 0, JSON.stringify(f.keywords)] as const
-        const r = upd.get(...v, folderId, m.uid, ...v) as { id: number } | undefined
-        if (r) changed.push(r.id)
+        const keywords = JSON.stringify(f.keywords)
+        const serverMark = markFromKeywords(f.keywords)
+        let oldKeywords: string[] = []
+        try {
+          oldKeywords = JSON.parse(row.keywords_json || '[]') as string[]
+        } catch {
+          /* poškodené – ako prázdne */
+        }
+        const mark = serverMark || (markFromKeywords(oldKeywords) ? 0 : row.mark)
+        const v = [f.seen ? 1 : 0, f.flagged ? 1 : 0, f.answered ? 1 : 0, f.draft ? 1 : 0, keywords, mark] as const
+        if (v[0] === row.seen && v[1] === row.flagged && v[2] === row.answered && v[3] === row.draft && keywords === row.keywords_json && mark === row.mark) continue
+        upd.run(...v, row.id)
+        changed.push(row.id)
       }
       this.db.exec('COMMIT')
     } catch (e) {
@@ -700,31 +729,35 @@ export class MailStore {
   }
 
   /** Zoznam správ priečinka alebo spoločnej doručenej pošty (folderId = null), od najnovších. */
-  listMessages(folderId: number | null, offset: number, limit: number): { total: number; items: MessageListItem[] } {
+  listMessages(folderId: number | null, offset: number, limit: number, marks?: MessageMark[]): { total: number; items: MessageListItem[] } {
     const v = visibleIn(folderId)
-    return this.queryList(v.where, v.args, offset, limit)
+    const k = markWhere(marks)
+    return this.queryList(`${v.where} AND ${k.where}`, [...v.args, ...k.args], offset, limit)
   }
 
   /** Riadky zoznamu po konverzáciách: z každej konverzácie v priečinku len najnovšia správa. */
-  private threadBase(folderId: number | null): { sql: string; args: number[] } {
-    const v = visibleIn(folderId)
+  private threadBase(folderId: number | null, marks?: MessageMark[]): { sql: string; args: number[] } {
+    const vis = visibleIn(folderId)
+    const k = markWhere(marks)
+    const v = { where: `${vis.where} AND ${k.where}`, args: [...vis.args, ...k.args] }
     const part = `m.account_id || ':' || COALESCE(m.thread_key, 'i:' || m.id)`
     return {
       sql: `SELECT m.id, ${part} AS tk, COALESCE(m.internal_date, m.date_header) AS d, m.from_name, m.from_addr,
               ROW_NUMBER() OVER (PARTITION BY ${part} ORDER BY COALESCE(m.internal_date, m.date_header) DESC, m.id DESC) AS rn,
-              COUNT(*) OVER w AS cnt, MIN(m.seen) OVER w AS all_seen, MAX(m.flagged) OVER w AS any_flag, MAX(m.has_attachments) OVER w AS any_att
+              COUNT(*) OVER w AS cnt, MIN(m.seen) OVER w AS all_seen, MAX(m.flagged) OVER w AS any_flag, MAX(m.has_attachments) OVER w AS any_att,
+              MIN(CASE m.mark WHEN 0 THEN 9 ELSE m.mark END) OVER w AS top_mark
             FROM messages m JOIN folders f ON f.id = m.folder_id WHERE ${v.where}
             WINDOW w AS (PARTITION BY ${part})`,
       args: v.args
     }
   }
 
-  listThreads(folderId: number | null, offset: number, limit: number): { total: number; items: MessageListItem[] } {
-    const b = this.threadBase(folderId)
+  listThreads(folderId: number | null, offset: number, limit: number, marks?: MessageMark[]): { total: number; items: MessageListItem[] } {
+    const b = this.threadBase(folderId, marks)
     const total = (this.db.prepare(`SELECT COUNT(*) AS c FROM (${b.sql}) WHERE rn = 1`).get(...b.args) as { c: number }).c
     const reps = this.db
-      .prepare(`SELECT id, tk, cnt, all_seen, any_flag, any_att FROM (${b.sql}) WHERE rn = 1 ORDER BY d DESC, id DESC LIMIT ? OFFSET ?`)
-      .all(...b.args, limit, offset) as { id: number; tk: string; cnt: number; all_seen: number; any_flag: number; any_att: number }[]
+      .prepare(`SELECT id, tk, cnt, all_seen, any_flag, any_att, top_mark FROM (${b.sql}) WHERE rn = 1 ORDER BY d DESC, id DESC LIMIT ? OFFSET ?`)
+      .all(...b.args, limit, offset) as { id: number; tk: string; cnt: number; all_seen: number; any_flag: number; any_att: number; top_mark: number }[]
     if (!reps.length) return { total, items: [] }
     const items = this.queryList(`m.id IN (${reps.map(() => '?').join(',')})`, reps.map((r) => r.id), 0, reps.length).items
     const multi = reps.filter((r) => r.cnt > 1)
@@ -750,6 +783,7 @@ export class MailStore {
           ...it,
           seen: !!r.all_seen,
           flagged: !!r.any_flag,
+          mark: (r.top_mark >= 1 && r.top_mark <= 3 ? r.top_mark : 0) as MessageMark,
           hasAttachments: !!r.any_att,
           threadIds: list.map((x) => x.id),
           threadFrom: [...new Set(list.map((x) => x.from).filter(Boolean))]
@@ -759,8 +793,8 @@ export class MailStore {
   }
 
   /** ID riadkov zoznamu po konverzáciách (pre „Vybrať všetko“). */
-  listThreadIds(folderId: number | null): number[] {
-    const b = this.threadBase(folderId)
+  listThreadIds(folderId: number | null, marks?: MessageMark[]): number[] {
+    const b = this.threadBase(folderId, marks)
     return (this.db.prepare(`SELECT id FROM (${b.sql}) WHERE rn = 1 ORDER BY d DESC, id DESC`).all(...b.args) as { id: number }[]).map((r) => r.id)
   }
 
@@ -821,9 +855,10 @@ export class MailStore {
     fts: string | SearchQuery,
     scope: { folderId?: number | null; accountId?: number | null },
     offset: number,
-    limit: number
+    limit: number,
+    marks?: MessageMark[]
   ): { total: number; items: MessageListItem[]; notDownloaded: number } {
-    const { where, args } = this.searchWhere(fts, scope)
+    const { where, args } = this.searchWhere(fts, scope, marks)
     const r = this.queryList(where, args, offset, limit)
     const scopeOnly = this.scopeWhere(scope)
     const notDownloaded = (this.db
@@ -832,8 +867,8 @@ export class MailStore {
     return { ...r, notDownloaded }
   }
 
-  searchIds(fts: string | SearchQuery, scope: { folderId?: number | null; accountId?: number | null }): number[] {
-    const { where, args } = this.searchWhere(fts, scope)
+  searchIds(fts: string | SearchQuery, scope: { folderId?: number | null; accountId?: number | null }, marks?: MessageMark[]): number[] {
+    const { where, args } = this.searchWhere(fts, scope, marks)
     return (this.db
       .prepare(`SELECT m.id FROM messages m JOIN folders f ON f.id = m.folder_id WHERE ${where} ORDER BY COALESCE(m.internal_date, m.date_header) DESC, m.id DESC`)
       .all(...args) as { id: number }[]).map((r) => r.id)
@@ -853,12 +888,17 @@ export class MailStore {
     return { where: parts.join(' AND '), args }
   }
 
-  private searchWhere(query: string | SearchQuery, scope: { folderId?: number | null; accountId?: number | null }): { where: string; args: (string | number)[] } {
+  private searchWhere(
+    query: string | SearchQuery,
+    scope: { folderId?: number | null; accountId?: number | null },
+    marks?: MessageMark[]
+  ): { where: string; args: (string | number)[] } {
     const q = asQuery(query)
     const s = this.scopeWhere(scope)
     const f = flagsWhere(q.flags, 'COALESCE(m.internal_date, m.date_header)')
-    const where = `${s.where} AND ${f.where}${q.fts ? ' AND m.id IN (SELECT rowid FROM messages_fts WHERE messages_fts MATCH ?)' : ''}`
-    return { where, args: [...s.args, ...f.args, ...(q.fts ? [q.fts] : [])] }
+    const k = markWhere(marks)
+    const where = `${s.where} AND ${f.where} AND ${k.where}${q.fts ? ' AND m.id IN (SELECT rowid FROM messages_fts WHERE messages_fts MATCH ?)' : ''}`
+    return { where, args: [...s.args, ...f.args, ...k.args, ...(q.fts ? [q.fts] : [])] }
   }
 
   private queryList(where: string, args: (string | number)[], offset: number, limit: number): { total: number; items: MessageListItem[] } {
@@ -866,13 +906,14 @@ export class MailStore {
     const items = this.db
       .prepare(
         `SELECT m.id, m.account_id AS accountId, COALESCE(m.moving_to, m.folder_id) AS folderId, m.subject, m.from_name AS fromName, m.from_addr AS fromAddr,
-                m.to_json AS toJson, COALESCE(m.internal_date, m.date_header) AS date, m.seen, m.flagged, m.answered,
+                m.to_json AS toJson, COALESCE(m.internal_date, m.date_header) AS date, m.seen, m.flagged, m.answered, m.mark,
                 m.has_attachments AS hasAttachments, m.snippet, CASE WHEN m.moving_to IS NOT NULL THEN 'pending' ELSE m.local_state END AS localState, m.blob_sha256 IS NOT NULL AS downloaded,
                 a.color AS accountColor, a.name AS accountName
          FROM messages m JOIN folders f ON f.id = m.folder_id JOIN accounts a ON a.id = m.account_id
          WHERE ${where} ORDER BY COALESCE(m.internal_date, m.date_header) DESC, m.id DESC LIMIT ? OFFSET ?`
       )
-      .all(...args, limit, offset) as unknown as (Omit<MessageListItem, 'seen' | 'flagged' | 'answered' | 'hasAttachments' | 'downloaded' | 'to'> & {
+      .all(...args, limit, offset) as unknown as (Omit<MessageListItem, 'seen' | 'flagged' | 'answered' | 'hasAttachments' | 'downloaded' | 'to' | 'mark'> & {
+      mark: number
       seen: number
       flagged: number
       answered: number
@@ -888,6 +929,7 @@ export class MailStore {
         seen: !!r.seen,
         flagged: !!r.flagged,
         answered: !!r.answered,
+        mark: (r.mark >= 0 && r.mark <= 3 ? r.mark : 0) as MessageMark,
         hasAttachments: !!r.hasAttachments,
         downloaded: !!r.downloaded
       }))
@@ -895,7 +937,7 @@ export class MailStore {
   }
 
   /** Lokálna zmena príznakov – hneď viditeľná, na server ide cez frontu operácií. */
-  setLocalFlags(ids: number[], change: { seen?: boolean; flagged?: boolean }): MessageRow[] {
+  setLocalFlags(ids: number[], change: { seen?: boolean; flagged?: boolean; mark?: MessageMark }): MessageRow[] {
     const changed: MessageRow[] = []
     this.db.exec('BEGIN')
     try {
@@ -904,6 +946,7 @@ export class MailStore {
         const vals: number[] = []
         if (change.seen !== undefined) sets.push('seen = ?'), vals.push(change.seen ? 1 : 0)
         if (change.flagged !== undefined) sets.push('flagged = ?'), vals.push(change.flagged ? 1 : 0)
+        if (change.mark !== undefined) sets.push('mark = ?'), vals.push(change.mark)
         if (!sets.length) continue
         const r = this.db.prepare(`UPDATE messages SET ${sets.join(', ')}, local_state = 'pending' WHERE id = ? RETURNING id`).get(...vals, id)
         if (r) changed.push(this.message(id)!)
@@ -1267,11 +1310,12 @@ export class MailStore {
   }
 
   /** Viditeľné ID správ v priečinku (alebo spoločnej doručenej pošte) – pre „Vybrať všetko“. */
-  listIds(folderId: number | null): number[] {
+  listIds(folderId: number | null, marks?: MessageMark[]): number[] {
     const v = visibleIn(folderId)
+    const k = markWhere(marks)
     return (this.db
-      .prepare(`SELECT m.id FROM messages m JOIN folders f ON f.id = m.folder_id WHERE ${v.where} ORDER BY COALESCE(m.internal_date, m.date_header) DESC, m.id DESC`)
-      .all(...v.args) as { id: number }[]).map((r) => r.id)
+      .prepare(`SELECT m.id FROM messages m JOIN folders f ON f.id = m.folder_id WHERE ${v.where} AND ${k.where} ORDER BY COALESCE(m.internal_date, m.date_header) DESC, m.id DESC`)
+      .all(...v.args, ...k.args) as { id: number }[]).map((r) => r.id)
   }
 
   /** Jedna správa ako riadok zoznamu (aj skrytá pri presune) – pre samostatné okno správy. */
@@ -1326,6 +1370,8 @@ export interface MessageRow {
   seen: number
   flagged: number
   answered: number
+  /** Stav vybavenia (0–3). */
+  mark: number
   local_state: string
   /** Cieľ presunu, ktorý ešte čaká na server (správa sa už zobrazuje tam). */
   moving_to: number | null

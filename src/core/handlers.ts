@@ -1,7 +1,7 @@
 import type { Db } from './store/db'
 import type { BlobStore } from './store/blobs'
 import type { MailStore } from './store/mailstore'
-import type { CoreEvents, CoreRequests, EventChannel, RequestChannel } from '../shared/ipc'
+import type { CoreEvents, CoreRequests, EventChannel, MessageMark, RequestChannel } from '../shared/ipc'
 import type { Secrets } from './secrets'
 import type { DiscoveryNet } from './providers/net'
 import type { SyncManager } from './sync/manager'
@@ -81,6 +81,11 @@ export function ruleActions(ctx: Pick<CoreContext, 'sync'>): RuleActions {
     move: (list, target) => void ctx.sync.moveMessages(list, target),
     setFlags: (list, change) => ctx.sync.setFlags(list, change)
   }
+}
+
+/** Filter stavu vybavenia (0–3); neplatné hodnoty sa vynechajú. */
+function marks(v: unknown): MessageMark[] {
+  return Array.isArray(v) ? [...new Set(v.filter((x): x is MessageMark => x === 0 || x === 1 || x === 2 || x === 3))] : []
 }
 
 function ids(v: unknown): number[] {
@@ -173,8 +178,9 @@ export function createHandlers(ctx: CoreContext): Handlers {
       const offset = Math.max(0, Math.floor(Number(data?.offset) || 0))
       const limit = Math.min(500, Math.max(1, Math.floor(Number(data?.limit) || 100)))
       if (isArchiveId(folderId)) return ctx.archives.listMessages(folderId!, offset, limit)
-      if (data?.threads) return ctx.store.listThreads(folderId, offset, limit)
-      return ctx.store.listMessages(folderId, offset, limit)
+      const m = marks(data?.marks)
+      if (data?.threads) return ctx.store.listThreads(folderId, offset, limit, m)
+      return ctx.store.listMessages(folderId, offset, limit, m)
     },
 
     'messages.thread': (data) => {
@@ -198,9 +204,10 @@ export function createHandlers(ctx: CoreContext): Handlers {
     },
 
     'messages.setFlags': (data) => {
-      const change: { seen?: boolean; flagged?: boolean } = {}
+      const change: { seen?: boolean; flagged?: boolean; mark?: MessageMark } = {}
       if (typeof data?.seen === 'boolean') change.seen = data.seen
       if (typeof data?.flagged === 'boolean') change.flagged = data.flagged
+      if (data?.mark === 0 || data?.mark === 1 || data?.mark === 2 || data?.mark === 3) change.mark = data.mark
       ctx.sync.setFlags(ids(data?.ids), change)
     },
 
@@ -345,7 +352,7 @@ export function createHandlers(ctx: CoreContext): Handlers {
       const limit = Math.min(500, Math.max(1, Math.floor(Number(data?.limit) || 100)))
       const scope = searchScope(data)
       if (isArchiveId(scope.folderId) || scope.archiveId !== null) return ctx.archives.search(fts, scope, offset, limit)
-      return ctx.store.searchMessages(fts, scope, offset, limit)
+      return ctx.store.searchMessages(fts, scope, offset, limit, marks(data?.marks))
     },
 
     'messages.searchIds': (data) => {
@@ -353,7 +360,7 @@ export function createHandlers(ctx: CoreContext): Handlers {
       if (!fts) return []
       const scope = searchScope(data)
       if (isArchiveId(scope.folderId) || scope.archiveId !== null) return ctx.archives.searchIds(fts, scope)
-      return ctx.store.searchIds(fts, scope)
+      return ctx.store.searchIds(fts, scope, marks(data?.marks))
     },
 
     'accounts.get': async (data) => getAccount(ctx.db, Number(data?.id)),
@@ -403,7 +410,8 @@ export function createHandlers(ctx: CoreContext): Handlers {
     'messages.listIds': (data) => {
       const folderId = Number.isInteger(data?.folderId) ? (data!.folderId as number) : null
       if (isArchiveId(folderId)) return ctx.archives.listIds(folderId!)
-      return data?.threads ? ctx.store.listThreadIds(folderId) : ctx.store.listIds(folderId)
+      const m = marks(data?.marks)
+      return data?.threads ? ctx.store.listThreadIds(folderId, m) : ctx.store.listIds(folderId, m)
     },
 
     'folders.create': async (data) => {

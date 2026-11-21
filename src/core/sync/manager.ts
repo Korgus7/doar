@@ -3,7 +3,7 @@ import type { BlobStore } from '../store/blobs'
 import type { MailStore } from '../store/mailstore'
 import type { Secrets } from '../secrets'
 import { passwordKey } from '../secrets'
-import type { CoreEvents, EventChannel, MergeOffer, SpecialUse, SyncStatus } from '../../shared/ipc'
+import { MARK_KEYWORDS, type CoreEvents, type EventChannel, type MergeOffer, type MessageMark, type SpecialUse, type SyncStatus } from '../../shared/ipc'
 import type { ImapFlow } from 'imapflow'
 import { AccountSync, type AccountRow, type MovePayload, type SyncDeps } from './account-sync'
 import { GraphSync } from './graph-sync'
@@ -533,7 +533,7 @@ export class SyncManager {
    * Zmena príznakov (prečítané, hviezdička): hneď lokálne, potom na server cez frontu operácií.
    * Ak server práve nie je dostupný, zmena počká a odošle sa pri ďalšej synchronizácii.
    */
-  setFlags(ids: number[], change: { seen?: boolean; flagged?: boolean }): void {
+  setFlags(ids: number[], change: { seen?: boolean; flagged?: boolean; mark?: MessageMark }): void {
     const store = this.deps.store
     const rows = store.setLocalFlags(ids, change)
     const groups = new Map<string, { accountId: number; folderId: number; uids: number[]; messageIds: number[] }>()
@@ -548,6 +548,10 @@ export class SyncManager {
     const remove: string[] = []
     if (change.seen !== undefined) (change.seen ? add : remove).push('\\Seen')
     if (change.flagged !== undefined) (change.flagged ? add : remove).push('\\Flagged')
+    // Stav vybavenia: jedna naša značka, ostatné preč (0 = žiadna).
+    if (change.mark !== undefined) {
+      for (const m of [1, 2, 3] as const) (m === change.mark ? add : remove).push(MARK_KEYWORDS[m])
+    }
     const touched = new Set<number>()
     for (const g of groups.values()) {
       store.enqueueOperation(g.accountId, 'flags', { folderId: g.folderId, uids: g.uids, messageIds: g.messageIds, add, remove })

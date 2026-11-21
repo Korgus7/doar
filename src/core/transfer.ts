@@ -3,7 +3,7 @@ import type { Db } from './store/db'
 import type { BlobStore } from './store/blobs'
 import { normalizeMessageId, type MailStore, type MessageRow } from './store/mailstore'
 import type { SyncManager } from './sync/manager'
-import type { CoreEvents, EventChannel, TransferSummary } from '../shared/ipc'
+import { MARK_KEYWORDS, type CoreEvents, type EventChannel, type TransferSummary } from '../shared/ipc'
 import { topLevel } from './sync/account-sync'
 import { createLocalFolder, deletableSubtree } from './sync/local-folders'
 import { indexInfo } from './mail/parse'
@@ -41,7 +41,8 @@ interface Target {
 }
 
 function flagsOf(row: MessageRow): string[] {
-  return [...(row.seen ? ['\\Seen'] : []), ...(row.flagged ? ['\\Flagged'] : []), ...(row.answered ? ['\\Answered'] : [])]
+  const mark = row.mark >= 1 && row.mark <= 3 ? [MARK_KEYWORDS[row.mark]!] : []
+  return [...(row.seen ? ['\\Seen'] : []), ...(row.flagged ? ['\\Flagged'] : []), ...(row.answered ? ['\\Answered'] : []), ...mark]
 }
 
 async function imapTarget(ctx: TransferCtx, accountId: number): Promise<Target> {

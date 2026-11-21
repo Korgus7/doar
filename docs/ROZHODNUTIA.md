@@ -492,6 +492,14 @@ Pri presune schránky milan@cami.sk sa ukázalo, že synchronizácia zmaže lok�
 - Presun potrebuje spojenie s cieľom; ak ho niet, nič sa nezačne. Naraz beží najviac jeden presun. Do kont cez Microsoft Graph sa zatiaľ presúvať nedá (z nich áno).
 - Overené: integračný test (IMAP → IMAP správy aj priečinok s podpriečinkom, kópia bez duplicít, nedostupný cieľ, konto len v počítači ako zdroj aj cieľ), test UI (ťahanie správy, Ctrl = kópia, priečinok na hlavičku iného konta).
 
+## Stav vybavenia – krúžok (2026-11-21)
+
+- Podnet od používateľa: krúžok na opačnej strane ako hviezdička; kliknutie mení stav bez stavu → veľmi dôležité (červený) → dôležité (oranžový) → vybavené (zelená fajka). Je v zozname, v náhľade aj v samostatnom okne správy, v ponuke na pravom tlačidle a ako filter v hornom paneli (tri prepínače, dajú sa zapnúť viaceré naraz; platí pre zoznam aj hľadanie, v archíve nie).
+- Zdroj pravdy je lokálny stĺpec `messages.mark` (migrácia 022). Na server sa posiela ako IMAP značky `$DoarHigh`, `$DoarMedium`, `$DoarDone` (bežnou operáciou `flags`), takže ho vidí aj Doar na druhom počítači.
+- Server, ktorý vlastné značky neukladá (PERMANENTFLAGS bez `\*`), ich odmietne alebo ignoruje – systémové príznaky musia prejsť, značky sa skúsia mierne a chyba sa len zapíše do logu. Stav potom ostáva len v tomto počítači. Microsoft (Graph) a konto len v počítači: stav je lokálny.
+- Pri synchronizácii: naša značka na serveri → prevezme sa; značka, ktorá na serveri bola a zmizla → stav sa zruší; server bez značiek → lokálny stav ostáva. Kým zmena čaká na odoslanie, server ju neprepíše.
+- Konverzácia v zozname ukazuje najnaliehavejší stav zo svojich správ; nastavenie stavu platí pre celú konverzáciu (ako „prečítané“). Stav ide aj do zálohy/exportu a pri presune či kópii medzi kontami.
+
 ## Licencie závislostí (overené 2026-10-21 cez `npm view`)
 
 Všetky sú kompatibilné s MIT.

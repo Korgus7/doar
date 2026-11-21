@@ -267,6 +267,8 @@ export interface MessageListItem {
   seen: boolean
   flagged: boolean
   answered: boolean
+  /** Stav vybavenia (krúžok). V konverzácii najnaliehavejší stav jej správ. */
+  mark: MessageMark
   hasAttachments: boolean
   snippet: string
   localState: 'synced' | 'pending' | 'failed'
@@ -711,6 +713,13 @@ export interface ArchiveSummary {
  * Správy a priečinky archívu majú v rozhraní záporné ID (−id v databáze archívu), aby sa nemiešali
  * so správami kont. Rovnaké požiadavky (messages.list, messages.get, prílohy…) tak fungujú pre oboje.
  */
+/**
+ * Stav vybavenia správy (krúžok v zozname): 0 bez stavu, 1 veľmi dôležité (červený), 2 dôležité (oranžový),
+ * 3 vybavené (zelená fajka). Na serveri sa ukladá ako vlastná značka správy (IMAP keyword), ak to server vie.
+ */
+export type MessageMark = 0 | 1 | 2 | 3
+export const MARK_KEYWORDS = ['', '$DoarHigh', '$DoarMedium', '$DoarDone'] as const
+
 export function isArchiveId(id: number | null | undefined): boolean {
   return typeof id === 'number' && id < 0
 }
@@ -790,11 +799,12 @@ export interface CoreRequests {
   'accounts.add': [AddAccountInput, AccountSummary]
   'folders.list': [void, FolderItem[]]
   /** threads = zoskupiť do konverzácií (jeden riadok = najnovšia správa konverzácie v priečinku). */
-  'messages.list': [{ folderId: number | null; offset: number; limit: number; threads?: boolean }, { total: number; items: MessageListItem[] }]
+  /** marks: len správy s týmito stavmi (filter v hornom paneli); prázdne/chýba = všetky. */
+  'messages.list': [{ folderId: number | null; offset: number; limit: number; threads?: boolean; marks?: MessageMark[] }, { total: number; items: MessageListItem[] }]
   /** Konverzácia, do ktorej správa patrí (zoradená od najstaršej). */
   'messages.thread': [{ id: number }, ThreadMessage[]]
   'messages.get': [{ id: number; showRemote?: boolean; alwaysForSender?: boolean }, MessageView]
-  'messages.setFlags': [{ ids: number[]; seen?: boolean; flagged?: boolean }, void]
+  'messages.setFlags': [{ ids: number[]; seen?: boolean; flagged?: boolean; mark?: MessageMark }, void]
   /** Všetky správy v priečinku (null = spoločná doručená pošta) označí ako prečítané. */
   /** Uloží originál správy (.eml) do súboru zvoleného v dialógu „Uložiť ako“. */
   'messages.saveEml': [{ id: number; path: string }, void]
@@ -830,7 +840,7 @@ export interface CoreRequests {
   'messages.move': [{ ids: number[]; folderId?: number; special?: 'trash' | 'archive' | 'junk' | 'inbox' }, { undo: number[]; count: number }]
   'messages.deleteForever': [{ ids: number[] }, void]
   'messages.undo': [{ undo: number[] }, { undone: boolean }]
-  'messages.listIds': [{ folderId: number | null; threads?: boolean }, number[]]
+  'messages.listIds': [{ folderId: number | null; threads?: boolean; marks?: MessageMark[] }, number[]]
   'folders.create': [{ accountId: number; parentId: number | null; name: string }, { folderId: number }]
   /** Odstráni priečinok aj s podpriečinkami; správy presunie do Koša (Gmail: zruší len štítok). */
   'folders.delete': [{ folderId: number }, { moved: number; labelsOnly: boolean }]
@@ -957,6 +967,8 @@ export interface SearchFilters {
 export interface SearchInput {
   query: string
   filters?: SearchFilters
+  /** Filter stavu vybavenia z horného panela. */
+  marks?: MessageMark[]
   /** Záporné ID = priečinok archívu. */
   folderId?: number | null
   accountId?: number | null

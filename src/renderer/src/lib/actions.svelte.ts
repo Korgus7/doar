@@ -1,4 +1,4 @@
-import type { AttachmentInfo, FolderItem, TransferSummary } from '../../../shared/ipc'
+import type { AttachmentInfo, FolderItem, MessageMark, TransferSummary } from '../../../shared/ipc'
 import { isArchiveId, isDangerousFile, previewKind } from '../../../shared/ipc'
 import { t, type MessageKey } from '../i18n/index.svelte'
 import { mail, setSelection, indexOf, messageAt, itemsById, allIds, setFlags, loadFolders, findFolder, selectFolder, expandThreads } from './mail.svelte'
@@ -17,6 +17,8 @@ export interface MenuItem {
   shortcut?: string
   danger?: boolean
   disabled?: boolean
+  /** Krúžok stavu vybavenia pred textom (0–3). */
+  mark?: MessageMark
   run: () => void
 }
 export type MenuEntry = MenuItem | 'sep'
@@ -356,6 +358,12 @@ export function messageMenu(ids: number[]): MenuEntry[] {
   entries.push(
     { label: anyUnread ? t('reader.markRead') : t('reader.markUnread'), run: () => void setFlags(ids, { seen: anyUnread }) },
     { label: anyUnflagged ? t('reader.flag') : t('reader.unflag'), run: () => void setFlags(ids, { flagged: anyUnflagged }) },
+    'sep',
+    ...([1, 2, 3, 0] as const).map((m): MenuItem => ({
+      label: t(`mark.${m}`),
+      mark: m,
+      run: () => void setFlags(items.flatMap((x) => x.threadIds ?? [x.id]), { mark: m })
+    })),
     'sep',
     { label: t('actions.archive'), shortcut: 'E', disabled: allInArchive(ids), run: () => archive(ids) },
     { label: t('actions.moveTo'), shortcut: 'Ctrl+Shift+V', disabled: singleAccount(ids) === null, run: () => openMoveDialog(ids) },

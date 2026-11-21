@@ -1155,9 +1155,24 @@ export class AccountSync {
       const lock = await client.getMailboxLock(folder.path)
       try {
         const range = p.uids.join(',')
+        // Systémové príznaky (\Seen, \Flagged…) musia prejsť. Vlastné značky (stav vybavenia) len ak ich server
+        // vie uložiť (PERMANENTFLAGS obsahuje \*); inak stav ostane len v tomto počítači.
+        const sys = (l: string[]): string[] => l.filter((f) => f.startsWith('\\'))
+        const kw = (l: string[]): string[] => l.filter((f) => !f.startsWith('\\'))
+        const perm = client.mailbox ? client.mailbox.permanentFlags : undefined
+        const keywordsOk = !perm || perm.has('\\*')
         // imapflow pri odmietnutí servera nevyhodí chybu, ale vráti false – nesmie sa to brať ako úspech.
-        if (p.add.length && (await client.messageFlagsAdd(range, p.add, { uid: true })) === false) throw rejected('príznaky')
-        if (p.remove.length && (await client.messageFlagsRemove(range, p.remove, { uid: true })) === false) throw rejected('príznaky')
+        if (sys(p.add).length && (await client.messageFlagsAdd(range, sys(p.add), { uid: true })) === false) throw rejected('príznaky')
+        if (sys(p.remove).length && (await client.messageFlagsRemove(range, sys(p.remove), { uid: true })) === false) throw rejected('príznaky')
+        const kwAdd = kw(p.add).filter((k) => keywordsOk || perm?.has(k))
+        const kwRemove = kw(p.remove)
+        try {
+          if (kwRemove.length && (await client.messageFlagsRemove(range, kwRemove, { uid: true })) === false) log.info('server značky neodstránil', { account: this.account.id })
+          if (kwAdd.length && (await client.messageFlagsAdd(range, kwAdd, { uid: true })) === false) log.info('server značky neuložil', { account: this.account.id })
+        } catch (e) {
+          if (!client.usable) throw e
+          log.info('server vlastné značky nepodporuje', { account: this.account.id, code: classifyError(e).code })
+        }
       } finally {
         lock.release()
       }

@@ -1,4 +1,4 @@
-import type { AccountSummary, ArchiveSummary, FolderItem, MessageListItem, SearchFilters, SyncStatus } from '../../../shared/ipc'
+import type { AccountSummary, ArchiveSummary, FolderItem, MessageListItem, MessageMark, SearchFilters, SyncStatus } from '../../../shared/ipc'
 import { isArchiveId } from '../../../shared/ipc'
 
 /**
@@ -30,8 +30,32 @@ export const mail = $state({
   /** Koľko správ v rozsahu hľadania ešte nemá stiahnutý text. */
   searchNotDownloaded: 0,
   /** Zobrazenie po konverzáciách (nastavenie; neplatí pre hľadanie a archív). */
-  threads: false
+  threads: false,
+  /** Filter stavu vybavenia v hornom paneli (prázdne = všetky správy). */
+  marks: [] as MessageMark[]
 })
+
+/** Ďalší stav krúžku pri kliknutí: bez stavu → veľmi dôležité → dôležité → vybavené → bez stavu. */
+export function nextMark(m: MessageMark): MessageMark {
+  return ((m + 1) % 4) as MessageMark
+}
+
+/** Zapne/vypne jeden stav vo filtri a načíta zoznam znova. */
+export async function toggleMarkFilter(m: MessageMark): Promise<void> {
+  mail.marks = mail.marks.includes(m) ? mail.marks.filter((x) => x !== m) : [...mail.marks, m].sort()
+  await reloadList()
+}
+
+export async function clearMarkFilter(): Promise<void> {
+  if (!mail.marks.length) return
+  mail.marks = []
+  await reloadList()
+}
+
+/** Filter pre jadro (archív stav nemá – tam sa nefiltruje). */
+function markFilter(): { marks?: MessageMark[] } {
+  return mail.marks.length && !isArchiveId(mail.folderId) ? { marks: [...mail.marks] } : {}
+}
 
 /** Zoznam je práve zoskupený do konverzácií? */
 export function threadView(): boolean {
@@ -82,7 +106,7 @@ export async function loadArchives(): Promise<void> {
 
 /** Kľúč zobrazeného zoznamu – výsledky, ktoré prídu po zmene priečinka alebo hľadania, sa zahodia. */
 function listKey(): string {
-  return JSON.stringify([mail.folderId, mail.search, mail.threads])
+  return JSON.stringify([mail.folderId, mail.search, mail.threads, mail.marks])
 }
 
 const loading = new Set<number>()
@@ -101,6 +125,7 @@ export async function loadPage(page: number, force = false): Promise<void> {
         query: mail.search.query,
         ...(mail.search.filters ? { filters: { ...mail.search.filters } } : {}),
         ...searchScope(),
+        ...markFilter(),
         offset: page * PAGE,
         limit: PAGE
       })
@@ -110,7 +135,7 @@ export async function loadPage(page: number, force = false): Promise<void> {
       mail.pages[page] = r.items
       return
     }
-    const r = await window.doar.invoke('messages.list', { folderId: mail.folderId, offset: page * PAGE, limit: PAGE, threads: threadView() })
+    const r = await window.doar.invoke('messages.list', { folderId: mail.folderId, offset: page * PAGE, limit: PAGE, threads: threadView(), ...markFilter() })
     if (key !== listKey()) return // medzitým sa prepol priečinok
     mail.total = r.total
     mail.pages[page] = r.items
@@ -181,13 +206,15 @@ export function patchMessage(id: number, patch: Partial<MessageListItem>): void 
   }
 }
 
-export async function setFlags(list: number[], change: { seen?: boolean; flagged?: boolean }): Promise<void> {
+export async function setFlags(list: number[], change: { seen?: boolean; flagged?: boolean; mark?: MessageMark }): Promise<void> {
   // Archív je len na čítanie.
   const own = list.filter((id) => !isArchiveId(id))
-  // Prečítané platí pre celú konverzáciu, hviezdička len pre označenú správu.
-  const ids = change.seen !== undefined ? expandThreads(own) : own
+  // Prečítané a stav vybavenia platia pre celú konverzáciu, hviezdička len pre označenú správu.
+  const ids = change.seen !== undefined || change.mark !== undefined ? expandThreads(own) : own
   if (!ids.length) return
   for (const id of ids) patchMessage(id, { ...change, localState: 'pending' })
+  // Riadok konverzácie ukazuje stav celej konverzácie.
+  if (change.mark !== undefined) for (const id of own) patchMessage(id, { mark: change.mark })
   await window.doar.invoke('messages.setFlags', { ids: [...ids], ...change })
 }
 
@@ -214,8 +241,8 @@ export function indexOf(id: number | null): number {
 
 /** Všetky správy zobrazeného priečinka (aj nenačítané stránky) v poradí zoznamu. */
 export async function allIds(): Promise<number[]> {
-  if (mail.search) return window.doar.invoke('messages.searchIds', { query: mail.search.query, ...(mail.search.filters ? { filters: { ...mail.search.filters } } : {}), ...searchScope() })
-  return window.doar.invoke('messages.listIds', { folderId: mail.folderId, threads: threadView() })
+  if (mail.search) return window.doar.invoke('messages.searchIds', { query: mail.search.query, ...(mail.search.filters ? { filters: { ...mail.search.filters } } : {}), ...searchScope(), ...markFilter() })
+  return window.doar.invoke('messages.listIds', { folderId: mail.folderId, threads: threadView(), ...markFilter() })
 }
 
 /** Správy z načítaných stránok podľa id (napr. pre kontextovú ponuku). */

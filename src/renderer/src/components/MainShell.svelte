@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte'
   import { t, kbd } from '../i18n/index.svelte'
-  import { mail, findFolder } from '../lib/mail.svelte'
+  import { mail, findFolder, toggleMarkFilter } from '../lib/mail.svelte'
   import { isArchiveId } from '../../../shared/ipc'
   import FolderPane from './FolderPane.svelte'
   import MessageList from './MessageList.svelte'
@@ -18,6 +18,7 @@
   import { runSearch } from '../lib/mail.svelte'
   import { openSettings } from '../lib/settings.svelte'
   import Icon from './Icon.svelte'
+  import MarkIcon from './MarkIcon.svelte'
   import { openDroppedFiles } from '../lib/archive.svelte'
   import AdvancedSearch from './AdvancedSearch.svelte'
 
@@ -76,6 +77,8 @@
 
   // Vyhľadávanie: spustí sa chvíľu po dopísaní (alebo hneď Enterom).
   let query = $state('')
+  /** Filter stavu: veľmi dôležité, dôležité, vybavené (dá sa zapnúť aj viac naraz). */
+  const MARK_FILTERS = [1, 2, 3] as const
   let searchEl: HTMLInputElement | undefined = $state()
   let searchTimer: ReturnType<typeof setTimeout> | null = null
   const currentFolder = $derived(findFolder(mail.folderId) ?? null)
@@ -164,6 +167,19 @@
       <span class="sync-ico" class:spin={syncing}><Icon name="sync" /></span>
       {t('toolbar.sync')}
     </button>
+    <div class="marks" role="group" aria-label={t('mark.filter')} title={t('mark.filter')}>
+      {#each MARK_FILTERS as m (m)}
+        <button
+          class="mark-btn"
+          class:on={mail.marks.includes(m)}
+          aria-pressed={mail.marks.includes(m)}
+          title={t('mark.only', { state: t(`mark.${m}`) })}
+          aria-label={t('mark.only', { state: t(`mark.${m}`) })}
+          disabled={isArchiveId(mail.folderId)}
+          onclick={() => void toggleMarkFilter(m)}><MarkIcon mark={m} size={15} /></button
+        >
+      {/each}
+    </div>
     <div class="search" role="search">
       <span class="field">
         <span class="glass"><Icon name="search" /></span>
@@ -260,6 +276,40 @@
   }
   .sync-ico {
     display: inline-flex;
+  }
+  .marks {
+    display: flex;
+    align-items: center;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+  }
+  .mark-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 2rem;
+    align-self: stretch;
+    border: 0;
+    background: none;
+    cursor: pointer;
+    opacity: 0.5;
+  }
+  .mark-btn + .mark-btn {
+    border-inline-start: 1px solid var(--border);
+  }
+  .mark-btn:hover:not(:disabled) {
+    opacity: 0.85;
+    background: var(--surface-2);
+  }
+  .mark-btn.on {
+    opacity: 1;
+    background: color-mix(in srgb, var(--accent) 22%, transparent);
+    box-shadow: inset 0 -2px 0 var(--accent);
+  }
+  .mark-btn:disabled {
+    cursor: default;
+    opacity: 0.25;
   }
   .search {
     flex: 1;

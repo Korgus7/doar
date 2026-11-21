@@ -1,9 +1,10 @@
 <script lang="ts">
   import Icon from './Icon.svelte'
+  import MarkIcon from './MarkIcon.svelte'
   import { t } from '../i18n/index.svelte'
   import { listDate } from '../lib/format'
-  import { mail, messageAt, loadPage, PAGE, setFlags, setSelection, indexOf, allIds, itemsById, findFolder } from '../lib/mail.svelte'
-  import { isArchiveId } from '../../../shared/ipc'
+  import { mail, messageAt, loadPage, PAGE, setFlags, nextMark, clearMarkFilter, setSelection, indexOf, allIds, itemsById, findFolder } from '../lib/mail.svelte'
+  import { isArchiveId, type MessageListItem } from '../../../shared/ipc'
   import { ui, messageMenu, openMenu, remove, removeForever, archive, openMoveDialog, selectAll, isDraft, folderLabel, folderById } from '../lib/actions.svelte'
   import { runSearch } from '../lib/mail.svelte'
 
@@ -157,6 +158,12 @@
     void setFlags([id], { flagged: !flagged })
   }
 
+  /** Klik na krúžok: ďalší stav pre správu (riadok konverzácie = celá konverzácia). */
+  function cycleMark(e: MouseEvent, m: MessageListItem): void {
+    e.stopPropagation()
+    void setFlags(m.threadIds ?? [m.id], { mark: nextMark(m.mark) })
+  }
+
   function onDragStart(e: DragEvent, i: number, id: number): void {
     // Správy archívu sa nedajú presúvať.
     if (isArchiveId(id)) {
@@ -185,6 +192,13 @@
 </script>
 
 <div class="wrap">
+{#if mail.marks.length && !isArchiveId(mail.folderId)}
+  <div class="mark-bar" role="status">
+    <span>{t('mark.active')}</span>
+    {#each mail.marks as m (m)}<span class="mark-chip"><MarkIcon mark={m} size={13} />{t(`mark.${m}`)}</span>{/each}
+    <button class="link" onclick={() => void clearMarkFilter()}>{t('mark.clear')}</button>
+  </div>
+{/if}
 {#if mail.search}
   <div class="search-bar" role="status">
     <span>{mail.total ? t('search.results', { n: mail.total }) : t('search.none')}</span>
@@ -207,7 +221,7 @@
   onkeydown={onKey}
 >
   {#if mail.total === 0}
-    <p class="empty">{mail.search ? t('search.none') : t('list.empty')}</p>
+    <p class="empty">{mail.marks.length && !isArchiveId(mail.folderId) ? t('list.emptyMarks') : mail.search ? t('search.none') : t('list.empty')}</p>
   {:else}
     <div class="spacer" style:height={`${mail.total * ROW}px`}>
       {#each indexes as i (i)}
@@ -244,6 +258,18 @@
                 <span class="date">{listDate(m.date)}</span>
               </div>
               <div class="line2">
+                {#if isArchiveId(m.id)}
+                  <span class="circle" class:on={m.mark > 0} aria-label={m.mark ? t(`mark.${m.mark}`) : undefined}><MarkIcon mark={m.mark} size={14} /></span>
+                {:else}
+                  <button
+                    class="circle"
+                    class:on={m.mark > 0}
+                    title={t('mark.tip', { state: t(`mark.${m.mark}`) })}
+                    aria-label={t('mark.tip', { state: t(`mark.${m.mark}`) })}
+                    tabindex="-1"
+                    onclick={(e) => cycleMark(e, m)}><MarkIcon mark={m.mark} size={14} /></button
+                  >
+                {/if}
                 <span class="subject"><bdi>{m.subject || t('list.noSubject')}</bdi></span>
                 {#if m.hasAttachments}<span class="clip" title={t('list.attachment')}><Icon name="attachment" size={14} /></span>{/if}
                 {#if isArchiveId(m.id)}
@@ -290,6 +316,22 @@
     flex-direction: column;
     min-height: 0;
     background: var(--surface);
+  }
+  .mark-bar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.3rem 0.7rem;
+    padding: 0.45rem 0.9rem;
+    border-bottom: 1px solid var(--border);
+    background: var(--accent-soft);
+    font-size: 0.85rem;
+  }
+  .mark-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    font-weight: 600;
   }
   .search-bar {
     display: flex;
@@ -339,7 +381,7 @@
     position: relative;
     height: 100%;
     padding-block: 0.45rem 0.4rem;
-    padding-inline: 1rem 0.8rem;
+    padding-inline: 1.6rem 0.8rem;
     border-bottom: 1px solid var(--border);
     cursor: default;
     display: flex;
@@ -441,6 +483,29 @@
   }
   .clip {
     font-size: 0.8rem;
+  }
+  .circle {
+    flex: 0 0 0.875rem;
+    align-self: center;
+    /* v ľavom okraji riadku, odsadený od farebného pásika konta; predmet ostáva zarovnaný s textom pod ním */
+    margin-inline-start: -1.3rem;
+    border: 0;
+    background: none;
+    padding: 0;
+    color: var(--text-muted);
+    cursor: pointer;
+    line-height: 1;
+    opacity: 0;
+  }
+  span.circle {
+    cursor: default;
+  }
+  .row:hover button.circle {
+    opacity: 0.55;
+  }
+  .circle.on,
+  .row:hover .circle.on {
+    opacity: 1;
   }
   .star {
     flex: none;

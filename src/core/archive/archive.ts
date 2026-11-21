@@ -387,6 +387,7 @@ export class ArchiveManager {
         seen: !!r.seen,
         flagged: !!r.flagged,
         answered: !!r.answered,
+        mark: 0,
         hasAttachments: !!r.has_attachments,
         snippet: r.snippet,
         localState: 'synced',

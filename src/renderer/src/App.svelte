@@ -140,7 +140,8 @@
     }
     const loading = mail.archives.find((a) => a.state === 'indexing')
     if (loading) return { text: t('archive.status', { name: loading.name, pct: archivePercent(loading) }), tone: 'busy' }
-    const list = Object.values(mail.statuses)
+    // Len existujúce kontá – stav odstráneného konta (napr. chyba prihlásenia) sa už neukazuje.
+    const list = Object.values(mail.statuses).filter((s) => mail.accounts.some((a) => a.id === s.accountId))
     const email = (id: number): string => mail.accounts.find((a) => a.id === id)?.email ?? ''
     const bad = list.find((s) => s.state === 'error')
     if (bad) return { text: t('status.failed', { account: email(bad.accountId), error: errorText(bad.code) }), tone: 'error' }

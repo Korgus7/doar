@@ -5,7 +5,7 @@ import type { Db } from '../store/db'
 import type { BlobStore } from '../store/blobs'
 import type { MailStore } from '../store/mailstore'
 import type { ExportFolderSummary, ExportPhase, ExportProgress, ExportSummary } from '../../shared/ipc'
-import { incompletePath } from '../../shared/ipc'
+import { incompletePath, MARK_KEYWORDS } from '../../shared/ipc'
 import { encodeMessage, type MessageMeta, type SpecialUseFlag } from './mboxrd'
 import { BlobStore as Blobs } from '../store/blobs'
 import { indexInfo } from '../mail/parse'
@@ -270,9 +270,9 @@ export async function exportAccount(deps: ExportDeps, run: ExportRun): Promise<E
     frows.sort((a, b) => (a.special_use === 'inbox' ? -1 : b.special_use === 'inbox' ? 1 : a.path.localeCompare(b.path)))
     const only = run.messageIds ? new Set(run.messageIds) : null
     const flagOf: Record<string, SpecialUseFlag> = { inbox: '\\Inbox', sent: '\\Sent', drafts: '\\Drafts', trash: '\\Trash', junk: '\\Junk', archive: '\\Archive', all: '\\All' }
-    type MRow = { id: number; uid: number; sha: string | null; size: number; internal_date: string | null; seen: number; flagged: number; answered: number; draft: number; keywords_json: string; gm_labels_json: string | null }
+    type MRow = { id: number; uid: number; sha: string | null; size: number; internal_date: string | null; seen: number; flagged: number; answered: number; draft: number; keywords_json: string; gm_labels_json: string | null; mark: number }
     const q = deps.db.prepare(
-      `SELECT id, uid, blob_sha256 AS sha, size, internal_date, seen, flagged, answered, draft, keywords_json, gm_labels_json
+      `SELECT id, uid, blob_sha256 AS sha, size, internal_date, seen, flagged, answered, draft, keywords_json, gm_labels_json, mark
          FROM messages WHERE folder_id = ? ORDER BY uid`
     )
     for (const f of frows) {
@@ -286,6 +286,9 @@ export async function exportAccount(deps: ExportDeps, run: ExportRun): Promise<E
         if (r.answered) flags.add('\\Answered')
         if (r.draft) flags.add('\\Draft')
         for (const k of parseList(r.keywords_json)) flags.add(k)
+        // Stav vybavenia aj vtedy, keď ho server neukladá (je len v tomto počítači).
+        for (const k of MARK_KEYWORDS.slice(1)) flags.delete(k)
+        if (r.mark >= 1 && r.mark <= 3) flags.add(MARK_KEYWORDS[r.mark]!)
         const d = r.internal_date ? new Date(r.internal_date) : null
         const sha = r.sha && deps.blobs.has(r.sha) ? r.sha : null
         return {

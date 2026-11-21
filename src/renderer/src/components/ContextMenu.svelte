@@ -2,6 +2,7 @@
   import { tick } from 'svelte'
   import { ui, type MenuItem } from '../lib/actions.svelte'
   import { kbd } from '../i18n/index.svelte'
+  import MarkIcon from './MarkIcon.svelte'
 
   let el: HTMLDivElement | undefined = $state()
   let pos = $state({ x: 0, y: 0 })
@@ -73,6 +74,7 @@
         <div class="sep" role="separator"></div>
       {:else}
         <button role="menuitem" class:danger={item.danger} disabled={item.disabled} onclick={() => run(item)}>
+          {#if item.mark !== undefined}<span class="mark-ico"><MarkIcon mark={item.mark} size={13} /></span>{/if}
           <span class="label">{item.label}</span>
           {#if item.shortcut}<span class="kbd">{kbd(item.shortcut)}</span>{/if}
         </button>
@@ -121,6 +123,12 @@
   }
   .label {
     flex: 1;
+  }
+  .mark-ico {
+    display: inline-flex;
+    /* medzera k textu 0,5rem (tlačidlo má gap 1,5rem) */
+    margin-inline-end: -1rem;
+    color: var(--text-muted);
   }
   .kbd {
     font-size: 0.78rem;

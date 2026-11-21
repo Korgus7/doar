@@ -312,7 +312,7 @@ if ($track) {
 <footer>
   <div class="wrap">
     <span data-i18n="ft1">© Doar · licencia MIT · bez telemetrie</span>
-    <span data-i18n="ft2"><a href="https://github.com/Korgus7/doar">Zdrojový kód na GitHube</a> · <a href="https://github.com/Korgus7/doar/releases">Všetky verzie</a> · <a href="#sukromie">Ochrana súkromia</a></span>
+    <span data-i18n="ft2"><a href="https://github.com/Korgus7/doar">Zdrojový kód na GitHube</a> · <a href="https://github.com/Korgus7/doar/releases">Všetky verzie</a> · <a href="#sukromie">Ochrana súkromia</a> · <a href="https://alternativeto.net/software/doar/about/">Doar na AlternativeTo</a></span>
   </div>
 </footer>
 
@@ -369,7 +369,7 @@ if ($track) {
 "q.h": "Frequently asked questions",
 "q.body": "<details><summary>Is Doar really free?</summary><p>Yes. It is open-source software under the MIT license – no ads, no subscription and no usage tracking.</p></details>\n        <details><summary>Where are my mail and passwords?</summary><p>On your computer and on your mail server. Passwords are kept in the secure storage of Windows. Doar connects only to your mail servers and to GitHub (checking for a new version, can be turned off).</p></details>\n        <details><summary>Do I have to use AI?</summary><p>No. AI is off by default and the program works exactly the same without it. If you turn it on, content is sent to the provider you chose (Anthropic, OpenRouter or a local model) only when you click, and you always see what is sent and where. Attachments are never sent.</p></details>\n        <details><summary>Does Outlook.com or Hotmail work?</summary><p>Yes. When adding the account, choose signing in with a Microsoft account – you enter your password directly with Microsoft; Doar never sees it.</p></details>\n        <details><summary>Windows showed a warning – is that OK?</summary><p>Doar is not digitally signed yet, so Windows may show “Windows protected your PC” on the first start. Click <em>More info</em> → <em>Run anyway</em>. If the computer has <em>Smart App Control</em> turned on, Windows blocks unsigned programs completely and Doar cannot be started.</p></details>\n        <details><summary>Can I move my mail from my old program?</summary><p>If your mail is on the server (IMAP), just add the account. Mail from Outlook (.pst, .ost), Outlook Express (.dbx) and Windows Mail (.eml) is moved via <em>Settings → Backup → Move mail from another program…</em>, an .mbox file (e.g. from Thunderbird) via <em>Restore backup to account…</em>. Backups and saved messages can also just be viewed via <em>View backup or saved message…</em>.</p></details>",
 "ft1": "© Doar · MIT license · no telemetry",
-"ft2": "<a href=\"https://github.com/Korgus7/doar\">Source code on GitHub</a> · <a href=\"https://github.com/Korgus7/doar/releases\">All versions</a> · <a href=\"#sukromie\">Privacy</a>",
+"ft2": "<a href=\"https://github.com/Korgus7/doar\">Source code on GitHub</a> · <a href=\"https://github.com/Korgus7/doar/releases\">All versions</a> · <a href=\"#sukromie\">Privacy</a> · <a href=\"https://alternativeto.net/software/doar/about/\">Doar on AlternativeTo</a>",
 "ver": "Version",
 "meta": "Windows 10 and 11 (64-bit) · free"
 }

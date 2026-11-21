@@ -1,9 +1,10 @@
 <script lang="ts">
   import Icon from './Icon.svelte'
+  import MarkIcon from './MarkIcon.svelte'
   import type { MessageView, ThreadMessage } from '../../../shared/ipc'
   import { t, type MessageKey, kbd } from '../i18n/index.svelte'
   import { addressLine, fileSize, fullDate, listDate } from '../lib/format'
-  import { mail, patchMessage, setFlags, itemsById } from '../lib/mail.svelte'
+  import { mail, patchMessage, setFlags, itemsById, nextMark } from '../lib/mail.svelte'
   import { saveAllAttachments, attachmentMenu, openMenu, previewAttachment } from '../lib/actions.svelte'
   import { isArchiveId, isDangerousFile, isEmlId, previewKind } from '../../../shared/ipc'
   import { isDraft } from '../lib/actions.svelte'
@@ -167,6 +168,10 @@ img{max-width:100%;height:auto}.doar-inline-img{margin:12px 0}table{max-width:10
     if (!listItem) return
     void setFlags([listItem.id], { flagged: !listItem.flagged })
   }
+  function cycleMark(): void {
+    if (!listItem) return
+    void setFlags(listItem.threadIds ?? [listItem.id], { mark: nextMark(listItem.mark) })
+  }
 
   const sender = $derived(view?.from[0]?.address ?? '')
 
@@ -309,6 +314,11 @@ img{max-width:100%;height:auto}.doar-inline-img{margin:12px 0}table{max-width:10
           </div>
         {/if}
       </div>
+      {#if listItem && !isArchiveId(view.id) && !isDraft(view.id)}
+        <button class="mark-state" class:none={!listItem.mark} title={t('mark.tip', { state: t(`mark.${listItem.mark}`) })} onclick={cycleMark}
+          ><MarkIcon mark={listItem.mark} size={20} /><span>{t(`mark.${listItem.mark}`)}</span></button
+        >
+      {/if}
       <dl>
         <dt>{t('reader.from')}</dt>
         <dd class="from">
@@ -501,6 +511,27 @@ img{max-width:100%;height:auto}.doar-inline-img{margin:12px 0}table{max-width:10
   }
   .icon.on {
     color: #d4961a;
+  }
+  .mark-state {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    margin: 0 0 0.6rem;
+    padding: 0.2rem 0.5rem 0.2rem 0.3rem;
+    border: 1px solid transparent;
+    border-radius: var(--radius-sm);
+    background: none;
+    color: var(--text);
+    font-size: 0.9rem;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .mark-state.none {
+    color: var(--text-muted);
+    font-weight: 400;
+  }
+  .mark-state:hover {
+    background: color-mix(in srgb, var(--text) 8%, var(--surface-3));
   }
   dl {
     display: grid;

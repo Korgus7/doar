@@ -125,6 +125,23 @@ describe('synchronizácia adresára (CardDAV)', () => {
     expect(byEmail('anna@biela.sk')).toMatchObject({ name: 'Anna B.', phone: '0905 000 000', note: 'Volať večer' })
   })
 
+  it('nový kontakt z Doaru hneď zmazaný: po synchronizácii sa v Doare znova neobjaví', async () => {
+    sync.enable(accountId)
+    sync.stop()
+    await sync.syncNow()
+    // Nový kontakt sa nahrá; sync-token z tej istej synchronizácie je ešte spred jeho nahratia.
+    saveContact(db, { ...empty, id: null, name: 'Peter Test', email: 'peter@test.sk' } as never)
+    await sync.syncNow()
+    expect(serverCard('peter@test.sk')).toBeDefined()
+    // Zmazanie v Doare: ďalšia synchronizácia ho zo servera stiahne ako „zmenený“ – nesmie ho vrátiť do Doaru.
+    deleteContacts(db, [byEmail('peter@test.sk')!.id])
+    await sync.syncNow()
+    expect(serverCard('peter@test.sk')).toBeUndefined()
+    expect(byEmail('peter@test.sk')).toBeUndefined()
+    await sync.syncNow()
+    expect(byEmail('peter@test.sk')).toBeUndefined()
+  })
+
   it('import do synchronizovaného adresára sa odošle; neplatný sync-token → celé načítanie znova', async () => {
     dav.addCard(card(['UID:a', 'FN:Anna', 'EMAIL:anna@a.sk']))
     sync.enable(accountId)
